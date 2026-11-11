@@ -1,0 +1,105 @@
+from datetime import datetime, date, timezone
+from typing import Optional, List, Literal
+from sqlmodel import SQLModel, Field, Relationship
+from app.models.company import Store, StoreRead
+from app.models.product import Product, ProductRead
+
+
+class ReceiptBase(SQLModel):
+    store_id: int = Field(foreign_key="store.id", index=True)
+    purchase_date: date = Field(default_factory=date.today, index=True)
+    total_amount: float = Field(default=0.0)
+    basket_discount: float = Field(default=0.0)
+    source_account_id: Optional[int] = Field(default=None, description="Primary Firefly asset account")
+    payment_mode: str = Field(default="single", description="'single' or 'split_vouchers'")
+    voucher_account_id: Optional[int] = Field(default=None, description="Firefly voucher asset account")
+    voucher_count: int = Field(default=0)
+    voucher_unit_value: float = Field(default=5.16)
+    firefly_transaction_id: Optional[int] = Field(default=None, index=True)
+    firefly_voucher_transaction_id: Optional[int] = Field(default=None, index=True)
+    notes: Optional[str] = Field(default=None)
+
+
+class Receipt(ReceiptBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    store: Optional[Store] = Relationship()
+    items: List["ReceiptItem"] = Relationship(back_populates="receipt")
+    attachments: List["ReceiptAttachment"] = Relationship(back_populates="receipt")
+
+
+class ReceiptItemBase(SQLModel):
+    receipt_id: int = Field(foreign_key="receipt.id", index=True)
+    product_id: int = Field(foreign_key="product.id", index=True)
+    quantity: float = Field(default=1.0)
+    unit: str = Field(default="pcs")
+    package_size: float = Field(default=1.0)
+    paid_price: float
+    regular_price: Optional[float] = Field(default=None)
+    is_discount: bool = Field(default=False)
+    line_total: float
+
+
+class ReceiptItem(ReceiptItemBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    receipt: Optional[Receipt] = Relationship(back_populates="items")
+    product: Optional[Product] = Relationship()
+
+
+class ReceiptAttachmentBase(SQLModel):
+    receipt_id: int = Field(foreign_key="receipt.id", index=True)
+    filename: str
+    stored_path: str
+    file_type: str
+    file_size_bytes: int
+    sha256_hash: str
+
+
+class ReceiptAttachment(ReceiptAttachmentBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uploaded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    receipt: Optional[Receipt] = Relationship(back_populates="attachments")
+
+
+class ReceiptItemCreate(SQLModel):
+    product_id: int
+    quantity: float = Field(default=1.0, gt=0)
+    unit: Literal["g", "kg", "ml", "l", "pcs"] = "pcs"
+    package_size: float = Field(default=1.0, gt=0)
+    paid_price: float = Field(ge=0)
+    regular_price: Optional[float] = Field(default=None, ge=0)
+    is_discount: bool = False
+
+
+class ReceiptCreate(SQLModel):
+    store_id: int
+    purchase_date: date = Field(default_factory=date.today)
+    total_amount: float = Field(gt=0)
+    basket_discount: float = Field(default=0.0, ge=0)
+    source_account_id: Optional[int] = None
+    payment_mode: Literal["single", "split_vouchers"] = "single"
+    voucher_account_id: Optional[int] = None
+    voucher_count: int = Field(default=0, ge=0, le=8)
+    voucher_unit_value: float = Field(default=5.16, gt=0)
+    notes: Optional[str] = None
+    items: List[ReceiptItemCreate] = Field(min_length=1)
+
+
+class ReceiptItemRead(ReceiptItemBase):
+    id: int
+    product: Optional[ProductRead] = None
+
+
+class ReceiptRead(ReceiptBase):
+    id: int
+    created_at: datetime
+    store: Optional[StoreRead] = None
+    items: List[ReceiptItemRead] = []
+    attachments: List[ReceiptAttachment] = []
+
+
+class ReceiptPushRequest(SQLModel):
+    force: bool = False

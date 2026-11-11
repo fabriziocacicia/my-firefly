@@ -1,0 +1,594 @@
+import hashlib
+import os
+from io import BytesIO
+from pathlib import Path
+from typing import List, Optional
+
+import filetype
+import httpx
+import pillow_heif
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
+from PIL import Image, ImageOps
+from sqlalchemy.orm import selectinload
+from sqlmodel import Session, select
+
+from app.core.config import settings
+from app.core.database import get_session
+from app.models.company import Store
+from app.models.price import PriceRecord
+from app.models.product import Product
+from app.models.receipt import (
+    Receipt,
+    ReceiptAttachment,
+    ReceiptCreate,
+    ReceiptItem,
+    ReceiptPushRequest,
+    ReceiptRead,
+)
+from app.services.firefly import firefly_client
+from app.services.pricing import normalize_unit_price
+
+pillow_heif.register_heif_opener()
+
+router = APIRouter(prefix="/receipts", tags=["Receipts Workbench & Vault"])
+
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
+ALLOWED_MIME_TO_EXT = {
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "application/pdf": "pdf",
+}
+
+
+def _receipt_loader_options():
+    return [
+        selectinload(Receipt.store).selectinload(Store.company),
+        selectinload(Receipt.items)
+        .selectinload(ReceiptItem.product)
+        .selectinload(Product.brand),
+        selectinload(Receipt.items)
+        .selectinload(ReceiptItem.product)
+        .selectinload(Product.tags),
+        selectinload(Receipt.attachments),
+    ]
+
+
+def _get_receipt_or_404(session: Session, receipt_id: int) -> Receipt:
+    statement = (
+        select(Receipt)
+        .where(Receipt.id == receipt_id)
+        .options(*_receipt_loader_options())
+    )
+    receipt = session.exec(statement).first()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    return receipt
+
+
+def _allocate_receipt_cents(
+    billable_items: List[ReceiptItem], target_cents: int
+) -> List[int]:
+    """
+    Allocates `target_cents` across billable items with a 1-cent floor per item
+    using exact integer-quotient Largest Remainder Method so the sum equals `target_cents`.
+    """
+    count = len(billable_items)
+    if count == 0:
+        raise HTTPException(
+            status_code=422, detail="Receipt has no positive billable items to push"
+        )
+    if target_cents < count:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Receipt total ({target_cents / 100:.2f}) is too small to allocate "
+                f"at least €0.01 to each of {count} billable items"
+            ),
+        )
+
+    distributable = target_cents - count
+    weights = [max(1, round(item.line_total * 100)) for item in billable_items]
+    total_weight = sum(weights)
+
+    quotients = [(distributable * w) // total_weight for w in weights]
+    remainders = [(distributable * w) % total_weight for w in weights]
+    shortfall = distributable - sum(quotients)
+
+    order = sorted(range(count), key=lambda i: (-remainders[i], -weights[i], i))
+    for idx in order[:shortfall]:
+        quotients[idx] += 1
+
+    return [1 + q for q in quotients]
+
+
+def _partition_voucher_and_card_splits(
+    billable_items: List[ReceiptItem],
+    allocated_cents: List[int],
+    voucher_cents: int,
+) -> tuple[list[tuple[ReceiptItem, int, str]], list[tuple[ReceiptItem, int, str]]]:
+    """
+    Sequential Boundary Partitioning (Approach B):
+    Allocates prorated items sequentially to Transaction 1 (Vouchers) until reaching
+    `voucher_cents`. Only splits a crossover item if cumulative cents exceed `voucher_cents`.
+    """
+    voucher_splits: list[tuple[ReceiptItem, int, str]] = []
+    card_splits: list[tuple[ReceiptItem, int, str]] = []
+    cumulative = 0
+    crossed = False
+
+    for item, item_cents in zip(billable_items, allocated_cents):
+        if crossed:
+            card_splits.append((item, item_cents, ""))
+            continue
+
+        if cumulative + item_cents < voucher_cents:
+            voucher_splits.append((item, item_cents, ""))
+            cumulative += item_cents
+        elif cumulative + item_cents == voucher_cents:
+            voucher_splits.append((item, item_cents, ""))
+            cumulative += item_cents
+            crossed = True
+        else:
+            split_a = voucher_cents - cumulative
+            split_b = item_cents - split_a
+            voucher_splits.append((item, split_a, " [Voucher]"))
+            card_splits.append((item, split_b, " [Card Remainder]"))
+            cumulative = voucher_cents
+            crossed = True
+
+    return voucher_splits, card_splits
+
+
+def _build_firefly_tx_payload(
+    receipt: Receipt,
+    splits: list[tuple[ReceiptItem, int, str]],
+    source_account_id: int,
+) -> dict:
+    assert receipt.store is not None
+    assert receipt.store.firefly_account_id is not None
+
+    store_label = (
+        receipt.store.company.name
+        if receipt.store.company
+        else receipt.store.name
+    )
+    tx_splits = []
+    for item, amount_cents, suffix in splits:
+        product_name = (
+            item.product.name if item.product else f"Product #{item.product_id}"
+        )
+        base_notes = receipt.notes or ""
+        split_notes = (
+            f"{base_notes}{suffix}".lstrip() if suffix else base_notes
+        )
+        tx_splits.append(
+            {
+                "type": "withdrawal",
+                "date": f"{receipt.purchase_date}T12:00:00+00:00",
+                "amount": f"{amount_cents / 100:.2f}",
+                "description": f"{product_name} (x{item.quantity})",
+                "source_id": str(source_account_id),
+                "destination_id": str(receipt.store.firefly_account_id),
+                "notes": split_notes,
+            }
+        )
+
+    return {
+        "error_if_duplicate_hash": False,
+        "apply_rules": True,
+        "group_title": f"{store_label} - {receipt.purchase_date}",
+        "transactions": tx_splits,
+    }
+
+
+def _convert_heif_to_jpeg(raw_bytes: bytes) -> bytes:
+    try:
+        with Image.open(BytesIO(raw_bytes)) as img:
+            transposed = ImageOps.exif_transpose(img)
+            rgb_img = transposed.convert("RGB")
+            out_buf = BytesIO()
+            rgb_img.save(out_buf, format="JPEG", quality=90)
+            return out_buf.getvalue()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=415, detail=f"Failed to decode HEIC/HEIF image: {exc}"
+        ) from exc
+
+
+@router.post("/", response_model=ReceiptRead)
+def create_receipt(
+    receipt_in: ReceiptCreate, session: Session = Depends(get_session)
+):
+    store = session.get(Store, receipt_in.store_id)
+    if not store:
+        raise HTTPException(status_code=404, detail="Store not found")
+
+    product_ids = {item.product_id for item in receipt_in.items}
+    existing_products = session.exec(
+        select(Product.id).where(Product.id.in_(product_ids))
+    ).all()
+    existing_id_set = set(existing_products)
+    for pid in product_ids:
+        if pid not in existing_id_set:
+            raise HTTPException(
+                status_code=404, detail=f"Product {pid} not found"
+            )
+
+    line_totals = [
+        round(item.quantity * item.paid_price, 2) for item in receipt_in.items
+    ]
+    computed_total = round(sum(line_totals) - receipt_in.basket_discount, 2)
+    if abs(computed_total - receipt_in.total_amount) > 0.01:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Receipt total mismatch: computed {computed_total:.2f} "
+                f"vs target {receipt_in.total_amount:.2f}"
+            ),
+        )
+
+    receipt = Receipt(
+        store_id=receipt_in.store_id,
+        purchase_date=receipt_in.purchase_date,
+        total_amount=round(receipt_in.total_amount, 2),
+        basket_discount=round(receipt_in.basket_discount, 2),
+        source_account_id=receipt_in.source_account_id,
+        payment_mode=receipt_in.payment_mode,
+        voucher_account_id=receipt_in.voucher_account_id,
+        voucher_count=receipt_in.voucher_count,
+        voucher_unit_value=receipt_in.voucher_unit_value,
+        notes=receipt_in.notes,
+    )
+    session.add(receipt)
+    session.flush()  # Populate receipt.id inside the single transaction
+
+    for item, line_total in zip(receipt_in.items, line_totals):
+        effective_regular = (
+            item.regular_price
+            if item.regular_price is not None
+            else item.paid_price
+        )
+        is_discount = item.is_discount or (item.paid_price < effective_regular)
+        norm_paid = normalize_unit_price(
+            price=item.paid_price,
+            quantity=1.0,
+            unit=item.unit,
+            package_size=item.package_size,
+        )
+        norm_reg = normalize_unit_price(
+            price=effective_regular,
+            quantity=1.0,
+            unit=item.unit,
+            package_size=item.package_size,
+        )
+
+        receipt_item = ReceiptItem(
+            receipt_id=receipt.id,
+            product_id=item.product_id,
+            quantity=item.quantity,
+            unit=item.unit,
+            package_size=item.package_size,
+            paid_price=item.paid_price,
+            regular_price=effective_regular,
+            is_discount=is_discount,
+            line_total=line_total,
+        )
+        session.add(receipt_item)
+
+        price_record = PriceRecord(
+            product_id=item.product_id,
+            store_id=receipt.store_id,
+            recorded_date=receipt.purchase_date,
+            regular_price=effective_regular,
+            paid_price=item.paid_price,
+            is_discount=is_discount,
+            quantity=item.quantity,
+            unit=item.unit,
+            package_size=item.package_size,
+            normalized_unit_price=norm_paid,
+            normalized_regular_price=norm_reg,
+            notes=receipt.notes,
+        )
+        session.add(price_record)
+
+    session.commit()
+    return _get_receipt_or_404(session, receipt.id)
+
+
+@router.get("/", response_model=List[ReceiptRead])
+def list_receipts(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+):
+    statement = (
+        select(Receipt)
+        .options(*_receipt_loader_options())
+        .order_by(Receipt.purchase_date.desc(), Receipt.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return session.exec(statement).all()
+
+
+@router.get("/{receipt_id}", response_model=ReceiptRead)
+def get_receipt(receipt_id: int, session: Session = Depends(get_session)):
+    return _get_receipt_or_404(session, receipt_id)
+
+
+@router.post("/{receipt_id}/attachments", response_model=ReceiptAttachment)
+async def upload_receipt_attachment(
+    receipt_id: int,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
+    receipt = session.get(Receipt, receipt_id)
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+
+    raw_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Attachment exceeds the 15 MB maximum file size",
+        )
+    if not raw_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    kind = filetype.guess(raw_bytes[:8192])
+    if kind is None or kind.mime not in ALLOWED_MIME_TO_EXT:
+        detected = kind.mime if kind else "unknown"
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported attachment MIME type: {detected}",
+        )
+
+    if kind.mime in ("image/heic", "image/heif"):
+        payload_bytes = _convert_heif_to_jpeg(raw_bytes)
+        final_mime = "image/jpeg"
+        ext = "jpg"
+    else:
+        payload_bytes = raw_bytes
+        final_mime = kind.mime
+        ext = ALLOWED_MIME_TO_EXT[kind.mime]
+
+    sha256_hash = hashlib.sha256(payload_bytes).hexdigest()
+    file_size_bytes = len(payload_bytes)
+    stored_path = f"{sha256_hash[:2]}/{sha256_hash}.{ext}"
+
+    storage_root = Path(settings.STORAGE_DIR).resolve()
+    dest_path = (storage_root / stored_path).resolve()
+    if storage_root not in dest_path.parents:
+        raise HTTPException(status_code=400, detail="Invalid attachment storage path")
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    dest_path.write_bytes(payload_bytes)
+    os.chmod(dest_path, 0o644)
+
+    safe_filename = Path(file.filename or f"receipt.{ext}").name
+    attachment = ReceiptAttachment(
+        receipt_id=receipt_id,
+        filename=safe_filename,
+        stored_path=stored_path,
+        file_type=final_mime,
+        file_size_bytes=file_size_bytes,
+        sha256_hash=sha256_hash,
+    )
+    session.add(attachment)
+    session.commit()
+    session.refresh(attachment)
+    return attachment
+
+
+@router.get("/{receipt_id}/attachments/{attachment_id}")
+def get_receipt_attachment(
+    receipt_id: int,
+    attachment_id: int,
+    session: Session = Depends(get_session),
+):
+    attachment = session.get(ReceiptAttachment, attachment_id)
+    if not attachment or attachment.receipt_id != receipt_id:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    storage_root = Path(settings.STORAGE_DIR).resolve()
+    file_path = (storage_root / attachment.stored_path).resolve()
+    if storage_root not in file_path.parents or not file_path.exists():
+        raise HTTPException(status_code=404, detail="Attachment file missing on disk")
+
+    return FileResponse(
+        path=str(file_path),
+        media_type=attachment.file_type,
+        filename=attachment.filename,
+        content_disposition_type="inline",
+    )
+
+
+async def _validate_firefly_accounts(receipt: Receipt) -> None:
+    if not receipt.store or receipt.store.firefly_account_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Store must be mapped to an existing Firefly III expense account",
+        )
+    if receipt.source_account_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Primary source asset account must be specified before pushing",
+        )
+    if receipt.payment_mode == "split_vouchers" and (
+        receipt.voucher_account_id is None or receipt.voucher_count <= 0
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Voucher asset account and positive voucher count are required for split_vouchers",
+        )
+
+    try:
+        asset_accounts = await firefly_client.get_all_asset_accounts()
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to reach Firefly III to validate accounts: {exc}",
+        ) from exc
+
+    valid_asset_ids = {int(acc["id"]) for acc in asset_accounts if "id" in acc}
+    if receipt.source_account_id not in valid_asset_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Source asset account #{receipt.source_account_id} does not exist in Firefly III",
+        )
+    if (
+        receipt.payment_mode == "split_vouchers"
+        and receipt.voucher_account_id not in valid_asset_ids
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Voucher asset account #{receipt.voucher_account_id} does not exist in Firefly III",
+        )
+
+
+@router.post("/{receipt_id}/push-to-firefly", response_model=ReceiptRead)
+async def push_receipt_to_firefly(
+    receipt_id: int,
+    req: ReceiptPushRequest = Body(default_factory=ReceiptPushRequest),
+    session: Session = Depends(get_session),
+):
+    receipt = _get_receipt_or_404(session, receipt_id)
+
+    voucher_total = 0.0
+    card_remainder = receipt.total_amount
+    if receipt.payment_mode == "split_vouchers":
+        voucher_total = round(
+            min(
+                receipt.total_amount,
+                receipt.voucher_count * receipt.voucher_unit_value,
+            ),
+            2,
+        )
+        card_remainder = round(receipt.total_amount - voucher_total, 2)
+
+    partial_voucher_only = (
+        receipt.firefly_voucher_transaction_id is not None
+        and receipt.firefly_transaction_id is None
+        and receipt.payment_mode == "split_vouchers"
+        and card_remainder > 0
+    )
+
+    if not req.force and (
+        receipt.firefly_transaction_id is not None
+        or receipt.firefly_voucher_transaction_id is not None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Receipt already has Firefly III transaction ID(s). Pass force=true to resume or resync.",
+        )
+
+    await _validate_firefly_accounts(receipt)
+
+    if req.force and not partial_voucher_only:
+        for old_tx_id in (
+            receipt.firefly_transaction_id,
+            receipt.firefly_voucher_transaction_id,
+        ):
+            if old_tx_id is not None:
+                try:
+                    await firefly_client.delete_transaction(old_tx_id)
+                except httpx.HTTPError:
+                    pass
+        receipt.firefly_transaction_id = None
+        receipt.firefly_voucher_transaction_id = None
+        session.add(receipt)
+        session.commit()
+
+    billable_items = [item for item in receipt.items if item.line_total > 0]
+    target_cents = round(receipt.total_amount * 100)
+    allocated_cents = _allocate_receipt_cents(billable_items, target_cents)
+
+    if receipt.payment_mode == "single":
+        assert receipt.source_account_id is not None
+        splits = [(item, cents, "") for item, cents in zip(billable_items, allocated_cents)]
+        payload = _build_firefly_tx_payload(receipt, splits, receipt.source_account_id)
+        try:
+            resp = await firefly_client.create_transaction(payload)
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to push transaction to Firefly III: {exc}",
+            ) from exc
+        receipt.firefly_transaction_id = int(resp["data"]["id"])
+        session.add(receipt)
+        session.commit()
+        return _get_receipt_or_404(session, receipt.id)
+
+    # split_vouchers mode
+    assert receipt.voucher_account_id is not None
+    if card_remainder <= 0.0:
+        splits = [(item, cents, "") for item, cents in zip(billable_items, allocated_cents)]
+        payload = _build_firefly_tx_payload(
+            receipt, splits, receipt.voucher_account_id
+        )
+        try:
+            resp = await firefly_client.create_transaction(payload)
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to push voucher transaction to Firefly III: {exc}",
+            ) from exc
+        receipt.firefly_voucher_transaction_id = int(resp["data"]["id"])
+        session.add(receipt)
+        session.commit()
+        return _get_receipt_or_404(session, receipt.id)
+
+    assert receipt.source_account_id is not None
+    voucher_cents = round(voucher_total * 100)
+    voucher_splits, card_splits = _partition_voucher_and_card_splits(
+        billable_items, allocated_cents, voucher_cents
+    )
+
+    created_voucher_in_this_call = False
+    if not partial_voucher_only:
+        voucher_payload = _build_firefly_tx_payload(
+            receipt, voucher_splits, receipt.voucher_account_id
+        )
+        try:
+            tx1 = await firefly_client.create_transaction(voucher_payload)
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to push voucher transaction to Firefly III: {exc}",
+            ) from exc
+        voucher_tx_id = int(tx1["data"]["id"])
+        receipt.firefly_voucher_transaction_id = voucher_tx_id
+        session.add(receipt)
+        session.commit()
+        created_voucher_in_this_call = True
+    else:
+        assert receipt.firefly_voucher_transaction_id is not None
+        voucher_tx_id = receipt.firefly_voucher_transaction_id
+
+    card_payload = _build_firefly_tx_payload(
+        receipt, card_splits, receipt.source_account_id
+    )
+    try:
+        tx2 = await firefly_client.create_transaction(card_payload)
+    except httpx.HTTPError as exc:
+        if created_voucher_in_this_call:
+            try:
+                await firefly_client.delete_transaction(voucher_tx_id)
+                receipt.firefly_voucher_transaction_id = None
+                session.add(receipt)
+                session.commit()
+            except httpx.HTTPError:
+                pass
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to push card remainder transaction to Firefly III: {exc}",
+        ) from exc
+
+    receipt.firefly_transaction_id = int(tx2["data"]["id"])
+    session.add(receipt)
+    session.commit()
+    return _get_receipt_or_404(session, receipt.id)
