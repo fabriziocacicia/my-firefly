@@ -27,11 +27,7 @@ function getStoreLabel(record: PriceRecord): string {
   if (record.store_name) {
     return record.store_name;
   }
-  if (record.store) {
-    const company = record.store.company?.name;
-    return company ? `${company} (${record.store.name})` : record.store.name;
-  }
-  return `Store #${record.firefly_account_id ?? record.store_id}`;
+  return `Store #${record.firefly_account_id}`;
 }
 
 export const ProductPriceChart: React.FC<ProductPriceChartProps> = ({
@@ -54,7 +50,7 @@ export const ProductPriceChart: React.FC<ProductPriceChartProps> = ({
     const map = new Map<number, { id: number; label: string; color: string }>();
     let idx = 0;
     for (const rec of normalizedRecords) {
-      const accountId = rec.firefly_account_id ?? rec.store_id ?? 0;
+      const accountId = rec.firefly_account_id;
       if (!map.has(accountId)) {
         map.set(accountId, {
           id: accountId,
@@ -90,7 +86,7 @@ export const ProductPriceChart: React.FC<ProductPriceChartProps> = ({
   }
 
   const visibleRecords = normalizedRecords.filter(r =>
-    visibleStoreIds.includes(r.firefly_account_id ?? r.store_id ?? 0)
+    visibleStoreIds.includes(r.firefly_account_id)
   );
   const pointsToScale = visibleRecords.length > 0 ? visibleRecords : normalizedRecords;
 
@@ -326,7 +322,7 @@ export const ProductPriceChart: React.FC<ProductPriceChartProps> = ({
             .filter(store => visibleStoreIds.includes(store.id))
             .map(store => {
               const storePoints = visibleRecords
-                .filter(r => (r.firefly_account_id ?? r.store_id ?? 0) === store.id)
+                .filter(r => r.firefly_account_id === store.id)
                 .map(r => `${getX(r.recorded_date)},${getY(r.normalized_unit_price)}`);
               if (storePoints.length < 2) return null;
               return (
@@ -345,8 +341,7 @@ export const ProductPriceChart: React.FC<ProductPriceChartProps> = ({
 
           {/* Scatter Points & Touch/Hover Targets */}
           {visibleRecords.map(rec => {
-            const recAccountId = rec.firefly_account_id ?? rec.store_id ?? 0;
-            const meta = storesMeta.find(s => s.id === recAccountId);
+            const meta = storesMeta.find(s => s.id === rec.firefly_account_id);
             const color = meta?.color || '#2563EB';
             const cx = getX(rec.recorded_date);
             const cy = getY(rec.normalized_unit_price);

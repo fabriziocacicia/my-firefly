@@ -9,9 +9,7 @@ import {
   Plus,
   Trash2,
   Edit2,
-  Link2,
   Unlink,
-  Check,
   X,
   AlertCircle,
 } from 'lucide-react';
