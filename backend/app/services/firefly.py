@@ -1,11 +1,18 @@
-import httpx
+import asyncio
+import time
 from typing import Optional, Any
+import httpx
 from app.core.config import settings
+
 
 class FireflyClient:
     def __init__(self, base_url: Optional[str] = None, token: Optional[str] = None):
         self.base_url = (base_url or settings.FIREFLY_URL).rstrip("/")
         self.token = token or settings.FIREFLY_TOKEN
+        self._client: Optional[httpx.AsyncClient] = None
+        self._name_cache: dict[int, tuple[str, float]] = {}  # account_id -> (name, expires_at)
+        self._cache_lock = asyncio.Lock()
+        self._cache_ttl: float = 60.0
 
     @property
     def headers(self) -> dict[str, str]:
@@ -13,27 +20,42 @@ class FireflyClient:
             "Authorization": f"Bearer {self.token}",
             "Accept": "application/vnd.api+json",
             "Content-Type": "application/json",
-            "User-Agent": "FireflyCompanion/1.0"
+            "User-Agent": "FireflyCompanion/1.0",
         }
 
-    async def get_about(self) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{self.base_url}/api/v1/about", headers=self.headers)
-            resp.raise_for_status()
-            return resp.json()
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=15.0)
+        return self._client
 
-    async def get_accounts(self, account_type: str = "expense", page: int = 1, limit: int = 50) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            params = {"type": account_type, "page": page, "limit": limit}
-            resp = await client.get(f"{self.base_url}/api/v1/accounts", headers=self.headers, params=params)
-            resp.raise_for_status()
-            return resp.json()
+    async def aclose(self) -> None:
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
+    async def get_about(self) -> dict[str, Any]:
+        client = self._get_client()
+        resp = await client.get(f"{self.base_url}/api/v1/about", headers=self.headers)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def get_accounts(
+        self, account_type: str = "expense", page: int = 1, limit: int = 50
+    ) -> dict[str, Any]:
+        client = self._get_client()
+        params = {"type": account_type, "page": page, "limit": limit}
+        resp = await client.get(
+            f"{self.base_url}/api/v1/accounts", headers=self.headers, params=params
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     async def _get_all_accounts_by_type(self, account_type: str) -> list[dict[str, Any]]:
         """Fetches all accounts of a given type across paginated Firefly III responses."""
         accounts = []
         page = 1
-        while True:
+        max_pages = 100
+        while page <= max_pages:
             data = await self.get_accounts(account_type=account_type, page=page, limit=100)
             items = data.get("data", [])
             if not items:
@@ -54,23 +76,137 @@ class FireflyClient:
         """Fetches all asset accounts across pages (checking, cash, meal vouchers)."""
         return await self._get_all_accounts_by_type("asset")
 
+    async def search_expense_accounts(
+        self, query: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """
+        Searches expense accounts by name via Firefly III GET /api/v1/search/accounts.
+        Returns raw list of JSON:API account data objects.
+        """
+        client = self._get_client()
+        params = {"type": "expense", "field": "name", "query": query, "limit": limit}
+        resp = await client.get(
+            f"{self.base_url}/api/v1/search/accounts",
+            headers=self.headers,
+            params=params,
+        )
+        resp.raise_for_status()
+        return resp.json().get("data", [])
+
+    async def get_expense_account(self, account_id: int) -> Optional[dict[str, Any]]:
+        """
+        Fetches single account by ID via Firefly III GET /api/v1/accounts/{account_id}.
+        Returns account data dict or None if 404.
+        """
+        client = self._get_client()
+        resp = await client.get(
+            f"{self.base_url}/api/v1/accounts/{account_id}",
+            headers=self.headers,
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json().get("data")
+
+    async def resolve_expense_account_names(
+        self, account_ids: set[int]
+    ) -> dict[int, str]:
+        """
+        Resolves expense account IDs to their Firefly account names.
+        Backed by a process-local 60-second TTL in-memory cache map.
+        Uses asyncio.Lock to serialize cache misses.
+        Concurrently fetches up to 5 individual missing accounts; performs a
+        paginated sweep across all expense accounts when missing count > 5.
+        Fallback to 'Deleted Firefly Account #<id>' on 404.
+        """
+        if not account_ids:
+            return {}
+
+        now = time.monotonic()
+        resolved: dict[int, str] = {}
+        missing: set[int] = set()
+
+        for aid in account_ids:
+            entry = self._name_cache.get(aid)
+            if entry and entry[1] > now:
+                resolved[aid] = entry[0]
+            else:
+                missing.add(aid)
+
+        if not missing:
+            return resolved
+
+        async with self._cache_lock:
+            now = time.monotonic()
+            still_missing: set[int] = set()
+            for aid in missing:
+                entry = self._name_cache.get(aid)
+                if entry and entry[1] > now:
+                    resolved[aid] = entry[0]
+                else:
+                    still_missing.add(aid)
+
+            if not still_missing:
+                return resolved
+
+            if len(still_missing) <= 5:
+                async def _fetch_one(aid: int) -> tuple[int, str]:
+                    try:
+                        acc = await self.get_expense_account(aid)
+                        if acc:
+                            name = acc.get("attributes", {}).get("name", f"Account #{aid}")
+                        else:
+                            name = f"Deleted Firefly Account #{aid}"
+                    except Exception:
+                        name = f"Account #{aid}"
+                    return aid, name
+
+                results = await asyncio.gather(*(_fetch_one(aid) for aid in still_missing))
+                for aid, name in results:
+                    self._name_cache[aid] = (name, now + self._cache_ttl)
+                    resolved[aid] = name
+            else:
+                try:
+                    all_accounts = await self.get_all_expense_accounts()
+                    found_in_sweep: set[int] = set()
+                    for acc in all_accounts:
+                        try:
+                            aid = int(acc.get("id"))
+                            name = acc.get("attributes", {}).get("name", f"Account #{aid}")
+                            self._name_cache[aid] = (name, now + self._cache_ttl)
+                            if aid in account_ids:
+                                resolved[aid] = name
+                                found_in_sweep.add(aid)
+                        except (ValueError, TypeError):
+                            continue
+
+                    for aid in still_missing - found_in_sweep:
+                        name = f"Deleted Firefly Account #{aid}"
+                        self._name_cache[aid] = (name, now + self._cache_ttl)
+                        resolved[aid] = name
+                except Exception:
+                    for aid in still_missing:
+                        resolved[aid] = f"Account #{aid}"
+
+        return resolved
+
     async def create_transaction(self, transaction_data: dict[str, Any]) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{self.base_url}/api/v1/transactions",
-                headers=self.headers,
-                json=transaction_data
-            )
-            resp.raise_for_status()
-            return resp.json()
+        client = self._get_client()
+        resp = await client.post(
+            f"{self.base_url}/api/v1/transactions",
+            headers=self.headers,
+            json=transaction_data,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     async def delete_transaction(self, transaction_id: int) -> None:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.delete(
-                f"{self.base_url}/api/v1/transactions/{transaction_id}",
-                headers=self.headers
-            )
-            resp.raise_for_status()
+        client = self._get_client()
+        resp = await client.delete(
+            f"{self.base_url}/api/v1/transactions/{transaction_id}",
+            headers=self.headers,
+        )
+        resp.raise_for_status()
 
     async def create_meal_voucher_split_transactions(
         self,
@@ -81,7 +217,7 @@ class FireflyClient:
         ticket_amount: float,
         card_account_id: int,
         total_amount: float,
-        description: str = "Supermarket Shopping (Ticket + Card Split)"
+        description: str = "Supermarket Shopping (Ticket + Card Split)",
     ) -> dict[str, Any]:
         """
         Creates two linked transactions in Firefly III:
@@ -104,9 +240,9 @@ class FireflyClient:
                         "description": f"{description} [Voucher Portion]",
                         "source_id": str(ticket_account_id),
                         "destination_id": str(destination_account_id),
-                        "notes": "Paid with Meal Vouchers / Buoni Pasto"
+                        "notes": "Paid with Meal Vouchers / Buoni Pasto",
                     }
-                ]
+                ],
             }
             tx1 = await self.create_transaction(tx1_payload)
             created_transactions.append(tx1)
@@ -124,9 +260,9 @@ class FireflyClient:
                         "description": f"{description} [Card Remainder]",
                         "source_id": str(card_account_id),
                         "destination_id": str(destination_account_id),
-                        "notes": "Paid with Card/Cash Remainder"
+                        "notes": "Paid with Card/Cash Remainder",
                     }
-                ]
+                ],
             }
             tx2 = await self.create_transaction(tx2_payload)
             created_transactions.append(tx2)
@@ -137,7 +273,8 @@ class FireflyClient:
             "card_remainder": remainder,
             "total": total_amount,
             "transactions_created": len(created_transactions),
-            "details": created_transactions
+            "details": created_transactions,
         }
+
 
 firefly_client = FireflyClient()

@@ -12,6 +12,7 @@ from sqlalchemy import inspect
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.database import create_db_and_tables, engine
+from app.services.firefly import firefly_client
 
 
 def run_db_migrations(target_engine=engine) -> None:
@@ -55,6 +56,7 @@ async def lifespan(app: FastAPI):
     # Initialize and migrate SQLite schema on startup
     run_db_migrations(engine)
     yield
+    await firefly_client.aclose()
 
 
 app = FastAPI(
