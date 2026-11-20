@@ -31,7 +31,7 @@ def run_db_migrations(target_engine=engine) -> None:
     if not has_receipt:
         create_db_and_tables(target_engine)
         if is_memory:
-            with target_engine.begin() as connection:
+            with target_engine.connect() as connection:
                 alembic_cfg.attributes["connection"] = connection
                 command.stamp(alembic_cfg, "head")
         else:
@@ -39,7 +39,7 @@ def run_db_migrations(target_engine=engine) -> None:
         return
 
     if is_memory:
-        with target_engine.begin() as connection:
+        with target_engine.connect() as connection:
             alembic_cfg.attributes["connection"] = connection
             if not has_alembic:
                 command.stamp(alembic_cfg, "0001_pre_workbench_baseline")

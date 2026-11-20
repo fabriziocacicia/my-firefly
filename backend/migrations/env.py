@@ -1,9 +1,11 @@
+import sqlite3
 import sys
 from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import create_engine, pool
+import sqlalchemy as sa
+from sqlalchemy import create_engine, event, pool
 from sqlmodel import SQLModel
 
 # Ensure backend root is importable when invoked via CLI or ASGI
@@ -42,6 +44,8 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     connectable = config.attributes.get("connection", None)
     if connectable is not None:
+        if connectable.dialect.name == "sqlite":
+            connectable.exec_driver_sql("PRAGMA foreign_keys = OFF")
         context.configure(
             connection=connectable,
             target_metadata=target_metadata,
@@ -52,7 +56,17 @@ def run_migrations_online() -> None:
         return
 
     engine = create_engine(_get_url(), poolclass=pool.NullPool)
+
+    @event.listens_for(engine, "connect")
+    def disable_sqlite_fks(dbapi_connection, connection_record):
+        if isinstance(dbapi_connection, sqlite3.Connection):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys = OFF")
+            cursor.close()
+
     with engine.connect() as connection:
+        if connection.dialect.name == "sqlite":
+            connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

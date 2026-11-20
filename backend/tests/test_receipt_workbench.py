@@ -12,7 +12,7 @@ import pillow_heif
 from alembic import command
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, pool, text
 from sqlmodel import Session, SQLModel
 
 from app.api.v1.receipts import (
@@ -525,7 +525,9 @@ class LegacyDatabaseMigrationTests(unittest.TestCase):
     def test_pre_workbench_db_upgrades_non_destructively(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "legacy.db"
-            legacy_engine = create_engine(f"sqlite:///{db_path}")
+            legacy_engine = create_engine(
+                f"sqlite:///{db_path}", poolclass=pool.NullPool
+            )
 
             backend_dir = Path(__file__).resolve().parents[1]
             cfg = alembic.config.Config(str(backend_dir / "alembic.ini"))
