@@ -51,14 +51,13 @@ async def search_expense_accounts(
 ):
     """Dedicated type-ahead search endpoint returning brief expense account objects."""
     clean_query = query.strip()
+    if not clean_query:
+        return []
+
     try:
-        if not clean_query:
-            raw_results = await firefly_client.get_all_expense_accounts()
-            raw_results = raw_results[:limit]
-        else:
-            raw_results = await firefly_client.search_expense_accounts(
-                query=clean_query, limit=limit
-            )
+        raw_results = await firefly_client.search_expense_accounts(
+            query=clean_query, limit=limit
+        )
         results: List[FireflyExpenseAccountBrief] = []
         for item in raw_results:
             try:

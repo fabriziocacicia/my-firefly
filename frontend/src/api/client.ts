@@ -23,16 +23,33 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({ detail: res.statusText }));
     let message = `HTTP Error ${res.status}`;
-    if (typeof errorBody.detail === 'string') {
+    if (typeof errorBody === 'string') {
+      message = errorBody;
+    } else if (typeof errorBody?.detail === 'string') {
       message = errorBody.detail;
-    } else if (Array.isArray(errorBody.detail)) {
+    } else if (Array.isArray(errorBody?.detail)) {
       message = errorBody.detail
-        .map((e: any) => (e && typeof e === 'object' ? e.msg || e.detail || JSON.stringify(e) : String(e)))
+        .map((e: any) => {
+          if (!e) return '';
+          if (typeof e === 'string') return e;
+          if (typeof e.msg === 'string') return e.msg;
+          if (typeof e.detail === 'string') return e.detail;
+          return JSON.stringify(e);
+        })
+        .filter(Boolean)
         .join(', ');
-    } else if (errorBody.detail && typeof errorBody.detail === 'object') {
-      message = JSON.stringify(errorBody.detail);
+    } else if (typeof errorBody?.message === 'string') {
+      message = errorBody.message;
+    } else if (typeof errorBody?.error === 'string') {
+      message = errorBody.error;
+    } else if (errorBody && typeof errorBody === 'object') {
+      try {
+        message = JSON.stringify(errorBody);
+      } catch {
+        message = `HTTP Error ${res.status}`;
+      }
     }
-    throw new Error(message);
+    throw new Error(message || `HTTP Error ${res.status}`);
   }
 
   return res.json();

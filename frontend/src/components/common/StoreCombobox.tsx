@@ -84,6 +84,15 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
 
   // Execute live search with debouncing and AbortController
   const executeSearch = useCallback((query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setResults([]);
+      setFetchError(null);
+      setLoading(false);
+      setIsOpen(false);
+      return;
+    }
+
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -94,21 +103,21 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
     setFetchError(null);
 
     api.firefly
-      .searchExpenseAccounts(query.trim(), 10, controller.signal)
+      .searchExpenseAccounts(trimmed, 20, controller.signal)
       .then((data) => {
         setResults(data);
         setLoading(false);
         setActiveIndex(data.length > 0 ? 0 : -1);
       })
       .catch((err: any) => {
-        if (err.name === 'AbortError') return;
+        if (err.name === 'AbortError' || err?.code === 'ERR_CANCELED') return;
         setLoading(false);
-        const errMsg =
-          typeof err?.message === 'string'
-            ? err.message
-            : typeof err === 'string'
-            ? err
-            : 'Failed to search expense accounts';
+        let errMsg = 'Failed to connect to Firefly III';
+        if (typeof err?.message === 'string' && err.message !== '[object Object]') {
+          errMsg = err.message;
+        } else if (typeof err === 'string') {
+          errMsg = err;
+        }
         setFetchError(errMsg);
         setResults([]);
       });
@@ -117,21 +126,41 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const text = e.target.value;
     setInputValue(text);
-    setIsOpen(true);
 
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const trimmed = text.trim();
+    if (trimmed.length === 0) {
+      setResults([]);
+      setFetchError(null);
+      setLoading(false);
+      setIsOpen(false);
+      setActiveIndex(-1);
+      return;
+    }
+
+    setIsOpen(true);
+    setFetchError(null);
     debounceTimerRef.current = setTimeout(() => {
-      executeSearch(text);
+      executeSearch(trimmed);
     }, 150);
   };
 
   const handleFocus = () => {
     if (disabled) return;
-    setIsOpen(true);
-    // Initial fetch on focus to show top candidates
-    executeSearch(inputValue);
+    // Issue zero queries and keep suggestion list closed when input is empty
+    if (inputValue.trim().length >= 1) {
+      setIsOpen(true);
+      executeSearch(inputValue);
+    } else {
+      setIsOpen(false);
+      setFetchError(null);
+    }
   };
 
   const handleSelect = (account: FireflyExpenseAccountBrief) => {
@@ -145,9 +174,13 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    if (abortControllerRef.current) abortControllerRef.current.abort();
     setSelectedName('');
     setInputValue('');
     setResults([]);
+    setFetchError(null);
+    setLoading(false);
     setIsOpen(false);
     setActiveIndex(-1);
     onChange(null, '');
@@ -158,12 +191,15 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
     if (disabled) return;
 
     if (!isOpen) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
-        e.preventDefault();
-        setIsOpen(true);
-        executeSearch(inputValue);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (inputValue.trim().length >= 1) {
+          e.preventDefault();
+          setIsOpen(true);
+          executeSearch(inputValue);
+        }
         return;
       }
+      return;
     }
 
     switch (e.key) {
@@ -311,12 +347,15 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
       {isOpen && (
         <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden animate-in fade-in-0 zoom-in-95 duration-100">
           {fetchError ? (
-            <div className="p-3 text-xs text-red-600 flex items-center justify-between">
-              <span>{fetchError}</span>
+            <div className="p-3 text-xs bg-amber-50/90 border-b border-amber-200 text-amber-900 flex items-center justify-between">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span className="truncate">{fetchError}</span>
+              </div>
               <button
                 type="button"
                 onClick={() => executeSearch(inputValue)}
-                className="text-indigo-600 hover:underline font-medium ml-2"
+                className="text-indigo-600 hover:text-indigo-800 hover:underline font-semibold ml-2 shrink-0"
               >
                 Retry
               </button>
@@ -330,9 +369,9 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-1">
-                  <p>No matching stores found in Firefly III.</p>
+                  <p className="font-medium text-slate-700">No matching stores found in Firefly III.</p>
                   <p className="text-slate-400">
-                    Try another keyword or verify your expense accounts in Firefly.
+                    Create the expense account in Firefly III, then search again.
                   </p>
                 </div>
               )}

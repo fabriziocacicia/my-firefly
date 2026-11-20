@@ -63,7 +63,7 @@ describe('StoreCombobox', () => {
       () => {
         expect(api.firefly.searchExpenseAccounts).toHaveBeenCalledWith(
           'Conad',
-          10,
+          20,
           expect.any(AbortSignal)
         );
       },
@@ -167,6 +167,52 @@ describe('StoreCombobox', () => {
 
     await waitFor(() => {
       expect(screen.getByText('No matching stores found in Firefly III.')).toBeTruthy();
+    });
+  });
+
+  it('does not trigger search or open dropdown on focus when input is empty', () => {
+    render(<StoreCombobox value={null} onChange={vi.fn()} />);
+
+    const input = screen.getByRole('combobox');
+    fireEvent.focus(input);
+
+    expect(api.firefly.searchExpenseAccounts).not.toHaveBeenCalled();
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('resets results and closes dropdown when input text is cleared', async () => {
+    (api.firefly.searchExpenseAccounts as any).mockResolvedValue([
+      { id: 101, name: 'Conad' },
+    ]);
+
+    render(<StoreCombobox value={null} onChange={vi.fn()} />);
+
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'Conad' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Conad')).toBeTruthy();
+    });
+
+    fireEvent.change(input, { target: { value: '' } });
+
+    expect(screen.queryByText('Conad')).toBeNull();
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('displays calm error UI with retry action on search failure', async () => {
+    (api.firefly.searchExpenseAccounts as any).mockRejectedValue(
+      new Error('Failed to connect to Firefly III')
+    );
+
+    render(<StoreCombobox value={null} onChange={vi.fn()} />);
+
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'FailQuery' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to connect to Firefly III')).toBeTruthy();
+      expect(screen.getByText('Retry')).toBeTruthy();
     });
   });
 });
