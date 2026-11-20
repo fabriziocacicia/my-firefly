@@ -1,12 +1,12 @@
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.core.database import get_session
-from app.models.company import Store
 from app.models.price import PriceRecord, PriceRecordCreate, PriceRecordRead
 from app.models.product import Product
+from app.services.firefly import firefly_client
 from app.services.pricing import compute_deal_analysis, normalize_unit_price
 
 router = APIRouter(prefix="/prices", tags=["Price Intelligence & History"])
@@ -36,7 +36,7 @@ def _resolve_normalized_regular_price(
 
 
 @router.get("/history/{product_id}")
-def get_product_price_history(
+async def get_product_price_history(
     product_id: int, session: Session = Depends(get_session)
 ):
     product = session.exec(
@@ -51,7 +51,6 @@ def get_product_price_history(
         select(PriceRecord)
         .where(PriceRecord.product_id == product_id)
         .options(
-            selectinload(PriceRecord.store).selectinload(Store.company),
             selectinload(PriceRecord.product).selectinload(Product.brand),
             selectinload(PriceRecord.product).selectinload(Product.tags),
         )
@@ -96,7 +95,18 @@ def get_product_price_history(
         normalized_regular_prices=norm_reg_prices,
     )
 
-    serialized_records = [PriceRecordRead.model_validate(r) for r in records]
+    account_ids = {r.firefly_account_id for r in records if r.firefly_account_id}
+    resolved_names = await firefly_client.resolve_expense_account_names(account_ids)
+
+    serialized_records: List[PriceRecordRead] = []
+    for r in records:
+        data = r.model_dump()
+        data["product"] = r.product
+        data["store_name"] = resolved_names.get(
+            r.firefly_account_id, f"Account #{r.firefly_account_id}"
+        )
+        serialized_records.append(PriceRecordRead(**data))
+
     return {
         **base_payload,
         "analysis": analysis,
@@ -104,13 +114,27 @@ def get_product_price_history(
     }
 
 
-@router.post("/", response_model=PriceRecordRead)
-def record_price(
+@router.post("/", response_model=PriceRecordRead, status_code=status.HTTP_201_CREATED)
+async def record_price(
     price_in: PriceRecordCreate, session: Session = Depends(get_session)
 ):
+    # 1. Validate product
     product = session.get(Product, price_in.product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
+
+    # 2. Validate Firefly account exists & is active
+    acc = await firefly_client.get_expense_account(price_in.firefly_account_id)
+    if not acc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Firefly expense account #{price_in.firefly_account_id} not found in Firefly III",
+        )
+    if not acc.get("attributes", {}).get("active", True):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Firefly expense account #{price_in.firefly_account_id} is inactive",
+        )
 
     effective_unit = price_in.unit or product.default_unit
     effective_pkg_size = (
@@ -134,7 +158,7 @@ def record_price(
 
     price_record = PriceRecord(
         product_id=price_in.product_id,
-        store_id=price_in.store_id,
+        firefly_account_id=price_in.firefly_account_id,
         recorded_date=price_in.recorded_date,
         regular_price=price_in.regular_price,
         paid_price=price_in.paid_price,
@@ -152,13 +176,25 @@ def record_price(
 
     session.add(price_record)
     session.commit()
+
     loaded = session.exec(
         select(PriceRecord)
         .where(PriceRecord.id == price_record.id)
         .options(
-            selectinload(PriceRecord.store).selectinload(Store.company),
             selectinload(PriceRecord.product).selectinload(Product.brand),
             selectinload(PriceRecord.product).selectinload(Product.tags),
         )
     ).first()
-    return loaded
+
+    resolved_names = await firefly_client.resolve_expense_account_names(
+        {price_record.firefly_account_id}
+    )
+    store_name = resolved_names.get(
+        price_record.firefly_account_id,
+        f"Account #{price_record.firefly_account_id}",
+    )
+
+    data = loaded.model_dump()
+    data["product"] = loaded.product
+    data["store_name"] = store_name
+    return PriceRecordRead(**data)
