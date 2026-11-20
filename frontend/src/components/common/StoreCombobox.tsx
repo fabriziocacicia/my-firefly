@@ -103,7 +103,13 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
       .catch((err: any) => {
         if (err.name === 'AbortError') return;
         setLoading(false);
-        setFetchError(err.message || 'Failed to search expense accounts');
+        const errMsg =
+          typeof err?.message === 'string'
+            ? err.message
+            : typeof err === 'string'
+            ? err
+            : 'Failed to search expense accounts';
+        setFetchError(errMsg);
         setResults([]);
       });
   }, []);

@@ -22,7 +22,17 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(errorBody.detail || `HTTP Error ${res.status}`);
+    let message = `HTTP Error ${res.status}`;
+    if (typeof errorBody.detail === 'string') {
+      message = errorBody.detail;
+    } else if (Array.isArray(errorBody.detail)) {
+      message = errorBody.detail
+        .map((e: any) => (e && typeof e === 'object' ? e.msg || e.detail || JSON.stringify(e) : String(e)))
+        .join(', ');
+    } else if (errorBody.detail && typeof errorBody.detail === 'object') {
+      message = JSON.stringify(errorBody.detail);
+    }
+    throw new Error(message);
   }
 
   return res.json();

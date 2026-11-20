@@ -46,17 +46,19 @@ async def get_firefly_status():
     response_model=List[FireflyExpenseAccountBrief],
 )
 async def search_expense_accounts(
-    query: str = Query(..., min_length=1, description="Search query string"),
+    query: str = Query("", description="Search query string"),
     limit: int = Query(20, ge=1, le=50),
 ):
     """Dedicated type-ahead search endpoint returning brief expense account objects."""
     clean_query = query.strip()
-    if not clean_query:
-        return []
     try:
-        raw_results = await firefly_client.search_expense_accounts(
-            query=clean_query, limit=limit
-        )
+        if not clean_query:
+            raw_results = await firefly_client.get_all_expense_accounts()
+            raw_results = raw_results[:limit]
+        else:
+            raw_results = await firefly_client.search_expense_accounts(
+                query=clean_query, limit=limit
+            )
         results: List[FireflyExpenseAccountBrief] = []
         for item in raw_results:
             try:

@@ -512,6 +512,14 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             self.assertEqual(len(items), 1)
             self.assertEqual(items[0]["name"], "Conad Via Roma")
 
+            # Autocomplete with empty query (initial focus)
+            empty_res = self.client.get(
+                "/api/v1/firefly/expense-accounts/search?query="
+            )
+            self.assertEqual(empty_res.status_code, 200)
+            empty_items = empty_res.json()
+            self.assertEqual(len(empty_items), 2)
+
             # Full directory
             list_res = self.client.get("/api/v1/firefly/expense-accounts")
             self.assertEqual(list_res.status_code, 200)
