@@ -1,6 +1,6 @@
 import {
   Company, Store, Product, Brand, Tag, PriceRecord,
-  FireflyExpenseAccount, FireflyAssetAccount,
+  FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount,
   ProductPriceHistoryResponse, ReceiptCreatePayload, ReceiptRecord, ReceiptAttachment
 } from '../types';
 
@@ -32,13 +32,30 @@ export const api = {
   firefly: {
     getStatus: () => request<{ connected: boolean; version?: string; error?: string; url: string }>('/firefly/status'),
     getExpenseAccounts: () => request<FireflyExpenseAccount[]>('/firefly/expense-accounts'),
+    listExpenseAccounts: () => request<FireflyExpenseAccount[]>('/firefly/expense-accounts'),
+    searchExpenseAccounts: (query: string, limit: number = 10, signal?: AbortSignal) =>
+      request<FireflyExpenseAccountBrief[]>(
+        `/firefly/expense-accounts/search?query=${encodeURIComponent(query)}&limit=${limit}`,
+        { signal }
+      ),
+    getExpenseAccount: (id: number) =>
+      request<FireflyExpenseAccount>(`/firefly/expense-accounts/${id}`),
     getAssetAccounts: () => request<FireflyAssetAccount[]>('/firefly/asset-accounts'),
   },
 
   companies: {
     list: () => request<Company[]>('/companies/'),
-    create: (data: { name: string; default_category?: string }) =>
+    create: (data: { name: string; default_category?: string; notes?: string }) =>
       request<Company>('/companies/', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: number, data: Partial<Company>) =>
+      request<Company>(`/companies/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: number) =>
+      request<void>(`/companies/${id}`, { method: 'DELETE' }),
+    assignAccountCompany: (accountId: number, payload: { company_id: number | null }) =>
+      request<FireflyExpenseAccount>(`/companies/accounts/${accountId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
     listStores: (companyId?: number) =>
       request<Store[]>(companyId ? `/companies/stores?company_id=${companyId}` : '/companies/stores'),
     quickMap: (params: { company_name: string; store_name: string; firefly_account_id: number; firefly_account_name: string }) => {
@@ -78,7 +95,8 @@ export const api = {
   prices: {
     record: (data: {
       product_id: number;
-      store_id: number;
+      firefly_account_id?: number;
+      store_id?: number;
       recorded_date: string;
       regular_price: number;
       paid_price: number;
@@ -88,6 +106,7 @@ export const api = {
       quantity: number;
       unit: string;
       package_size?: number;
+      normalized_regular_price?: number;
       notes?: string;
     }) => request<PriceRecord>('/prices/', { method: 'POST', body: JSON.stringify(data) }),
     getHistory: (productId: number) =>
