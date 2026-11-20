@@ -6,9 +6,9 @@ A companion web application for **Firefly III** to track SKU-level product price
 
 ## 🚀 Key Capabilities
 
-1. **Company & Store Hierarchy**:
-   - Map flat Firefly expense accounts (e.g. `Acqua e Sapone Via Milano Catania`, `Acqua e Sapone Palermo`) to unified parent companies (`Acqua e Sapone`, `Conad`, `Lidl`, `MD`).
-   - Compare product prices across branches or between retail chains.
+1. **Live Firefly Stores & Optional Companies**:
+   - Instant live lookup and autocomplete across all Firefly III expense accounts without upfront manual mapping.
+   - Optionally group flat accounts (e.g. `Acqua e Sapone Via Milano Catania`, `Acqua e Sapone Palermo`) under parent companies (`Acqua e Sapone`, `Conad`, `Lidl`, `MD`) for cross-branch price comparisons.
 
 2. **Products, Brands & Price Intelligence**:
    - Track products with brands, package sizes, and multi-dimensional tags (e.g. `[Food, Pasta, Organic]`, `[Fruit, Bio]`).

@@ -636,3 +636,12 @@ File additions and modifications span infrastructure configuration, the Python b
   - Update `activeTab` / `onTabChange` prop types in both files to `AppTab` (`'stores' | 'catalog' | 'workflows' | 'workbench'`).
   - Wrap `<Navbar />` + `<main>` inside `<ReceiptWorkbenchProvider>` in `App.tsx` and render `{activeTab === 'workbench' && <ReceiptWorkbenchPage />}`.
   - Add `Receipt Workbench` tab button with `Receipt` Lucide icon and responsive compact mobile labels (`"Stores"`, `"Catalog"`, `"Workflows"`, `"Workbench"` via `sm:hidden` / `hidden sm:inline` spans and `overflow-x-auto`) so all 4 tabs fit without wrapping or overflow on narrow mobile screens.
+
+--------------------------------------------------------------------------------
+
+## Amendment (2026-11-20): Live Firefly Store Lookup & Optional Company Linking
+
+Following the approval and implementation of `docs/designs/live_firefly_stores_and_optional_company.md`, the receipt workbench and pricing subsystems were transitioned from the legacy local `Store` table to direct `firefly_account_id` references:
+1. **Elimination of Local Store Synchronization:** The local `Store` table and mandatory `POST /api/v1/companies/quick-map` pre-mapping gates have been removed. `Receipt` and `PriceRecord` now persist `firefly_account_id` directly, making Firefly III the single source of truth for all expense accounts.
+2. **Dedicated Live Store Autocomplete:** The static store `<select>` in `WorkbenchHeader.tsx` and `CatalogPage.tsx` was replaced with `<StoreCombobox>`, providing debounced live search (`GET /api/v1/firefly/expense-accounts/search?query=...`) with request aborting, keyboard navigation, and clear actions.
+3. **Optional Parent Company Metadata:** Company grouping is now maintained via the lightweight `CompanyAccountLink` association table (`firefly_account_id -> company_id`). Linking accounts to parent companies is completely optional and non-blocking for receipt itemization and price tracking.
