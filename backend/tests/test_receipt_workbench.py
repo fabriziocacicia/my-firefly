@@ -419,7 +419,7 @@ class LegacyDatabaseMigrationTests(unittest.TestCase):
                 )
                 conn.execute(
                     text(
-                        "INSERT INTO store (id, name, company_id, created_at) VALUES (1, 'Lidl North', 1, '2026-01-01 00:00:00')"
+                        "INSERT INTO store (id, name, company_id, firefly_account_id, created_at) VALUES (1, 'Lidl North', 1, 99, '2026-01-01 00:00:00')"
                     )
                 )
                 conn.execute(
@@ -443,7 +443,11 @@ class LegacyDatabaseMigrationTests(unittest.TestCase):
 
             insp = inspect(legacy_engine)
             self.assertTrue(insp.has_table("alembic_version"))
+            self.assertTrue(insp.has_table("companyaccountlink"))
+            self.assertFalse(insp.has_table("store"))
             receipt_cols = {c["name"] for c in insp.get_columns("receipt")}
+            self.assertIn("firefly_account_id", receipt_cols)
+            self.assertNotIn("store_id", receipt_cols)
             self.assertIn("basket_discount", receipt_cols)
             self.assertIn("firefly_voucher_transaction_id", receipt_cols)
             item_cols = {c["name"]: c for c in insp.get_columns("receiptitem")}
@@ -454,6 +458,7 @@ class LegacyDatabaseMigrationTests(unittest.TestCase):
                 row = s.get(Receipt, 1)
                 self.assertIsNotNone(row)
                 self.assertEqual(row.total_amount, 1.50)
+                self.assertEqual(row.firefly_account_id, 99)
                 self.assertEqual(row.payment_mode, "single")
                 self.assertEqual(row.basket_discount, 0.0)
 
