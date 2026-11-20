@@ -16,14 +16,21 @@ engine = create_engine(
 )
 
 
-@event.listens_for(Engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    if isinstance(dbapi_connection, sqlite3.Connection):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys = ON")
-        cursor.execute("PRAGMA journal_mode = WAL")
-        cursor.execute("PRAGMA busy_timeout = 5000")
-        cursor.close()
+def configure_sqlite_pragmas(target_engine, foreign_keys: bool = True):
+    @event.listens_for(target_engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, connection_record):
+        if isinstance(dbapi_connection, sqlite3.Connection):
+            cursor = dbapi_connection.cursor()
+            if foreign_keys:
+                cursor.execute("PRAGMA foreign_keys = ON")
+            else:
+                cursor.execute("PRAGMA foreign_keys = OFF")
+            cursor.execute("PRAGMA journal_mode = WAL")
+            cursor.execute("PRAGMA busy_timeout = 5000")
+            cursor.close()
+
+
+configure_sqlite_pragmas(engine, foreign_keys=True)
 
 
 def create_db_and_tables(target_engine=engine):

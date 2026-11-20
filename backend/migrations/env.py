@@ -44,8 +44,6 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     connectable = config.attributes.get("connection", None)
     if connectable is not None:
-        if connectable.dialect.name == "sqlite":
-            connectable.exec_driver_sql("PRAGMA foreign_keys = OFF")
         context.configure(
             connection=connectable,
             target_metadata=target_metadata,
@@ -65,8 +63,6 @@ def run_migrations_online() -> None:
             cursor.close()
 
     with engine.connect() as connection:
-        if connection.dialect.name == "sqlite":
-            connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
