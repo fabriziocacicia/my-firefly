@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { FireflyExpenseAccount, FireflyAssetAccount } from '../types';
 import { Ticket, Users, Send, CheckCircle2, Calculator } from 'lucide-react';
+import { StoreCombobox } from '../components/common/StoreCombobox';
 
 export const WorkflowsPage: React.FC = () => {
   const [expenseAccounts, setExpenseAccounts] = useState<FireflyExpenseAccount[]>([]);
@@ -9,6 +10,7 @@ export const WorkflowsPage: React.FC = () => {
 
   // Buoni Pasto State
   const [destAccountId, setDestAccountId] = useState<number | ''>('');
+  const [destAccountName, setDestAccountName] = useState<string>('');
   const [ticketAccountId, setTicketAccountId] = useState<number | ''>('');
   const [cardAccountId, setCardAccountId] = useState<number | ''>('');
   const [totalAmount, setTotalAmount] = useState('15.00');
@@ -36,7 +38,10 @@ export const WorkflowsPage: React.FC = () => {
     ]).then(([exp, ass]) => {
       setExpenseAccounts(exp);
       setAssetAccounts(ass);
-      if (exp.length > 0) setDestAccountId(exp[0].id);
+      if (exp.length > 0) {
+        setDestAccountId(exp[0].id);
+        setDestAccountName(exp[0].name);
+      }
       if (ass.length > 0) {
         setTicketAccountId(ass[0].id);
         setCardAccountId(ass[ass.length > 1 ? 1 : 0].id);
@@ -61,17 +66,16 @@ export const WorkflowsPage: React.FC = () => {
     setVoucherSubmitting(true);
     setVoucherSuccess(null);
     try {
-      const destAcc = expenseAccounts.find(a => a.id === Number(destAccountId));
       const res = await api.workflows.mealVoucherSplit({
         purchase_date: new Date().toISOString().split('T')[0],
         destination_account_id: Number(destAccountId),
-        destination_account_name: destAcc?.name || 'Supermarket',
+        destination_account_name: destAccountName || 'Supermarket',
         ticket_account_id: Number(ticketAccountId),
         ticket_count: count,
         ticket_unit_value: singleValue,
         card_account_id: Number(cardAccountId),
         total_amount: numericTotal,
-        description: `Grocery Shopping at ${destAcc?.name || 'Supermarket'}`
+        description: `Grocery Shopping at ${destAccountName || 'Supermarket'}`
       });
       setVoucherSuccess(`Successfully created 2 split transactions in Firefly! (Vouchers: €${res.ticket_amount.toFixed(2)}, Card: €${res.card_remainder.toFixed(2)})`);
     } catch (err: any) {
@@ -138,15 +142,15 @@ export const WorkflowsPage: React.FC = () => {
             <form onSubmit={handleExecuteMealVoucher} className="mt-5 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Supermarket / Expense Account</label>
-                <select
-                  value={destAccountId}
-                  onChange={e => setDestAccountId(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                >
-                  {expenseAccounts.map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
+                <StoreCombobox
+                  value={destAccountId ? Number(destAccountId) : null}
+                  accountNameHint={destAccountName}
+                  onChange={(id, name) => {
+                    setDestAccountId(id ?? '');
+                    setDestAccountName(name);
+                  }}
+                  placeholder="Search store / expense account..."
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">

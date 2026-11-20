@@ -22,17 +22,6 @@ export interface Company {
   store_count?: number;
 }
 
-/** @deprecated Replaced by live Firefly expense accounts. Retained temporarily during Phase 4 transition. */
-export interface Store {
-  id: number;
-  name: string;
-  company_id: number;
-  address?: string;
-  firefly_account_id?: number;
-  firefly_account_name?: string;
-  company?: Company;
-}
-
 export interface Product {
   id: number;
   name: string;
@@ -49,7 +38,6 @@ export interface PriceRecord {
   id: number;
   product_id: number;
   firefly_account_id: number;
-  store_id?: number;
   store_name?: string;
   recorded_date: string;
   regular_price: number;
@@ -65,7 +53,6 @@ export interface PriceRecord {
   firefly_transaction_id?: number;
   notes?: string;
   product?: Product;
-  store?: Store;
 }
 
 export interface DealAnalysis {
@@ -133,7 +120,6 @@ export interface ReceiptItemPayload {
 
 export interface ReceiptCreatePayload {
   firefly_account_id: number;
-  store_id?: number;
   purchase_date: string;
   total_amount: number;
   basket_discount: number;
@@ -174,7 +160,6 @@ export interface ReceiptItemRecord {
 export interface ReceiptRecord {
   id: number;
   firefly_account_id: number;
-  store_id?: number;
   store_name?: string;
   purchase_date: string;
   total_amount: number;
@@ -188,7 +173,6 @@ export interface ReceiptRecord {
   firefly_voucher_transaction_id?: number | null;
   notes?: string | null;
   created_at: string;
-  store?: Store;
   items: ReceiptItemRecord[];
   attachments: ReceiptAttachment[];
 }

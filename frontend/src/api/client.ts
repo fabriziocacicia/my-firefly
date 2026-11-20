@@ -1,5 +1,5 @@
 import {
-  Company, Store, Product, Brand, Tag, PriceRecord,
+  Company, Product, Brand, Tag, PriceRecord,
   FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount,
   ProductPriceHistoryResponse, ReceiptCreatePayload, ReceiptRecord, ReceiptAttachment
 } from '../types';
@@ -56,12 +56,6 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(payload),
       }),
-    listStores: (companyId?: number) =>
-      request<Store[]>(companyId ? `/companies/stores?company_id=${companyId}` : '/companies/stores'),
-    quickMap: (params: { company_name: string; store_name: string; firefly_account_id: number; firefly_account_name: string }) => {
-      const url = `/companies/quick-map?company_name=${encodeURIComponent(params.company_name)}&store_name=${encodeURIComponent(params.store_name)}&firefly_account_id=${params.firefly_account_id}&firefly_account_name=${encodeURIComponent(params.firefly_account_name)}`;
-      return request<Store>(url, { method: 'POST' });
-    },
   },
 
   tags: {

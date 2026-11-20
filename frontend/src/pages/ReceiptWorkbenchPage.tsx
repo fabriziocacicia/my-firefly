@@ -19,7 +19,7 @@ import { ReceiptCreatePayload, ReceiptRecord } from '../types';
 
 export const ReceiptWorkbenchPage: React.FC = () => {
   const {
-    storeId,
+    fireflyAccountId,
     purchaseDate,
     targetTotal,
     basketDiscount,
@@ -35,7 +35,6 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     activeMode,
     attachedFile,
     setAttachedFile,
-    selectedStore,
     isBalanced,
     canSaveLocally,
     canPushToFirefly,
@@ -71,10 +70,8 @@ export const ReceiptWorkbenchPage: React.FC = () => {
 
   const getPushDisabledReasons = (): string[] => {
     const reasons: string[] = [];
-    if (!storeId) {
-      reasons.push('Select a store');
-    } else if (!selectedStore?.firefly_account_id) {
-      reasons.push('Map selected store to a Firefly expense account');
+    if (!fireflyAccountId) {
+      reasons.push('Select a store / expense account');
     }
     if (draftItems.length === 0) reasons.push('Add at least one item');
     if (targetTotal <= 0) reasons.push('Set Target Total > 0');
@@ -88,12 +85,12 @@ export const ReceiptWorkbenchPage: React.FC = () => {
   };
 
   const handleSaveOrPush = async (shouldPush: boolean) => {
-    if (!storeId) return;
+    if (!fireflyAccountId) return;
     setSubmitting(true);
     setStatusMessage(null);
 
     const payload: ReceiptCreatePayload = {
-      store_id: storeId,
+      firefly_account_id: fireflyAccountId,
       purchase_date: purchaseDate,
       total_amount: targetTotal,
       basket_discount: basketDiscount,
@@ -303,7 +300,7 @@ export const ReceiptWorkbenchPage: React.FC = () => {
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-bold text-sm text-slate-900">
-                          {receipt.store?.company?.name || 'Store'} — {receipt.store?.name}
+                          {receipt.store_name || `Store #${receipt.firefly_account_id}`}
                         </span>
                         <span className="text-xs text-slate-500">
                           {receipt.purchase_date}

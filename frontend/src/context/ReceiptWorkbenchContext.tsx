@@ -1,7 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { del, get, set } from 'idb-keyval';
-import { api } from '../api/client';
-import { DraftReceiptItem, EntryMode, PaymentMode, Store } from '../types';
+import { DraftReceiptItem, EntryMode, PaymentMode } from '../types';
 
 const DRAFT_STORAGE_KEY = 'firefly_receipt_draft';
 const FILE_STORAGE_KEY = 'draft_receipt_file';
@@ -19,7 +18,9 @@ const createTempId = (): string =>
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 interface PersistedDraft {
-  storeId: number | null;
+  fireflyAccountId: number | null;
+  storeName: string;
+  storeId?: number | null;
   purchaseDate: string;
   targetTotal: number;
   basketDiscount: number;
@@ -36,6 +37,8 @@ interface PersistedDraft {
 
 const loadInitialDraft = (): PersistedDraft => {
   const fallback: PersistedDraft = {
+    fireflyAccountId: null,
+    storeName: '',
     storeId: null,
     purchaseDate: todayIso(),
     targetTotal: 0,
@@ -56,8 +59,11 @@ const loadInitialDraft = (): PersistedDraft => {
     const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<PersistedDraft>;
+    const resolvedAccountId = parsed.fireflyAccountId ?? parsed.storeId ?? null;
     return {
-      storeId: parsed.storeId ?? null,
+      fireflyAccountId: resolvedAccountId,
+      storeName: typeof parsed.storeName === 'string' ? parsed.storeName : '',
+      storeId: resolvedAccountId,
       purchaseDate: parsed.purchaseDate || todayIso(),
       targetTotal: typeof parsed.targetTotal === 'number' ? parsed.targetTotal : 0,
       basketDiscount: typeof parsed.basketDiscount === 'number' ? parsed.basketDiscount : 0,
@@ -81,8 +87,10 @@ const loadInitialDraft = (): PersistedDraft => {
 export type DraftItemInput = Omit<DraftReceiptItem, 'temp_id' | 'line_total'>;
 
 interface ReceiptWorkbenchContextValue {
-  storeId: number | null;
-  setStoreId: (id: number | null) => void;
+  fireflyAccountId: number | null;
+  setFireflyAccountId: (id: number | null) => void;
+  storeName: string;
+  setStoreName: (name: string) => void;
   purchaseDate: string;
   setPurchaseDate: (date: string) => void;
   targetTotal: number;
@@ -108,8 +116,6 @@ interface ReceiptWorkbenchContextValue {
   setActiveMode: (mode: EntryMode) => void;
   attachedFile: File | null;
   setAttachedFile: (file: File | null) => void;
-  stores: Store[];
-  refreshStores: () => Promise<void>;
   isHydrated: boolean;
 
   addItem: (item: DraftItemInput) => void;
@@ -120,7 +126,6 @@ interface ReceiptWorkbenchContextValue {
   computedItemsSum: number;
   calculatedSum: number;
   discrepancyDelta: number;
-  selectedStore: Store | null;
   isBalanced: boolean;
   canSaveLocally: boolean;
   canPushToFirefly: boolean;
@@ -131,7 +136,8 @@ const ReceiptWorkbenchContext = createContext<ReceiptWorkbenchContextValue | und
 export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const initial = useMemo(loadInitialDraft, []);
 
-  const [storeId, setStoreId] = useState<number | null>(initial.storeId);
+  const [fireflyAccountId, setFireflyAccountId] = useState<number | null>(initial.fireflyAccountId);
+  const [storeName, setStoreName] = useState<string>(initial.storeName);
   const [purchaseDate, setPurchaseDate] = useState<string>(initial.purchaseDate);
   const [targetTotal, setTargetTotal] = useState<number>(initial.targetTotal);
   const [basketDiscount, setBasketDiscount] = useState<number>(initial.basketDiscount);
@@ -145,21 +151,7 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
   const [savedReceiptId, setSavedReceiptId] = useState<number | null>(initial.savedReceiptId);
   const [activeMode, setActiveMode] = useState<EntryMode>(initial.activeMode);
   const [attachedFile, setAttachedFileState] = useState<File | null>(null);
-  const [stores, setStores] = useState<Store[]>([]);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
-
-  const refreshStores = useCallback(async () => {
-    try {
-      const list = await api.companies.listStores();
-      setStores(list);
-    } catch (err) {
-      console.error('Failed to load stores for workbench:', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshStores();
-  }, [refreshStores]);
 
   // Hydrate binary attachment from IndexedDB before allowing writes/deletions
   useEffect(() => {
@@ -194,7 +186,9 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const payload: PersistedDraft = {
-        storeId,
+        fireflyAccountId,
+        storeName,
+        storeId: fireflyAccountId,
         purchaseDate,
         targetTotal,
         basketDiscount,
@@ -217,7 +211,8 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
 
     return () => window.clearTimeout(timer);
   }, [
-    storeId,
+    fireflyAccountId,
+    storeName,
     purchaseDate,
     targetTotal,
     basketDiscount,
@@ -276,7 +271,8 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
   }, []);
 
   const clearDraft = useCallback(() => {
-    setStoreId(null);
+    setFireflyAccountId(null);
+    setStoreName('');
     setPurchaseDate(todayIso());
     setTargetTotal(0);
     setBasketDiscount(0);
@@ -312,16 +308,11 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     [calculatedSum, targetTotal]
   );
 
-  const selectedStore = useMemo(
-    () => stores.find(s => s.id === storeId) || null,
-    [stores, storeId]
-  );
-
   const isBalanced =
     targetTotal > 0 && draftItems.length > 0 && Math.abs(discrepancyDelta) <= 0.01;
 
   const canSaveLocally =
-    Boolean(storeId) &&
+    Boolean(fireflyAccountId) &&
     isBalanced &&
     draftItems.every(
       i => i.product_id > 0 && i.quantity > 0 && i.package_size > 0 && i.paid_price >= 0
@@ -329,13 +320,14 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
 
   const canPushToFirefly =
     canSaveLocally &&
-    Boolean(selectedStore?.firefly_account_id) &&
     Boolean(sourceAccountId) &&
     (paymentMode !== 'split_vouchers' || (Boolean(voucherAccountId) && voucherCount > 0));
 
   const value: ReceiptWorkbenchContextValue = {
-    storeId,
-    setStoreId,
+    fireflyAccountId,
+    setFireflyAccountId,
+    storeName,
+    setStoreName,
     purchaseDate,
     setPurchaseDate,
     targetTotal,
@@ -361,8 +353,6 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     setActiveMode,
     attachedFile,
     setAttachedFile,
-    stores,
-    refreshStores,
     isHydrated,
     addItem,
     updateItem,
@@ -371,7 +361,6 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     computedItemsSum,
     calculatedSum,
     discrepancyDelta,
-    selectedStore,
     isBalanced,
     canSaveLocally,
     canPushToFirefly,
