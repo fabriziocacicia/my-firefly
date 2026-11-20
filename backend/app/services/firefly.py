@@ -6,10 +6,15 @@ from app.core.config import settings
 
 
 class FireflyClient:
-    def __init__(self, base_url: Optional[str] = None, token: Optional[str] = None):
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        token: Optional[str] = None,
+        client: Optional[httpx.AsyncClient] = None,
+    ):
         self.base_url = (base_url or settings.FIREFLY_URL).rstrip("/")
         self.token = token or settings.FIREFLY_TOKEN
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: Optional[httpx.AsyncClient] = client
         self._name_cache: dict[int, tuple[str, float]] = {}  # account_id -> (name, expires_at)
         self._cache_lock = asyncio.Lock()
         self._cache_ttl: float = 60.0
@@ -24,12 +29,12 @@ class FireflyClient:
         }
 
     def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
+        if self._client is None or getattr(self._client, "is_closed", False):
             self._client = httpx.AsyncClient(timeout=15.0)
         return self._client
 
     async def aclose(self) -> None:
-        if self._client and not self._client.is_closed:
+        if self._client and not getattr(self._client, "is_closed", False):
             await self._client.aclose()
             self._client = None
 
