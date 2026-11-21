@@ -45,6 +45,29 @@ describe('StoreCombobox', () => {
     });
   });
 
+  it('updates and resolves account name when value prop changes without hint', async () => {
+    (api.firefly.getExpenseAccount as any).mockImplementation(async (id: number) => {
+      if (id === 101) return { id: 101, name: 'First Account', active: true };
+      if (id === 102) return { id: 102, name: 'Second Account', active: true };
+      return null;
+    });
+
+    const { rerender } = render(<StoreCombobox value={101} onChange={vi.fn()} />);
+
+    await waitFor(() => {
+      const input = screen.getByRole('combobox') as HTMLInputElement;
+      expect(input.value).toBe('First Account');
+    });
+
+    // Rerender with value changed to 102 without hint
+    rerender(<StoreCombobox value={102} onChange={vi.fn()} />);
+
+    await waitFor(() => {
+      const input = screen.getByRole('combobox') as HTMLInputElement;
+      expect(input.value).toBe('Second Account');
+    });
+  });
+
   it('debounces search requests and renders matching results', async () => {
     (api.firefly.searchExpenseAccounts as any).mockResolvedValue([
       { id: 101, name: 'Conad Via Roma' },

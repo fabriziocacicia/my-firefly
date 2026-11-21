@@ -46,15 +46,19 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
   const abortControllerRef = useRef<AbortController | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isClearingRef = useRef(false);
+  const prevValueRef = useRef<number | null>(value);
 
   // Sync selectedName and inputValue when value or accountNameHint changes
   useEffect(() => {
+    const valueChanged = value !== prevValueRef.current;
+    prevValueRef.current = value;
+
     if (value !== null) {
       if (accountNameHint) {
         setSelectedName(accountNameHint);
         setInputValue(accountNameHint);
-      } else if (!selectedName) {
-        // Resolve name asynchronously if hint is not provided
+      } else if (valueChanged || !selectedName) {
+        // Resolve name asynchronously if hint is not provided or value changed
         let isMounted = true;
         api.firefly
           .getExpenseAccount(value)

@@ -78,10 +78,6 @@ export interface FireflyExpenseAccount {
   active: boolean;
   company_id?: number | null;
   company_name?: string | null;
-  is_mapped?: boolean;
-  mapped_store_id?: number;
-  mapped_store_name?: string;
-  mapped_company_name?: string;
 }
 
 export interface FireflyAssetAccount {

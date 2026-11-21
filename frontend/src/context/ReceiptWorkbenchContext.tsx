@@ -59,7 +59,7 @@ const loadInitialDraft = (): PersistedDraft => {
     const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<PersistedDraft>;
-    const resolvedAccountId = parsed.fireflyAccountId ?? parsed.storeId ?? null;
+    const resolvedAccountId = typeof parsed.fireflyAccountId === 'number' ? parsed.fireflyAccountId : null;
     return {
       fireflyAccountId: resolvedAccountId,
       storeName: typeof parsed.storeName === 'string' ? parsed.storeName : '',

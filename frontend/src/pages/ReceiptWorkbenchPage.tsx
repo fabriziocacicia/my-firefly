@@ -300,7 +300,7 @@ export const ReceiptWorkbenchPage: React.FC = () => {
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-bold text-sm text-slate-900">
-                          {receipt.store_name || `Store #${receipt.firefly_account_id}`}
+                          {receipt.store_name || `Account #${receipt.firefly_account_id}`}
                         </span>
                         <span className="text-xs text-slate-500">
                           {receipt.purchase_date}

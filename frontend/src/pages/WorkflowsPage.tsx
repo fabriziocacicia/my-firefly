@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
-import { FireflyExpenseAccount, FireflyAssetAccount } from '../types';
+import { FireflyAssetAccount } from '../types';
 import { Ticket, Users, Send, CheckCircle2, Calculator } from 'lucide-react';
 import { StoreCombobox } from '../components/common/StoreCombobox';
 
 export const WorkflowsPage: React.FC = () => {
-  const [expenseAccounts, setExpenseAccounts] = useState<FireflyExpenseAccount[]>([]);
   const [assetAccounts, setAssetAccounts] = useState<FireflyAssetAccount[]>([]);
 
   // Buoni Pasto State
@@ -28,28 +27,23 @@ export const WorkflowsPage: React.FC = () => {
   const [subAmount, setSubAmount] = useState('17.99');
   const [subSourceAccountId, setSubSourceAccountId] = useState<number | ''>('');
   const [subExpenseAccountId, setSubExpenseAccountId] = useState<number | ''>('');
+  const [subExpenseAccountName, setSubExpenseAccountName] = useState<string>('');
   const [subSubmitting, setSubSubmitting] = useState(false);
   const [subSuccess, setSubSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([
-      api.firefly.getExpenseAccounts(),
-      api.firefly.getAssetAccounts()
-    ]).then(([exp, ass]) => {
-      setExpenseAccounts(exp);
-      setAssetAccounts(ass);
-      if (exp.length > 0) {
-        setDestAccountId(exp[0].id);
-        setDestAccountName(exp[0].name);
-      }
-      if (ass.length > 0) {
-        setTicketAccountId(ass[0].id);
-        setCardAccountId(ass[ass.length > 1 ? 1 : 0].id);
-        setSubSourceAccountId(ass[0].id);
-      }
-    }).catch(err => {
-      console.error(err);
-    });
+    api.firefly.getAssetAccounts()
+      .then(ass => {
+        setAssetAccounts(ass);
+        if (ass.length > 0) {
+          setTicketAccountId(ass[0].id);
+          setCardAccountId(ass[ass.length > 1 ? 1 : 0].id);
+          setSubSourceAccountId(ass[0].id);
+        }
+      })
+      .catch(err => {
+        console.error(err);
+      });
   }, []);
 
   // Compute live breakdown for Buoni Pasto
@@ -237,8 +231,8 @@ export const WorkflowsPage: React.FC = () => {
 
               <button
                 type="submit"
-                disabled={voucherSubmitting}
-                className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center space-x-1.5"
+                disabled={voucherSubmitting || !destAccountId}
+                className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center space-x-1.5"
               >
                 <Send className="w-4 h-4" />
                 <span>{voucherSubmitting ? 'Posting to Firefly...' : 'Create Both Transactions in Firefly'}</span>
@@ -339,22 +333,21 @@ export const WorkflowsPage: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Expense Account (Destination)</label>
-                <select
-                  value={subExpenseAccountId}
-                  onChange={e => setSubExpenseAccountId(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                >
-                  <option value="">Select Firefly Expense Account...</option>
-                  {expenseAccounts.map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
+                <StoreCombobox
+                  value={subExpenseAccountId ? Number(subExpenseAccountId) : null}
+                  accountNameHint={subExpenseAccountName}
+                  onChange={(id, name) => {
+                    setSubExpenseAccountId(id ?? '');
+                    setSubExpenseAccountName(name);
+                  }}
+                  placeholder="Search expense account..."
+                />
               </div>
 
               <button
                 type="submit"
                 disabled={subSubmitting || !subExpenseAccountId}
-                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center space-x-1.5"
+                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center space-x-1.5"
               >
                 <Send className="w-4 h-4" />
                 <span>{subSubmitting ? 'Posting...' : `Post "${subServiceName} - ${subMonthLabel}"`}</span>

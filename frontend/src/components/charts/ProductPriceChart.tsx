@@ -27,7 +27,7 @@ function getStoreLabel(record: PriceRecord): string {
   if (record.store_name) {
     return record.store_name;
   }
-  return `Store #${record.firefly_account_id}`;
+  return `Account #${record.firefly_account_id}`;
 }
 
 export const ProductPriceChart: React.FC<ProductPriceChartProps> = ({

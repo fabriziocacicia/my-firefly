@@ -79,7 +79,7 @@ export const api = {
     create: (data: { name: string; default_category?: string; notes?: string }) =>
       request<Company>('/companies/', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<Company>) =>
-      request<Company>(`/companies/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      request<Company>(`/companies/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     delete: (id: number) =>
       request<void>(`/companies/${id}`, { method: 'DELETE' }),
     assignAccountCompany: (
@@ -123,8 +123,7 @@ export const api = {
   prices: {
     record: (data: {
       product_id: number;
-      firefly_account_id?: number;
-      store_id?: number;
+      firefly_account_id: number;
       recorded_date: string;
       regular_price: number;
       paid_price: number;
