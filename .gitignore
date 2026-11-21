@@ -35,8 +35,12 @@ pnpm-debug.log*
 
 # Database & Uploads
 data/*.db
+data/*.db-*
 data/*.sqlite
 data/*.sqlite3
+*.db
+*.db-wal
+*.db-shm
 data/receipts/*
 !data/receipts/.gitkeep
 !data/.gitkeep
