@@ -45,6 +45,7 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
   const listboxRef = useRef<HTMLUListElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isClearingRef = useRef(false);
 
   // Sync selectedName and inputValue when value or accountNameHint changes
   useEffect(() => {
@@ -79,6 +80,10 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
     } else {
       setSelectedName('');
       setInputValue('');
+      setLoading(false);
+      setIsOpen(false);
+      setResults([]);
+      setFetchError(null);
     }
   }, [value, accountNameHint]);
 
@@ -152,14 +157,17 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
   };
 
   const handleFocus = () => {
-    if (disabled) return;
+    if (disabled || isClearingRef.current) return;
     // Issue zero queries and keep suggestion list closed when input is empty
-    if (inputValue.trim().length >= 1) {
+    const currentVal = inputRef.current ? inputRef.current.value : inputValue;
+    if (currentVal.trim().length >= 1) {
       setIsOpen(true);
-      executeSearch(inputValue);
+      executeSearch(currentVal);
     } else {
       setIsOpen(false);
+      setLoading(false);
       setFetchError(null);
+      setResults([]);
     }
   };
 
@@ -174,8 +182,14 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
+    e.preventDefault();
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     if (abortControllerRef.current) abortControllerRef.current.abort();
+
+    isClearingRef.current = true;
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
     setSelectedName('');
     setInputValue('');
     setResults([]);
@@ -185,6 +199,10 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
     setActiveIndex(-1);
     onChange(null, '');
     inputRef.current?.focus();
+
+    setTimeout(() => {
+      isClearingRef.current = false;
+    }, 50);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -329,6 +347,7 @@ export const StoreCombobox: React.FC<StoreComboboxProps> = ({
           <button
             type="button"
             aria-label="Clear selection"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={handleClear}
             className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
           >

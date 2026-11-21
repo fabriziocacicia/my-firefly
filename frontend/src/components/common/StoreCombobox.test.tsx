@@ -98,7 +98,7 @@ describe('StoreCombobox', () => {
     expect((input as HTMLInputElement).value).toBe('Conad Via Roma');
   });
 
-  it('clears selection when clear button is clicked', () => {
+  it('clears selection when clear button is clicked without triggering search or opening dropdown', () => {
     const handleChange = vi.fn();
     render(
       <StoreCombobox
@@ -114,6 +114,9 @@ describe('StoreCombobox', () => {
     expect(handleChange).toHaveBeenCalledWith(null, '');
     const input = screen.getByRole('combobox') as HTMLInputElement;
     expect(input.value).toBe('');
+    expect(api.firefly.searchExpenseAccounts).not.toHaveBeenCalled();
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(screen.queryByText(/Searching Firefly accounts/i)).toBeNull();
   });
 
   it('supports keyboard navigation with Arrow keys and Enter', async () => {
