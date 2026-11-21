@@ -101,7 +101,7 @@ class FireflyClient:
     async def get_expense_account(self, account_id: int) -> Optional[dict[str, Any]]:
         """
         Fetches single account by ID via Firefly III GET /api/v1/accounts/{account_id}.
-        Returns account data dict or None if 404.
+        Returns account data dict if type is 'expense', or None if 404 or different type.
         """
         client = self._get_client()
         resp = await client.get(
@@ -111,7 +111,10 @@ class FireflyClient:
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
-        return resp.json().get("data")
+        data = resp.json().get("data")
+        if not data or data.get("attributes", {}).get("type") != "expense":
+            return None
+        return data
 
     async def resolve_expense_account_names(
         self, account_ids: set[int]
@@ -162,13 +165,13 @@ class FireflyClient:
                             name = acc.get("attributes", {}).get("name", f"Account #{aid}")
                         else:
                             name = f"Deleted Firefly Account #{aid}"
+                        self._name_cache[aid] = (name, now + self._cache_ttl)
                     except Exception:
                         name = f"Account #{aid}"
                     return aid, name
 
                 results = await asyncio.gather(*(_fetch_one(aid) for aid in still_missing))
                 for aid, name in results:
-                    self._name_cache[aid] = (name, now + self._cache_ttl)
                     resolved[aid] = name
             else:
                 try:

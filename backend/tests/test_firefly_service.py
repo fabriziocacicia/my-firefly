@@ -44,7 +44,11 @@ class FireflyServiceTests(unittest.IsolatedAsyncioTestCase):
                     json={
                         "data": {
                             "id": "15",
-                            "attributes": {"name": "Conad", "active": True},
+                            "attributes": {
+                                "name": "Conad",
+                                "active": True,
+                                "type": "expense",
+                            },
                         }
                     },
                 )
@@ -65,6 +69,35 @@ class FireflyServiceTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await client.aclose()
 
+    async def test_get_expense_account_rejects_non_expense_type(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "/api/v1/accounts/99" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "id": "99",
+                            "attributes": {
+                                "name": "Checking Account",
+                                "active": True,
+                                "type": "asset",
+                            },
+                        }
+                    },
+                )
+            return httpx.Response(404)
+
+        client = FireflyClient(
+            base_url="http://mock-firefly",
+            token="mock-token",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            non_expense = await client.get_expense_account(99)
+            self.assertIsNone(non_expense)
+        finally:
+            await client.aclose()
+
     async def test_resolve_expense_account_names_caching(self):
         call_count = 0
 
@@ -74,7 +107,15 @@ class FireflyServiceTests(unittest.IsolatedAsyncioTestCase):
             if "/api/v1/accounts/20" in str(request.url):
                 return httpx.Response(
                     200,
-                    json={"data": {"id": "20", "attributes": {"name": "Coop"}}},
+                    json={
+                        "data": {
+                            "id": "20",
+                            "attributes": {
+                                "name": "Coop",
+                                "type": "expense",
+                            },
+                        }
+                    },
                 )
             return httpx.Response(404)
 
@@ -92,6 +133,42 @@ class FireflyServiceTests(unittest.IsolatedAsyncioTestCase):
             names2 = await client.resolve_expense_account_names({20})
             self.assertEqual(names2, {20: "Coop"})
             self.assertEqual(call_count, 1)
+        finally:
+            await client.aclose()
+
+    async def test_resolve_expense_account_names_transient_error_not_cached(self):
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise httpx.ConnectError("Network dropped")
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": "30",
+                        "attributes": {"name": "Lidl", "type": "expense"},
+                    }
+                },
+            )
+
+        client = FireflyClient(
+            base_url="http://mock-firefly",
+            token="mock-token",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            # First attempt fails with network error: returns fallback but does not cache
+            names1 = await client.resolve_expense_account_names({30})
+            self.assertEqual(names1, {30: "Account #30"})
+            self.assertNotIn(30, client._name_cache)
+
+            # Second attempt succeeds and resolves properly
+            names2 = await client.resolve_expense_account_names({30})
+            self.assertEqual(names2, {30: "Lidl"})
+            self.assertIn(30, client._name_cache)
         finally:
             await client.aclose()
 

@@ -61,11 +61,15 @@ async def search_expense_accounts(
         results: List[FireflyExpenseAccountBrief] = []
         for item in raw_results:
             try:
+                attr = item.get("attributes", {})
+                if not bool(attr.get("active", True)):
+                    continue
                 acc_id = int(item.get("id"))
-                name = item.get("attributes", {}).get("name", f"Account #{acc_id}")
+                name = attr.get("name", f"Account #{acc_id}")
                 results.append(FireflyExpenseAccountBrief(id=acc_id, name=name))
             except (ValueError, TypeError):
                 continue
+        results.sort(key=lambda x: x.name.lower())
         return results
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Firefly search error: {str(e)}")

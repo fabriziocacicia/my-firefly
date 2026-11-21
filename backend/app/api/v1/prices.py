@@ -1,5 +1,6 @@
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
+import httpx
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
@@ -124,7 +125,14 @@ async def record_price(
         raise HTTPException(status_code=404, detail="Product not found")
 
     # 2. Validate Firefly account exists & is active
-    acc = await firefly_client.get_expense_account(price_in.firefly_account_id)
+    try:
+        acc = await firefly_client.get_expense_account(price_in.firefly_account_id)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to reach Firefly III to validate expense account: {exc}",
+        ) from exc
+
     if not acc:
         raise HTTPException(
             status_code=404,

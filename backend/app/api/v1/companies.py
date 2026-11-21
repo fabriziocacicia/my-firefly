@@ -1,5 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+import httpx
 from sqlalchemy import func
 from sqlmodel import Session, select
 from app.core.database import get_session
@@ -165,17 +166,21 @@ async def assign_or_clear_account_company(
     """
     Assign an expense account to a company (by company_id or company_name)
     or unlink the account if both are None.
-    Validates account existence in Firefly III.
+    Validates account existence and active status in Firefly III.
     """
-    # 1. Verify account exists in Firefly III
-    acc = await firefly_client.get_expense_account(firefly_account_id)
-    if not acc:
+    # 1. Validate mutual exclusion and non-empty name
+    if assign_in.company_id is not None and assign_in.company_name is not None:
         raise HTTPException(
-            status_code=404,
-            detail=f"Firefly expense account #{firefly_account_id} not found in Firefly III",
+            status_code=422,
+            detail="Cannot specify both company_id and company_name",
+        )
+    if assign_in.company_name is not None and not assign_in.company_name.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="company_name cannot be whitespace only",
         )
 
-    # 2. Check if this is an unlink request
+    # 2. Check if this is an unlink request before making Firefly network calls
     clean_company_name = (
         assign_in.company_name.strip() if assign_in.company_name else None
     )
@@ -186,7 +191,27 @@ async def assign_or_clear_account_company(
             session.commit()
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    # 3. Resolve target Company
+    # 3. Verify account exists & is active in Firefly III
+    try:
+        acc = await firefly_client.get_expense_account(firefly_account_id)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to reach Firefly III to validate expense account: {exc}",
+        ) from exc
+
+    if not acc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Firefly expense account #{firefly_account_id} not found in Firefly III",
+        )
+    if not acc.get("attributes", {}).get("active", True):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Firefly expense account #{firefly_account_id} is inactive",
+        )
+
+    # 4. Resolve target Company
     company: Optional[Company] = None
     if assign_in.company_id is not None:
         company = session.get(Company, assign_in.company_id)
@@ -214,7 +239,7 @@ async def assign_or_clear_account_company(
             detail="Unable to resolve company for assignment",
         )
 
-    # 4. Upsert CompanyAccountLink
+    # 5. Upsert CompanyAccountLink
     link = session.get(CompanyAccountLink, firefly_account_id)
     if link:
         link.company_id = company.id

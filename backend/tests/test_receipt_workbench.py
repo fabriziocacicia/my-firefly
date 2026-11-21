@@ -466,13 +466,27 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         self.assertEqual(assign_res.status_code, 200)
         self.assertEqual(assign_res.json()["company_id"], comp_id)
 
+        # Validation: mutual exclusion (both company_id and company_name) -> 422
+        mutual_res = self.client.put(
+            "/api/v1/companies/accounts/101/company",
+            json={"company_id": comp_id, "company_name": "Another Company"},
+        )
+        self.assertEqual(mutual_res.status_code, 422)
+
+        # Validation: whitespace-only company_name -> 422
+        ws_res = self.client.put(
+            "/api/v1/companies/accounts/101/company",
+            json={"company_name": "   "},
+        )
+        self.assertEqual(ws_res.status_code, 422)
+
         # Verify count on GET /companies/
         comps = self.client.get("/api/v1/companies/").json()
         target = next((c for c in comps if c["id"] == comp_id), None)
         self.assertIsNotNone(target)
         self.assertEqual(target["store_count"], 1)
 
-        # 4. Unlink account
+        # 4. Unlink account (even if account is deleted from Firefly -> succeeds without 404)
         unlink_res = self.client.put(
             "/api/v1/companies/accounts/101/company",
             json={"company_id": None, "company_name": None},
@@ -483,13 +497,42 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         del_res = self.client.delete(f"/api/v1/companies/{comp_id}")
         self.assertEqual(del_res.status_code, 204)
 
+    def test_company_assignment_and_price_recording_firefly_502(self):
+        with patch(
+            "app.api.v1.companies.firefly_client.get_expense_account",
+            AsyncMock(side_effect=httpx.ConnectError("Firefly unreachable")),
+        ):
+            res = self.client.put(
+                "/api/v1/companies/accounts/101/company",
+                json={"company_name": "New Co"},
+            )
+            self.assertEqual(res.status_code, 502)
+
+        with patch(
+            "app.api.v1.prices.firefly_client.get_expense_account",
+            AsyncMock(side_effect=httpx.ConnectError("Firefly unreachable")),
+        ):
+            res = self.client.post(
+                "/api/v1/prices/",
+                json={
+                    "product_id": self.pasta_id,
+                    "firefly_account_id": self.active_account_id,
+                    "recorded_date": "2026-11-20",
+                    "paid_price": 1.50,
+                    "regular_price": 1.50,
+                },
+            )
+            self.assertEqual(res.status_code, 502)
+
     def test_firefly_search_and_directory_endpoints(self):
         with (
             patch(
                 "app.api.v1.firefly.firefly_client.search_expense_accounts",
                 AsyncMock(
                     return_value=[
-                        {"id": "101", "attributes": {"name": "Conad Via Roma"}},
+                        {"id": "102", "attributes": {"name": "Penny Market", "active": True}},
+                        {"id": "103", "attributes": {"name": "Conad Closed", "active": False}},
+                        {"id": "101", "attributes": {"name": "Conad Via Roma", "active": True}},
                     ]
                 ),
             ),
@@ -503,14 +546,15 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
                 ),
             ),
         ):
-            # Autocomplete search
+            # Autocomplete search filters out inactive and sorts alphabetically
             search_res = self.client.get(
                 "/api/v1/firefly/expense-accounts/search?query=Conad"
             )
             self.assertEqual(search_res.status_code, 200)
             items = search_res.json()
-            self.assertEqual(len(items), 1)
+            self.assertEqual(len(items), 2)  # Inactive id 103 filtered out
             self.assertEqual(items[0]["name"], "Conad Via Roma")
+            self.assertEqual(items[1]["name"], "Penny Market")
 
             # Autocomplete with empty query returns empty list without upstream sweeps
             empty_res = self.client.get(
