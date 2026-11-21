@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { FireflyExpenseAccount, Company } from '../types';
+import { CompanyCombobox, CompanySelection } from '../components/common/CompanyCombobox';
 import {
   Building2,
   Store,
@@ -24,8 +25,7 @@ export const StoresPage: React.FC = () => {
 
   // Company Link Modal
   const [assigningAccount, setAssigningAccount] = useState<FireflyExpenseAccount | null>(null);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
-  const [newCompanyName, setNewCompanyName] = useState('');
+  const [companySelection, setCompanySelection] = useState<CompanySelection | null>(null);
   const [savingLink, setSavingLink] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
 
@@ -59,8 +59,11 @@ export const StoresPage: React.FC = () => {
 
   const openAssignModal = (acc: FireflyExpenseAccount) => {
     setAssigningAccount(acc);
-    setSelectedCompanyId(acc.company_id ?? null);
-    setNewCompanyName('');
+    setCompanySelection({
+      companyId: acc.company_id ?? null,
+      companyName: acc.company_name ?? '',
+      isNew: false,
+    });
     setLinkError(null);
   };
 
@@ -71,11 +74,13 @@ export const StoresPage: React.FC = () => {
     setSavingLink(true);
     setLinkError(null);
     try {
-      let targetCompanyId = selectedCompanyId;
+      let targetCompanyId = companySelection?.companyId ?? null;
 
-      // If user typed a new company name, create it first
-      if (newCompanyName.trim()) {
-        const created = await api.companies.create({ name: newCompanyName.trim() });
+      // If user typed a new company name to create
+      if (companySelection?.isNew && companySelection.companyName.trim()) {
+        const created = await api.companies.create({
+          name: companySelection.companyName.trim(),
+        });
         targetCompanyId = created.id;
       }
 
@@ -432,40 +437,18 @@ export const StoresPage: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Choose Existing Company
+                  Parent Company
                 </label>
-                <select
-                  value={selectedCompanyId ?? ''}
-                  onChange={(e) => {
-                    const val = e.target.value ? Number(e.target.value) : null;
-                    setSelectedCompanyId(val);
-                    if (val) setNewCompanyName('');
-                  }}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="">No parent company (unlinked)</option>
-                  {companies.map(c => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Or Create New Company
-                </label>
-                <input
-                  type="text"
-                  value={newCompanyName}
-                  onChange={(e) => {
-                    setNewCompanyName(e.target.value);
-                    if (e.target.value) setSelectedCompanyId(null);
-                  }}
-                  placeholder="e.g. Conad, Coop, Esselunga"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                <CompanyCombobox
+                  companies={companies}
+                  selectedCompanyId={companySelection?.companyId ?? null}
+                  initialNewName={companySelection?.isNew ? companySelection.companyName : ''}
+                  onChange={(sel) => setCompanySelection(sel)}
+                  placeholder="Search or create parent company (e.g. Conad, Lidl)..."
                 />
+                <p className="mt-1.5 text-[11px] text-slate-400">
+                  Select an existing chain, choose Independent to unlink, or type a new name to create it.
+                </p>
               </div>
 
               <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
