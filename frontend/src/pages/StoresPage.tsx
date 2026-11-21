@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { FireflyExpenseAccount, Company } from '../types';
 import { CompanyCombobox, CompanySelection } from '../components/common/CompanyCombobox';
@@ -22,6 +22,12 @@ export const StoresPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'chains' | 'independent'>('all');
   const [activeTab, setActiveTab] = useState<'directory' | 'companies'>('directory');
+  const [page, setPage] = useState(1);
+  const ITEMS_PER_PAGE = 48;
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, filter]);
 
   // Company Link Modal
   const [assigningAccount, setAssigningAccount] = useState<FireflyExpenseAccount | null>(null);
@@ -181,6 +187,12 @@ export const StoresPage: React.FC = () => {
     return true;
   });
 
+  const totalPages = Math.ceil(filteredAccounts.length / ITEMS_PER_PAGE) || 1;
+  const paginatedAccounts = useMemo(() => {
+    const start = (page - 1) * ITEMS_PER_PAGE;
+    return filteredAccounts.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredAccounts, page]);
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Page Header */}
@@ -288,7 +300,7 @@ export const StoresPage: React.FC = () => {
                 No stores match the current search or filter.
               </div>
             ) : (
-              filteredAccounts.map(acc => (
+              paginatedAccounts.map(acc => (
                 <div
                   key={acc.id}
                   className="p-4 rounded-xl border bg-white border-slate-200 hover:border-slate-300 shadow-xs transition flex flex-col justify-between"
@@ -343,6 +355,36 @@ export const StoresPage: React.FC = () => {
               ))
             )}
           </div>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-200 pt-4">
+              <span className="text-xs text-slate-500">
+                Showing {(page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(page * ITEMS_PER_PAGE, filteredAccounts.length)} of {filteredAccounts.length} stores
+              </span>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  Previous
+                </button>
+                <span className="text-xs font-semibold text-slate-700 px-2">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </>
       ) : (
         /* Companies Management Tab */
