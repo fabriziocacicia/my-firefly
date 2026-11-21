@@ -152,6 +152,11 @@ def delete_company(company_id: int, session: Session = Depends(get_session)):
     "/accounts/{firefly_account_id}/company",
     response_model=Optional[CompanyAccountLinkRead],
 )
+@router.put(
+    "/accounts/{firefly_account_id}",
+    response_model=Optional[CompanyAccountLinkRead],
+    include_in_schema=False,
+)
 async def assign_or_clear_account_company(
     firefly_account_id: int,
     assign_in: AccountCompanyAssign,

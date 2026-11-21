@@ -27,6 +27,7 @@ export const StoresPage: React.FC = () => {
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [newCompanyName, setNewCompanyName] = useState('');
   const [savingLink, setSavingLink] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
 
   // Manage Companies State
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
@@ -60,6 +61,7 @@ export const StoresPage: React.FC = () => {
     setAssigningAccount(acc);
     setSelectedCompanyId(acc.company_id ?? null);
     setNewCompanyName('');
+    setLinkError(null);
   };
 
   const handleSaveCompanyAssignment = async (e: React.FormEvent) => {
@@ -67,6 +69,7 @@ export const StoresPage: React.FC = () => {
     if (!assigningAccount) return;
 
     setSavingLink(true);
+    setLinkError(null);
     try {
       let targetCompanyId = selectedCompanyId;
 
@@ -83,7 +86,7 @@ export const StoresPage: React.FC = () => {
       setAssigningAccount(null);
       await loadData();
     } catch (err: any) {
-      alert(`Failed to assign company: ${err.message}`);
+      setLinkError(err.message || 'Failed to assign company');
     } finally {
       setSavingLink(false);
     }
@@ -91,12 +94,13 @@ export const StoresPage: React.FC = () => {
 
   const handleUnlinkCompany = async (accountId: number) => {
     setSavingLink(true);
+    setLinkError(null);
     try {
       await api.companies.assignAccountCompany(accountId, { company_id: null });
       setAssigningAccount(null);
       await loadData();
     } catch (err: any) {
-      alert(`Failed to unlink company: ${err.message}`);
+      setLinkError(err.message || 'Failed to unlink company');
     } finally {
       setSavingLink(false);
     }
@@ -428,6 +432,13 @@ export const StoresPage: React.FC = () => {
             </div>
 
             <form onSubmit={handleSaveCompanyAssignment} className="mt-5 space-y-4">
+              {linkError && (
+                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                  <span>{linkError}</span>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Choose Existing Company

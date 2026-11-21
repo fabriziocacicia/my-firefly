@@ -52,6 +52,10 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
     throw new Error(message || `HTTP Error ${res.status}`);
   }
 
+  if (res.status === 204 || res.headers.get('content-length') === '0') {
+    return null as unknown as T;
+  }
+
   return res.json();
 }
 
@@ -78,8 +82,11 @@ export const api = {
       request<Company>(`/companies/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: number) =>
       request<void>(`/companies/${id}`, { method: 'DELETE' }),
-    assignAccountCompany: (accountId: number, payload: { company_id: number | null }) =>
-      request<FireflyExpenseAccount>(`/companies/accounts/${accountId}`, {
+    assignAccountCompany: (
+      accountId: number,
+      payload: { company_id?: number | null; company_name?: string | null }
+    ) =>
+      request<any>(`/companies/accounts/${accountId}/company`, {
         method: 'PUT',
         body: JSON.stringify(payload),
       }),
