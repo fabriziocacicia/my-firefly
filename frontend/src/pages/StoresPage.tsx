@@ -19,7 +19,7 @@ export const StoresPage: React.FC = () => {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'unlinked' | 'linked' | 'inactive'>('all');
+  const [filter, setFilter] = useState<'all' | 'chains' | 'independent'>('all');
   const [activeTab, setActiveTab] = useState<'directory' | 'companies'>('directory');
 
   // Company Link Modal
@@ -171,9 +171,8 @@ export const StoresPage: React.FC = () => {
       (a.company_name && a.company_name.toLowerCase().includes(query));
     if (!matchesSearch) return false;
 
-    if (filter === 'unlinked') return !a.company_id;
-    if (filter === 'linked') return Boolean(a.company_id);
-    if (filter === 'inactive') return !a.active;
+    if (filter === 'chains') return Boolean(a.company_id);
+    if (filter === 'independent') return !a.company_id;
     return true;
   });
 
@@ -255,28 +254,20 @@ export const StoresPage: React.FC = () => {
                 All ({accounts.length})
               </button>
               <button
-                onClick={() => setFilter('linked')}
+                onClick={() => setFilter('chains')}
                 className={`px-3 py-1.5 rounded-md transition ${
-                  filter === 'linked' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600'
+                  filter === 'chains' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600'
                 }`}
               >
-                Linked ({accounts.filter(a => a.company_id).length})
+                Chain Stores ({accounts.filter(a => a.company_id).length})
               </button>
               <button
-                onClick={() => setFilter('unlinked')}
+                onClick={() => setFilter('independent')}
                 className={`px-3 py-1.5 rounded-md transition ${
-                  filter === 'unlinked' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-600'
+                  filter === 'independent' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-600'
                 }`}
               >
-                Unlinked ({accounts.filter(a => !a.company_id).length})
-              </button>
-              <button
-                onClick={() => setFilter('inactive')}
-                className={`px-3 py-1.5 rounded-md transition ${
-                  filter === 'inactive' ? 'bg-white text-amber-700 shadow-xs' : 'text-slate-600'
-                }`}
-              >
-                Inactive ({accounts.filter(a => !a.active).length})
+                Independent ({accounts.filter(a => !a.company_id).length})
               </button>
             </div>
           </div>
