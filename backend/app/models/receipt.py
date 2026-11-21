@@ -1,12 +1,11 @@
 from datetime import datetime, date, timezone
 from typing import Optional, List, Literal
 from sqlmodel import SQLModel, Field, Relationship
-from app.models.company import Store, StoreRead
 from app.models.product import Product, ProductRead
 
 
 class ReceiptBase(SQLModel):
-    store_id: int = Field(foreign_key="store.id", index=True)
+    firefly_account_id: int = Field(index=True)
     purchase_date: date = Field(default_factory=date.today, index=True)
     total_amount: float = Field(default=0.0)
     basket_discount: float = Field(default=0.0)
@@ -24,7 +23,6 @@ class Receipt(ReceiptBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    store: Optional[Store] = Relationship()
     items: List["ReceiptItem"] = Relationship(back_populates="receipt")
     attachments: List["ReceiptAttachment"] = Relationship(back_populates="receipt")
 
@@ -75,7 +73,7 @@ class ReceiptItemCreate(SQLModel):
 
 
 class ReceiptCreate(SQLModel):
-    store_id: int
+    firefly_account_id: int
     purchase_date: date = Field(default_factory=date.today)
     total_amount: float = Field(gt=0)
     basket_discount: float = Field(default=0.0, ge=0)
@@ -96,7 +94,7 @@ class ReceiptItemRead(ReceiptItemBase):
 class ReceiptRead(ReceiptBase):
     id: int
     created_at: datetime
-    store: Optional[StoreRead] = None
+    store_name: str = ""
     items: List[ReceiptItemRead] = []
     attachments: List[ReceiptAttachment] = []
 

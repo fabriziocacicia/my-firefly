@@ -42,7 +42,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, onTabChange }) => {
             >
               <Store className="w-4 h-4 mr-1 sm:mr-1.5 shrink-0" />
               <span className="sm:hidden">Stores</span>
-              <span className="hidden sm:inline">Companies & Stores</span>
+              <span className="hidden sm:inline">Store Directory</span>
             </button>
 
             <button

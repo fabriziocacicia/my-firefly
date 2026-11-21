@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
-import { Product, Tag, Store, PriceRecord, DealAnalysis } from '../types';
+import { Product, Tag, PriceRecord, DealAnalysis } from '../types';
 import { Package, Plus, Flame, ThumbsUp, DollarSign, History } from 'lucide-react';
 import { ProductPriceChart } from '../components/charts/ProductPriceChart';
+import { StoreCombobox } from '../components/common/StoreCombobox';
 
 export const CatalogPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
-  const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
   const [search] = useState('');
   const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
@@ -31,7 +31,8 @@ export const CatalogPage: React.FC = () => {
   const newTagGroup = 'Category';
 
   // New price log form
-  const [priceStoreId, setPriceStoreId] = useState<number | ''>('');
+  const [priceFireflyAccountId, setPriceFireflyAccountId] = useState<number | null>(null);
+  const [priceStoreName, setPriceStoreName] = useState<string>('');
   const [regularPrice, setRegularPrice] = useState('');
   const [paidPrice, setPaidPrice] = useState('');
   const [isDiscount, setIsDiscount] = useState(false);
@@ -40,14 +41,12 @@ export const CatalogPage: React.FC = () => {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [prods, tgs, sts] = await Promise.all([
+      const [prods, tgs] = await Promise.all([
         api.products.list({ search: search || undefined, tag_id: selectedTagId || undefined }),
         api.tags.list(),
-        api.companies.listStores()
       ]);
       setProducts(prods);
       setTags(tgs);
-      setStores(sts);
     } catch (err) {
       console.error(err);
     } finally {
@@ -98,20 +97,21 @@ export const CatalogPage: React.FC = () => {
     setRegularPrice('');
     setIsDiscount(false);
     setQuantity('1');
-    setPriceStoreId(stores[0]?.id || '');
+    setPriceFireflyAccountId(null);
+    setPriceStoreName('');
     setShowPriceModal(true);
   };
 
   const handleRecordPrice = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProduct || !priceStoreId || !paidPrice) return;
+    if (!selectedProduct || !priceFireflyAccountId || !paidPrice) return;
 
     const reg = parseFloat(regularPrice) || parseFloat(paidPrice);
     const paid = parseFloat(paidPrice);
 
     await api.prices.record({
       product_id: selectedProduct.id,
-      store_id: Number(priceStoreId),
+      firefly_account_id: priceFireflyAccountId,
       recorded_date: new Date().toISOString().split('T')[0],
       regular_price: reg,
       paid_price: paid,
@@ -362,18 +362,16 @@ export const CatalogPage: React.FC = () => {
             <form onSubmit={handleRecordPrice} className="mt-4 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Store / Location</label>
-                <select
+                <StoreCombobox
                   required
-                  value={priceStoreId}
-                  onChange={e => setPriceStoreId(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                >
-                  {stores.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.company?.name || 'Company'} — {s.name}
-                    </option>
-                  ))}
-                </select>
+                  value={priceFireflyAccountId}
+                  accountNameHint={priceStoreName}
+                  onChange={(id, name) => {
+                    setPriceFireflyAccountId(id);
+                    setPriceStoreName(name);
+                  }}
+                  placeholder="Search store / expense account..."
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -511,7 +509,7 @@ export const CatalogPage: React.FC = () => {
                 [...historyData.records].reverse().map(r => (
                   <div key={r.id} className="p-3 bg-slate-50 rounded-lg flex items-center justify-between text-xs">
                     <div>
-                      <span className="font-semibold text-slate-800">{r.store?.company?.name || 'Store'} ({r.store?.name})</span>
+                      <span className="font-semibold text-slate-800">{r.store_name || `Store #${r.firefly_account_id}`}</span>
                       <span className="block text-slate-400 text-[10px]">{r.recorded_date}</span>
                     </div>
                     <div className="text-right">

@@ -15,7 +15,6 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.database import get_session
-from app.models.company import Store
 from app.models.price import PriceRecord
 from app.models.product import Product
 from app.models.receipt import (
@@ -46,7 +45,6 @@ ALLOWED_MIME_TO_EXT = {
 
 def _receipt_loader_options():
     return [
-        selectinload(Receipt.store).selectinload(Store.company),
         selectinload(Receipt.items)
         .selectinload(ReceiptItem.product)
         .selectinload(Product.brand),
@@ -67,6 +65,33 @@ def _get_receipt_or_404(session: Session, receipt_id: int) -> Receipt:
     if not receipt:
         raise HTTPException(status_code=404, detail="Receipt not found")
     return receipt
+
+
+async def _hydrate_receipt_store_names(
+    receipts: List[Receipt],
+) -> List[ReceiptRead]:
+    if not receipts:
+        return []
+    account_ids = {r.firefly_account_id for r in receipts if r.firefly_account_id}
+    resolved_names = await firefly_client.resolve_expense_account_names(account_ids)
+    results: List[ReceiptRead] = []
+    for r in receipts:
+        data = r.model_dump()
+        data["items"] = r.items
+        data["attachments"] = r.attachments
+        data["store_name"] = resolved_names.get(
+            r.firefly_account_id, f"Account #{r.firefly_account_id}"
+        )
+        results.append(ReceiptRead(**data))
+    return results
+
+
+async def _get_receipt_read_or_404(
+    session: Session, receipt_id: int
+) -> ReceiptRead:
+    receipt = _get_receipt_or_404(session, receipt_id)
+    hydrated = await _hydrate_receipt_store_names([receipt])
+    return hydrated[0]
 
 
 def _allocate_receipt_cents(
@@ -111,7 +136,7 @@ def _partition_voucher_and_card_splits(
     voucher_cents: int,
 ) -> tuple[list[tuple[ReceiptItem, int, str]], list[tuple[ReceiptItem, int, str]]]:
     """
-    Sequential Boundary Partitioning (Approach B):
+    Sequential Boundary Partitioning:
     Allocates prorated items sequentially to Transaction 1 (Vouchers) until reaching
     `voucher_cents`. Only splits a crossover item if cumulative cents exceed `voucher_cents`.
     """
@@ -147,15 +172,8 @@ def _build_firefly_tx_payload(
     receipt: Receipt,
     splits: list[tuple[ReceiptItem, int, str]],
     source_account_id: int,
+    account_name: str,
 ) -> dict:
-    assert receipt.store is not None
-    assert receipt.store.firefly_account_id is not None
-
-    store_label = (
-        receipt.store.company.name
-        if receipt.store.company
-        else receipt.store.name
-    )
     tx_splits = []
     for item, amount_cents, suffix in splits:
         product_name = (
@@ -172,7 +190,7 @@ def _build_firefly_tx_payload(
                 "amount": f"{amount_cents / 100:.2f}",
                 "description": f"{product_name} (x{item.quantity})",
                 "source_id": str(source_account_id),
-                "destination_id": str(receipt.store.firefly_account_id),
+                "destination_id": str(receipt.firefly_account_id),
                 "notes": split_notes,
             }
         )
@@ -180,7 +198,7 @@ def _build_firefly_tx_payload(
     return {
         "error_if_duplicate_hash": False,
         "apply_rules": True,
-        "group_title": f"{store_label} - {receipt.purchase_date}",
+        "group_title": f"{account_name} - {receipt.purchase_date}",
         "transactions": tx_splits,
     }
 
@@ -200,13 +218,32 @@ def _convert_heif_to_jpeg(raw_bytes: bytes) -> bytes:
 
 
 @router.post("/", response_model=ReceiptRead)
-def create_receipt(
+async def create_receipt(
     receipt_in: ReceiptCreate, session: Session = Depends(get_session)
 ):
-    store = session.get(Store, receipt_in.store_id)
-    if not store:
-        raise HTTPException(status_code=404, detail="Store not found")
+    # 1. Validate destination Firefly expense account exists and is active
+    try:
+        account_data = await firefly_client.get_expense_account(
+            receipt_in.firefly_account_id
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to reach Firefly III to validate expense account: {exc}",
+        ) from exc
 
+    if not account_data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Firefly expense account #{receipt_in.firefly_account_id} not found in Firefly III",
+        )
+    if not account_data.get("attributes", {}).get("active", True):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Firefly expense account #{receipt_in.firefly_account_id} is inactive",
+        )
+
+    # 2. Validate products exist
     product_ids = {item.product_id for item in receipt_in.items}
     existing_products = session.exec(
         select(Product.id).where(Product.id.in_(product_ids))
@@ -218,6 +255,7 @@ def create_receipt(
                 status_code=404, detail=f"Product {pid} not found"
             )
 
+    # 3. Validate math
     line_totals = [
         round(item.quantity * item.paid_price, 2) for item in receipt_in.items
     ]
@@ -231,8 +269,9 @@ def create_receipt(
             ),
         )
 
+    # 4. Persist receipt and price observations
     receipt = Receipt(
-        store_id=receipt_in.store_id,
+        firefly_account_id=receipt_in.firefly_account_id,
         purchase_date=receipt_in.purchase_date,
         total_amount=round(receipt_in.total_amount, 2),
         basket_discount=round(receipt_in.basket_discount, 2),
@@ -244,7 +283,7 @@ def create_receipt(
         notes=receipt_in.notes,
     )
     session.add(receipt)
-    session.flush()  # Populate receipt.id inside the single transaction
+    session.flush()
 
     for item, line_total in zip(receipt_in.items, line_totals):
         effective_regular = (
@@ -281,7 +320,7 @@ def create_receipt(
 
         price_record = PriceRecord(
             product_id=item.product_id,
-            store_id=receipt.store_id,
+            firefly_account_id=receipt.firefly_account_id,
             recorded_date=receipt.purchase_date,
             regular_price=effective_regular,
             paid_price=item.paid_price,
@@ -296,11 +335,11 @@ def create_receipt(
         session.add(price_record)
 
     session.commit()
-    return _get_receipt_or_404(session, receipt.id)
+    return await _get_receipt_read_or_404(session, receipt.id)
 
 
 @router.get("/", response_model=List[ReceiptRead])
-def list_receipts(
+async def list_receipts(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
@@ -312,12 +351,15 @@ def list_receipts(
         .offset(offset)
         .limit(limit)
     )
-    return session.exec(statement).all()
+    receipts = session.exec(statement).all()
+    return await _hydrate_receipt_store_names(receipts)
 
 
 @router.get("/{receipt_id}", response_model=ReceiptRead)
-def get_receipt(receipt_id: int, session: Session = Depends(get_session)):
-    return _get_receipt_or_404(session, receipt_id)
+async def get_receipt(
+    receipt_id: int, session: Session = Depends(get_session)
+):
+    return await _get_receipt_read_or_404(session, receipt_id)
 
 
 @router.post("/{receipt_id}/attachments", response_model=ReceiptAttachment)
@@ -407,11 +449,12 @@ def get_receipt_attachment(
     )
 
 
-async def _validate_firefly_accounts(receipt: Receipt) -> None:
-    if not receipt.store or receipt.store.firefly_account_id is None:
+async def _validate_firefly_accounts(receipt: Receipt) -> str:
+    """Validates expense and asset accounts against Firefly III and returns account name."""
+    if not receipt.firefly_account_id:
         raise HTTPException(
             status_code=400,
-            detail="Store must be mapped to an existing Firefly III expense account",
+            detail="Receipt must be assigned to a Firefly III expense account",
         )
     if receipt.source_account_id is None:
         raise HTTPException(
@@ -426,12 +469,38 @@ async def _validate_firefly_accounts(receipt: Receipt) -> None:
             detail="Voucher asset account and positive voucher count are required for split_vouchers",
         )
 
+    # 1. Validate destination expense account
+    try:
+        expense_acc = await firefly_client.get_expense_account(
+            receipt.firefly_account_id
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to reach Firefly III to validate expense account: {exc}",
+        ) from exc
+
+    if not expense_acc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Destination expense account #{receipt.firefly_account_id} does not exist in Firefly III",
+        )
+    if not expense_acc.get("attributes", {}).get("active", True):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Destination expense account #{receipt.firefly_account_id} is inactive in Firefly III",
+        )
+    account_name = expense_acc.get("attributes", {}).get(
+        "name", f"Account #{receipt.firefly_account_id}"
+    )
+
+    # 2. Validate asset accounts
     try:
         asset_accounts = await firefly_client.get_all_asset_accounts()
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"Unable to reach Firefly III to validate accounts: {exc}",
+            detail=f"Unable to reach Firefly III to validate asset accounts: {exc}",
         ) from exc
 
     valid_asset_ids = {int(acc["id"]) for acc in asset_accounts if "id" in acc}
@@ -448,6 +517,8 @@ async def _validate_firefly_accounts(receipt: Receipt) -> None:
             status_code=400,
             detail=f"Voucher asset account #{receipt.voucher_account_id} does not exist in Firefly III",
         )
+
+    return account_name
 
 
 @router.post("/{receipt_id}/push-to-firefly", response_model=ReceiptRead)
@@ -486,7 +557,7 @@ async def push_receipt_to_firefly(
             detail="Receipt already has Firefly III transaction ID(s). Pass force=true to resume or resync.",
         )
 
-    await _validate_firefly_accounts(receipt)
+    account_name = await _validate_firefly_accounts(receipt)
 
     if req.force and not partial_voucher_only:
         for old_tx_id in (
@@ -510,7 +581,9 @@ async def push_receipt_to_firefly(
     if receipt.payment_mode == "single":
         assert receipt.source_account_id is not None
         splits = [(item, cents, "") for item, cents in zip(billable_items, allocated_cents)]
-        payload = _build_firefly_tx_payload(receipt, splits, receipt.source_account_id)
+        payload = _build_firefly_tx_payload(
+            receipt, splits, receipt.source_account_id, account_name
+        )
         try:
             resp = await firefly_client.create_transaction(payload)
         except httpx.HTTPError as exc:
@@ -521,14 +594,14 @@ async def push_receipt_to_firefly(
         receipt.firefly_transaction_id = int(resp["data"]["id"])
         session.add(receipt)
         session.commit()
-        return _get_receipt_or_404(session, receipt.id)
+        return await _get_receipt_read_or_404(session, receipt.id)
 
     # split_vouchers mode
     assert receipt.voucher_account_id is not None
     if card_remainder <= 0.0:
         splits = [(item, cents, "") for item, cents in zip(billable_items, allocated_cents)]
         payload = _build_firefly_tx_payload(
-            receipt, splits, receipt.voucher_account_id
+            receipt, splits, receipt.voucher_account_id, account_name
         )
         try:
             resp = await firefly_client.create_transaction(payload)
@@ -540,7 +613,7 @@ async def push_receipt_to_firefly(
         receipt.firefly_voucher_transaction_id = int(resp["data"]["id"])
         session.add(receipt)
         session.commit()
-        return _get_receipt_or_404(session, receipt.id)
+        return await _get_receipt_read_or_404(session, receipt.id)
 
     assert receipt.source_account_id is not None
     voucher_cents = round(voucher_total * 100)
@@ -551,7 +624,7 @@ async def push_receipt_to_firefly(
     created_voucher_in_this_call = False
     if not partial_voucher_only:
         voucher_payload = _build_firefly_tx_payload(
-            receipt, voucher_splits, receipt.voucher_account_id
+            receipt, voucher_splits, receipt.voucher_account_id, account_name
         )
         try:
             tx1 = await firefly_client.create_transaction(voucher_payload)
@@ -570,7 +643,7 @@ async def push_receipt_to_firefly(
         voucher_tx_id = receipt.firefly_voucher_transaction_id
 
     card_payload = _build_firefly_tx_payload(
-        receipt, card_splits, receipt.source_account_id
+        receipt, card_splits, receipt.source_account_id, account_name
     )
     try:
         tx2 = await firefly_client.create_transaction(card_payload)
@@ -591,4 +664,4 @@ async def push_receipt_to_firefly(
     receipt.firefly_transaction_id = int(tx2["data"]["id"])
     session.add(receipt)
     session.commit()
-    return _get_receipt_or_404(session, receipt.id)
+    return await _get_receipt_read_or_404(session, receipt.id)

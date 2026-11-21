@@ -2,41 +2,55 @@ from datetime import datetime, timezone
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
 
+
 class CompanyBase(SQLModel):
     name: str = Field(index=True, unique=True)
-    default_category: Optional[str] = Field(default=None) # e.g. "Groceries", "Household"
+    default_category: Optional[str] = Field(default=None)  # e.g. "Groceries", "Household"
     notes: Optional[str] = Field(default=None)
+
 
 class Company(CompanyBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    
-    stores: List["Store"] = Relationship(back_populates="company")
+
+    account_links: List["CompanyAccountLink"] = Relationship(
+        back_populates="company", cascade_delete=True
+    )
+
 
 class CompanyCreate(CompanyBase):
     pass
+
+
+class CompanyUpdate(SQLModel):
+    name: Optional[str] = None
+    default_category: Optional[str] = None
+    notes: Optional[str] = None
+
 
 class CompanyRead(CompanyBase):
     id: int
     created_at: datetime
 
-class StoreBase(SQLModel):
-    name: str = Field(index=True) # e.g. "Semafori Porto Empedocle" or "Via Milano Catania"
+
+class CompanyWithCountRead(CompanyRead):
+    store_count: int = 0
+
+
+class CompanyAccountLink(SQLModel, table=True):
+    firefly_account_id: int = Field(primary_key=True)
     company_id: int = Field(foreign_key="company.id", index=True)
-    address: Optional[str] = Field(default=None)
-    firefly_account_id: Optional[int] = Field(default=None, index=True, unique=True)
-    firefly_account_name: Optional[str] = Field(default=None)
-
-class Store(StoreBase, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    
-    company: Optional[Company] = Relationship(back_populates="stores")
 
-class StoreCreate(StoreBase):
-    pass
+    company: Optional[Company] = Relationship(back_populates="account_links")
 
-class StoreRead(StoreBase):
-    id: int
+
+class CompanyAccountLinkRead(SQLModel):
+    firefly_account_id: int
+    company_id: int
     created_at: datetime
-    company: Optional[CompanyRead] = None
+
+
+class AccountCompanyAssign(SQLModel):
+    company_id: Optional[int] = None
+    company_name: Optional[str] = None

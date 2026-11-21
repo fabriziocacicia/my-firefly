@@ -18,6 +18,7 @@ services:
       - ./backend/app:/app/app:ro
       - ./backend/alembic.ini:/app/alembic.ini:ro
       - ./backend/migrations:/app/migrations:ro
+      - ./backend/tests:/app/tests:ro
 
   frontend:
     build:

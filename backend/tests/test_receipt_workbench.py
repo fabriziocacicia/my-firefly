@@ -12,7 +12,7 @@ import pillow_heif
 from alembic import command
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, pool, text
 from sqlmodel import Session, SQLModel
 
 from app.api.v1.receipts import (
@@ -22,7 +22,7 @@ from app.api.v1.receipts import (
 from app.core.config import settings
 from app.core.database import get_session
 from app.main import app, run_db_migrations
-from app.models.company import Company, Store
+from app.models.company import Company, CompanyAccountLink
 from app.models.product import Brand, Product
 from app.models.receipt import Receipt, ReceiptItem
 from app.services.pricing import compute_deal_analysis, normalize_unit_price
@@ -128,20 +128,9 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             session.add(company)
             session.commit()
 
-            mapped_store = Store(
-                name="Via Roma",
-                company_id=company.id,
-                firefly_account_id=101,
-                firefly_account_name="Conad Via Roma",
-            )
-            unmapped_store = Store(
-                name="Unmapped Branch",
-                company_id=company.id,
-                firefly_account_id=None,
-            )
+            link = CompanyAccountLink(firefly_account_id=101, company_id=company.id)
             brand = Brand(name="De Cecco")
-            session.add(mapped_store)
-            session.add(unmapped_store)
+            session.add(link)
             session.add(brand)
             session.commit()
 
@@ -164,11 +153,67 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             session.add_all([pasta, bags, promo_sample])
             session.commit()
 
-            self.mapped_store_id = mapped_store.id
-            self.unmapped_store_id = unmapped_store.id
+            self.company_id = company.id
+            self.active_account_id = 101
+            self.inactive_account_id = 102
             self.pasta_id = pasta.id
             self.bags_id = bags.id
             self.promo_sample_id = promo_sample.id
+
+        # Setup standard FireflyClient mocks
+        async def mock_get_acc(aid: int):
+            if aid == 101:
+                return {
+                    "id": "101",
+                    "attributes": {"name": "Conad Via Roma", "active": True},
+                }
+            if aid == 102:
+                return {
+                    "id": "102",
+                    "attributes": {"name": "Inactive Store", "active": False},
+                }
+            return None
+
+        async def mock_resolve_names(aids: set[int]):
+            mapping = {
+                101: "Conad Via Roma",
+                102: "Inactive Store",
+                99: "Lidl North",
+            }
+            return {aid: mapping.get(aid, f"Account #{aid}") for aid in aids}
+
+        patcher_receipts_get = patch(
+            "app.api.v1.receipts.firefly_client.get_expense_account",
+            side_effect=mock_get_acc,
+        )
+        patcher_receipts_res = patch(
+            "app.api.v1.receipts.firefly_client.resolve_expense_account_names",
+            side_effect=mock_resolve_names,
+        )
+        patcher_prices_get = patch(
+            "app.api.v1.prices.firefly_client.get_expense_account",
+            side_effect=mock_get_acc,
+        )
+        patcher_prices_res = patch(
+            "app.api.v1.prices.firefly_client.resolve_expense_account_names",
+            side_effect=mock_resolve_names,
+        )
+        patcher_comp_get = patch(
+            "app.api.v1.companies.firefly_client.get_expense_account",
+            side_effect=mock_get_acc,
+        )
+
+        patcher_receipts_get.start()
+        patcher_receipts_res.start()
+        patcher_prices_get.start()
+        patcher_prices_res.start()
+        patcher_comp_get.start()
+
+        self.addCleanup(patcher_receipts_get.stop)
+        self.addCleanup(patcher_receipts_res.stop)
+        self.addCleanup(patcher_prices_get.stop)
+        self.addCleanup(patcher_prices_res.stop)
+        self.addCleanup(patcher_comp_get.stop)
 
     def tearDown(self):
         app.dependency_overrides.clear()
@@ -177,7 +222,6 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         self.tmpdir.cleanup()
 
     def test_create_receipt_price_history_and_freebie(self):
-        # Empty history check returns uniform schema
         empty_hist = self.client.get(f"/api/v1/prices/history/{self.pasta_id}")
         self.assertEqual(empty_hist.status_code, 200)
         empty_body = empty_hist.json()
@@ -186,7 +230,7 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         self.assertEqual(empty_body["records"], [])
 
         payload = {
-            "store_id": self.mapped_store_id,
+            "firefly_account_id": self.active_account_id,
             "purchase_date": "2026-11-10",
             "total_amount": 3.20,
             "basket_discount": 0.50,
@@ -218,13 +262,13 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         created = res.json()
         self.assertEqual(created["basket_discount"], 0.50)
         self.assertEqual(len(created["items"]), 2)
-        self.assertEqual(created["store"]["company"]["name"], "Conad")
+        self.assertEqual(created["store_name"], "Conad Via Roma")
 
         hist = self.client.get(f"/api/v1/prices/history/{self.pasta_id}")
         self.assertEqual(hist.status_code, 200)
         hist_body = hist.json()
         self.assertEqual(len(hist_body["records"]), 1)
-        self.assertEqual(hist_body["records"][0]["store"]["company"]["name"], "Conad")
+        self.assertEqual(hist_body["records"][0]["store_name"], "Conad Via Roma")
         self.assertEqual(hist_body["analysis"]["normalized_current_price"], 3.7)
         self.assertEqual(hist_body["analysis"]["normalized_baseline_regular_price"], 4.2)
 
@@ -232,7 +276,7 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         receipt_res = self.client.post(
             "/api/v1/receipts/",
             json={
-                "store_id": self.mapped_store_id,
+                "firefly_account_id": self.active_account_id,
                 "purchase_date": "2026-11-10",
                 "total_amount": 2.00,
                 "source_account_id": 1,
@@ -287,26 +331,24 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         self.assertEqual(stream_res.headers["content-type"], "image/jpeg")
 
     def test_push_to_firefly_guards_rollback_and_partial_recovery(self):
-        # 1. Unmapped store blocked
-        unmapped_res = self.client.post(
+        # 1. Inactive account blocked on creation
+        inactive_res = self.client.post(
             "/api/v1/receipts/",
             json={
-                "store_id": self.unmapped_store_id,
+                "firefly_account_id": self.inactive_account_id,
                 "purchase_date": "2026-11-10",
                 "total_amount": 2.00,
                 "source_account_id": 1,
                 "items": [{"product_id": self.pasta_id, "paid_price": 2.00}],
             },
         )
-        unmapped_id = unmapped_res.json()["id"]
-        push_unmapped = self.client.post(f"/api/v1/receipts/{unmapped_id}/push-to-firefly")
-        self.assertEqual(push_unmapped.status_code, 400)
+        self.assertEqual(inactive_res.status_code, 400)
 
         # 2. Split vouchers with €0 freebie + rollback compensation & recovery
         split_res = self.client.post(
             "/api/v1/receipts/",
             json={
-                "store_id": self.mapped_store_id,
+                "firefly_account_id": self.active_account_id,
                 "purchase_date": "2026-11-10",
                 "total_amount": 15.00,
                 "source_account_id": 1,
@@ -374,7 +416,7 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         conflict = self.client.post(f"/api/v1/receipts/{receipt_id}/push-to-firefly")
         self.assertEqual(conflict.status_code, 409)
 
-        # Resume with force=True -> only Tx2 created, €0.00 freebie omitted from Firefly splits
+        # Resume with force=True -> only Tx2 created, group_title formatted with account name
         create_mock = AsyncMock(return_value={"data": {"id": "903"}})
         with (
             patch("app.api.v1.receipts.firefly_client.get_all_asset_accounts", asset_accounts_mock),
@@ -386,8 +428,11 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             )
             self.assertEqual(recovered.status_code, 200, recovered.text)
             create_mock.assert_awaited_once()
-            sent_splits = create_mock.await_args.args[0]["transactions"]
-            # Crossover item (bags) + no promo sample
+            call_payload = create_mock.await_args.args[0]
+            self.assertEqual(
+                call_payload["group_title"], "Conad Via Roma - 2026-11-10"
+            )
+            sent_splits = call_payload["transactions"]
             self.assertEqual(len(sent_splits), 1)
             self.assertEqual(sent_splits[0]["amount"], "4.68")
 
@@ -395,12 +440,146 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         self.assertEqual(rec_final["firefly_voucher_transaction_id"], 902)
         self.assertEqual(rec_final["firefly_transaction_id"], 903)
 
+    def test_company_crud_and_account_linking(self):
+        # 1. Create company
+        res = self.client.post("/api/v1/companies/", json={"name": "Esselunga"})
+        self.assertEqual(res.status_code, 201)
+        comp_id = res.json()["id"]
+
+        # Duplicate rejection (case-insensitive)
+        dup = self.client.post("/api/v1/companies/", json={"name": "  esselunga  "})
+        self.assertEqual(dup.status_code, 400)
+
+        # 2. Patch company
+        patch_res = self.client.patch(
+            f"/api/v1/companies/{comp_id}",
+            json={"name": "Esselunga Superstore", "default_category": "Groceries"},
+        )
+        self.assertEqual(patch_res.status_code, 200)
+        self.assertEqual(patch_res.json()["name"], "Esselunga Superstore")
+
+        # 3. Assign account to company
+        assign_res = self.client.put(
+            "/api/v1/companies/accounts/101/company",
+            json={"company_id": comp_id},
+        )
+        self.assertEqual(assign_res.status_code, 200)
+        self.assertEqual(assign_res.json()["company_id"], comp_id)
+
+        # Validation: mutual exclusion (both company_id and company_name) -> 422
+        mutual_res = self.client.put(
+            "/api/v1/companies/accounts/101/company",
+            json={"company_id": comp_id, "company_name": "Another Company"},
+        )
+        self.assertEqual(mutual_res.status_code, 422)
+
+        # Validation: whitespace-only company_name -> 422
+        ws_res = self.client.put(
+            "/api/v1/companies/accounts/101/company",
+            json={"company_name": "   "},
+        )
+        self.assertEqual(ws_res.status_code, 422)
+
+        # Verify count on GET /companies/
+        comps = self.client.get("/api/v1/companies/").json()
+        target = next((c for c in comps if c["id"] == comp_id), None)
+        self.assertIsNotNone(target)
+        self.assertEqual(target["store_count"], 1)
+
+        # 4. Unlink account (even if account is deleted from Firefly -> succeeds without 404)
+        unlink_res = self.client.put(
+            "/api/v1/companies/accounts/101/company",
+            json={"company_id": None, "company_name": None},
+        )
+        self.assertEqual(unlink_res.status_code, 204)
+
+        # 5. Delete company
+        del_res = self.client.delete(f"/api/v1/companies/{comp_id}")
+        self.assertEqual(del_res.status_code, 204)
+
+    def test_company_assignment_and_price_recording_firefly_502(self):
+        with patch(
+            "app.api.v1.companies.firefly_client.get_expense_account",
+            AsyncMock(side_effect=httpx.ConnectError("Firefly unreachable")),
+        ):
+            res = self.client.put(
+                "/api/v1/companies/accounts/101/company",
+                json={"company_name": "New Co"},
+            )
+            self.assertEqual(res.status_code, 502)
+
+        with patch(
+            "app.api.v1.prices.firefly_client.get_expense_account",
+            AsyncMock(side_effect=httpx.ConnectError("Firefly unreachable")),
+        ):
+            res = self.client.post(
+                "/api/v1/prices/",
+                json={
+                    "product_id": self.pasta_id,
+                    "firefly_account_id": self.active_account_id,
+                    "recorded_date": "2026-11-20",
+                    "paid_price": 1.50,
+                    "regular_price": 1.50,
+                },
+            )
+            self.assertEqual(res.status_code, 502)
+
+    def test_firefly_search_and_directory_endpoints(self):
+        with (
+            patch(
+                "app.api.v1.firefly.firefly_client.search_expense_accounts",
+                AsyncMock(
+                    return_value=[
+                        {"id": "102", "attributes": {"name": "Penny Market", "active": True}},
+                        {"id": "103", "attributes": {"name": "Conad Closed", "active": False}},
+                        {"id": "101", "attributes": {"name": "Conad Via Roma", "active": True}},
+                    ]
+                ),
+            ),
+            patch(
+                "app.api.v1.firefly.firefly_client.get_all_expense_accounts",
+                AsyncMock(
+                    return_value=[
+                        {"id": "101", "attributes": {"name": "Conad Via Roma", "active": True}},
+                        {"id": "102", "attributes": {"name": "Penny Market", "active": True}},
+                    ]
+                ),
+            ),
+        ):
+            # Autocomplete search filters out inactive and sorts alphabetically
+            search_res = self.client.get(
+                "/api/v1/firefly/expense-accounts/search?query=Conad"
+            )
+            self.assertEqual(search_res.status_code, 200)
+            items = search_res.json()
+            self.assertEqual(len(items), 2)  # Inactive id 103 filtered out
+            self.assertEqual(items[0]["name"], "Conad Via Roma")
+            self.assertEqual(items[1]["name"], "Penny Market")
+
+            # Autocomplete with empty query returns empty list without upstream sweeps
+            empty_res = self.client.get(
+                "/api/v1/firefly/expense-accounts/search?query="
+            )
+            self.assertEqual(empty_res.status_code, 200)
+            empty_items = empty_res.json()
+            self.assertEqual(len(empty_items), 0)
+
+            # Full directory
+            list_res = self.client.get("/api/v1/firefly/expense-accounts")
+            self.assertEqual(list_res.status_code, 200)
+            accounts = list_res.json()
+            self.assertEqual(len(accounts), 2)
+            conad = next(a for a in accounts if a["id"] == 101)
+            self.assertEqual(conad["company_name"], "Conad")
+
 
 class LegacyDatabaseMigrationTests(unittest.TestCase):
     def test_pre_workbench_db_upgrades_non_destructively(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "legacy.db"
-            legacy_engine = create_engine(f"sqlite:///{db_path}")
+            legacy_engine = create_engine(
+                f"sqlite:///{db_path}", poolclass=pool.NullPool
+            )
 
             backend_dir = Path(__file__).resolve().parents[1]
             cfg = alembic.config.Config(str(backend_dir / "alembic.ini"))
@@ -419,7 +598,7 @@ class LegacyDatabaseMigrationTests(unittest.TestCase):
                 )
                 conn.execute(
                     text(
-                        "INSERT INTO store (id, name, company_id, created_at) VALUES (1, 'Lidl North', 1, '2026-01-01 00:00:00')"
+                        "INSERT INTO store (id, name, company_id, firefly_account_id, created_at) VALUES (1, 'Lidl North', 1, 99, '2026-01-01 00:00:00')"
                     )
                 )
                 conn.execute(
@@ -443,7 +622,11 @@ class LegacyDatabaseMigrationTests(unittest.TestCase):
 
             insp = inspect(legacy_engine)
             self.assertTrue(insp.has_table("alembic_version"))
+            self.assertTrue(insp.has_table("companyaccountlink"))
+            self.assertFalse(insp.has_table("store"))
             receipt_cols = {c["name"] for c in insp.get_columns("receipt")}
+            self.assertIn("firefly_account_id", receipt_cols)
+            self.assertNotIn("store_id", receipt_cols)
             self.assertIn("basket_discount", receipt_cols)
             self.assertIn("firefly_voucher_transaction_id", receipt_cols)
             item_cols = {c["name"]: c for c in insp.get_columns("receiptitem")}
@@ -454,6 +637,7 @@ class LegacyDatabaseMigrationTests(unittest.TestCase):
                 row = s.get(Receipt, 1)
                 self.assertIsNotNone(row)
                 self.assertEqual(row.total_amount, 1.50)
+                self.assertEqual(row.firefly_account_id, 99)
                 self.assertEqual(row.payment_mode, "single")
                 self.assertEqual(row.basket_discount, 0.0)
 

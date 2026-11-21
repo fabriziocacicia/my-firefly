@@ -8,7 +8,7 @@ import { WorkflowsPage } from './pages/WorkflowsPage';
 import { AppTab } from './types';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<AppTab>('stores');
+  const [activeTab, setActiveTab] = useState<AppTab>('workbench');
 
   return (
     <ReceiptWorkbenchProvider>

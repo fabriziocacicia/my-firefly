@@ -1,3 +1,6 @@
+import sqlite3
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 from sqlmodel import SQLModel, create_engine, Session
 from app.core.config import settings
 
@@ -11,6 +14,23 @@ engine = create_engine(
     echo=False,
     connect_args=connect_args
 )
+
+
+def configure_sqlite_pragmas(target_engine, foreign_keys: bool = True):
+    @event.listens_for(target_engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, connection_record):
+        if isinstance(dbapi_connection, sqlite3.Connection):
+            cursor = dbapi_connection.cursor()
+            if foreign_keys:
+                cursor.execute("PRAGMA foreign_keys = ON")
+            else:
+                cursor.execute("PRAGMA foreign_keys = OFF")
+            cursor.execute("PRAGMA journal_mode = WAL")
+            cursor.execute("PRAGMA busy_timeout = 5000")
+            cursor.close()
+
+
+configure_sqlite_pragmas(engine, foreign_keys=True)
 
 
 def create_db_and_tables(target_engine=engine):

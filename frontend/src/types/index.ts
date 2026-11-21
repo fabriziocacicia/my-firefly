@@ -19,16 +19,7 @@ export interface Company {
   name: string;
   default_category?: string;
   notes?: string;
-}
-
-export interface Store {
-  id: number;
-  name: string;
-  company_id: number;
-  address?: string;
-  firefly_account_id?: number;
-  firefly_account_name?: string;
-  company?: Company;
+  store_count?: number;
 }
 
 export interface Product {
@@ -46,7 +37,8 @@ export interface Product {
 export interface PriceRecord {
   id: number;
   product_id: number;
-  store_id: number;
+  firefly_account_id: number;
+  store_name?: string;
   recorded_date: string;
   regular_price: number;
   paid_price: number;
@@ -61,7 +53,6 @@ export interface PriceRecord {
   firefly_transaction_id?: number;
   notes?: string;
   product?: Product;
-  store?: Store;
 }
 
 export interface DealAnalysis {
@@ -76,13 +67,17 @@ export interface DealAnalysis {
   normalized_baseline_regular_price?: number | null;
 }
 
+export interface FireflyExpenseAccountBrief {
+  id: number;
+  name: string;
+}
+
 export interface FireflyExpenseAccount {
   id: number;
   name: string;
-  is_mapped: boolean;
-  mapped_store_id?: number;
-  mapped_store_name?: string;
-  mapped_company_name?: string;
+  active: boolean;
+  company_id?: number | null;
+  company_name?: string | null;
 }
 
 export interface FireflyAssetAccount {
@@ -120,7 +115,7 @@ export interface ReceiptItemPayload {
 }
 
 export interface ReceiptCreatePayload {
-  store_id: number;
+  firefly_account_id: number;
   purchase_date: string;
   total_amount: number;
   basket_discount: number;
@@ -160,7 +155,8 @@ export interface ReceiptItemRecord {
 
 export interface ReceiptRecord {
   id: number;
-  store_id: number;
+  firefly_account_id: number;
+  store_name?: string;
   purchase_date: string;
   total_amount: number;
   basket_discount: number;
@@ -173,7 +169,6 @@ export interface ReceiptRecord {
   firefly_voucher_transaction_id?: number | null;
   notes?: string | null;
   created_at: string;
-  store?: Store;
   items: ReceiptItemRecord[];
   attachments: ReceiptAttachment[];
 }

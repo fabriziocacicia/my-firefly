@@ -6,17 +6,23 @@ A companion web application for **Firefly III** to track SKU-level product price
 
 ## 🚀 Key Capabilities
 
-1. **Company & Store Hierarchy**:
-   - Map flat Firefly expense accounts (e.g. `Acqua e Sapone Via Milano Catania`, `Acqua e Sapone Palermo`) to unified parent companies (`Acqua e Sapone`, `Conad`, `Lidl`, `MD`).
-   - Compare product prices across branches or between retail chains.
+1. **Receipt Workbench & Split Balancing**:
+   - Dual-mode (spreadsheet-style tabular grid or card stream) receipt entry with real-time target sum balancing.
+   - Integrated type-ahead product lookup with inline quick-creation.
+   - Built-in receipt image attachment preview and local draft autosave in browser storage.
+   - 1-click push to Firefly III split transactions with optional meal voucher splits.
 
-2. **Products, Brands & Price Intelligence**:
+2. **Live Firefly Stores & Optional Companies**:
+   - Instant live lookup and autocomplete across all Firefly III expense accounts without upfront manual mapping.
+   - Optionally group flat accounts (e.g. `Acqua e Sapone Via Milano Catania`, `Acqua e Sapone Palermo`) under parent companies (`Acqua e Sapone`, `Conad`, `Lidl`, `MD`) for cross-branch price comparisons.
+
+3. **Products, Brands & Price Intelligence**:
    - Track products with brands, package sizes, and multi-dimensional tags (e.g. `[Food, Pasta, Organic]`, `[Fruit, Bio]`).
    - Log regular shelf prices vs. paid sale prices.
    - Automatic unit price normalization (€/kg, €/L, €/pc).
    - **Deal Scoring**: Evaluates current prices against your historic baseline and highlights all-time lows.
 
-3. **Smart Workflows**:
+4. **Smart Workflows**:
    - **Buoni Pasto / Meal Voucher Splitter**: Auto-calculates voucher limits + card remainders and pushes **both balanced transactions** to Firefly III in 1-click.
    - **Recurring Family Plan Generator**: 1-click generation of monthly Spotify Family or iCloud 2TB splits with dynamic month labels.
 
@@ -28,7 +34,7 @@ A companion web application for **Firefly III** to track SKU-level product price
 my-firefly/
 ├── backend/                  # Python 3.11 + FastAPI + SQLModel
 │   ├── app/
-│   │   ├── api/v1/           # REST endpoints (companies, products, prices, firefly, workflows)
+│   │   ├── api/v1/           # REST endpoints (companies, products, prices, firefly, workflows, receipts)
 │   │   ├── core/             # Configuration & SQLite connection
 │   │   ├── models/           # SQLModel domain models (Company, Product, Price, Tag, Receipt)
 │   │   ├── services/         # Firefly III client & price normalization
@@ -38,16 +44,28 @@ my-firefly/
 ├── frontend/                 # TypeScript + React + Vite + Tailwind CSS
 │   ├── src/
 │   │   ├── api/client.ts     # Typed API client
-│   │   ├── components/       # UI components & navbar
-│   │   ├── pages/            # StoresPage, CatalogPage, WorkflowsPage
+│   │   ├── components/       # UI components (Workbench, Common, Navigation)
+│   │   ├── pages/            # ReceiptWorkbenchPage, StoresPage, CatalogPage, WorkflowsPage
 │   │   └── types/            # TypeScript interfaces
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── Dockerfile
+├── docs/
+│   └── designs/              # Architectural design specifications & sitemap
 ├── data/                     # Persistent storage (SQLite & Receipts)
 ├── docker-compose.yml        # Docker compose for OrbStack / server
 └── .env                      # Firefly URL & Token configuration
 ```
+
+---
+
+## 📖 Architecture & Design Specifications
+
+All significant architecture decisions, domain models, and RFCs are maintained in [`docs/designs/`](docs/designs/):
+
+- [Design Documents Sitemap](docs/designs/SITEMAP.md)
+- [Receipt Workbench & Price Analytics](docs/designs/receipt_workbench_and_price_analytics.md)
+- [Live Firefly Store Lookup & Optional Companies](docs/designs/live_firefly_stores_and_optional_company.md)
 
 ---
 

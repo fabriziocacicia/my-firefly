@@ -1,6 +1,6 @@
 import {
-  Company, Store, Product, Brand, Tag, PriceRecord,
-  FireflyExpenseAccount, FireflyAssetAccount,
+  Company, Product, Brand, Tag, PriceRecord,
+  FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount,
   ProductPriceHistoryResponse, ReceiptCreatePayload, ReceiptRecord, ReceiptAttachment
 } from '../types';
 
@@ -22,7 +22,38 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(errorBody.detail || `HTTP Error ${res.status}`);
+    let message = `HTTP Error ${res.status}`;
+    if (typeof errorBody === 'string') {
+      message = errorBody;
+    } else if (typeof errorBody?.detail === 'string') {
+      message = errorBody.detail;
+    } else if (Array.isArray(errorBody?.detail)) {
+      message = errorBody.detail
+        .map((e: any) => {
+          if (!e) return '';
+          if (typeof e === 'string') return e;
+          if (typeof e.msg === 'string') return e.msg;
+          if (typeof e.detail === 'string') return e.detail;
+          return JSON.stringify(e);
+        })
+        .filter(Boolean)
+        .join(', ');
+    } else if (typeof errorBody?.message === 'string') {
+      message = errorBody.message;
+    } else if (typeof errorBody?.error === 'string') {
+      message = errorBody.error;
+    } else if (errorBody && typeof errorBody === 'object') {
+      try {
+        message = JSON.stringify(errorBody);
+      } catch {
+        message = `HTTP Error ${res.status}`;
+      }
+    }
+    throw new Error(message || `HTTP Error ${res.status}`);
+  }
+
+  if (res.status === 204 || res.headers.get('content-length') === '0') {
+    return null as unknown as T;
   }
 
   return res.json();
@@ -32,19 +63,33 @@ export const api = {
   firefly: {
     getStatus: () => request<{ connected: boolean; version?: string; error?: string; url: string }>('/firefly/status'),
     getExpenseAccounts: () => request<FireflyExpenseAccount[]>('/firefly/expense-accounts'),
+    listExpenseAccounts: () => request<FireflyExpenseAccount[]>('/firefly/expense-accounts'),
+    searchExpenseAccounts: (query: string, limit: number = 10, signal?: AbortSignal) =>
+      request<FireflyExpenseAccountBrief[]>(
+        `/firefly/expense-accounts/search?query=${encodeURIComponent(query)}&limit=${limit}`,
+        { signal }
+      ),
+    getExpenseAccount: (id: number) =>
+      request<FireflyExpenseAccount>(`/firefly/expense-accounts/${id}`),
     getAssetAccounts: () => request<FireflyAssetAccount[]>('/firefly/asset-accounts'),
   },
 
   companies: {
     list: () => request<Company[]>('/companies/'),
-    create: (data: { name: string; default_category?: string }) =>
+    create: (data: { name: string; default_category?: string; notes?: string }) =>
       request<Company>('/companies/', { method: 'POST', body: JSON.stringify(data) }),
-    listStores: (companyId?: number) =>
-      request<Store[]>(companyId ? `/companies/stores?company_id=${companyId}` : '/companies/stores'),
-    quickMap: (params: { company_name: string; store_name: string; firefly_account_id: number; firefly_account_name: string }) => {
-      const url = `/companies/quick-map?company_name=${encodeURIComponent(params.company_name)}&store_name=${encodeURIComponent(params.store_name)}&firefly_account_id=${params.firefly_account_id}&firefly_account_name=${encodeURIComponent(params.firefly_account_name)}`;
-      return request<Store>(url, { method: 'POST' });
-    },
+    update: (id: number, data: Partial<Company>) =>
+      request<Company>(`/companies/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    delete: (id: number) =>
+      request<void>(`/companies/${id}`, { method: 'DELETE' }),
+    assignAccountCompany: (
+      accountId: number,
+      payload: { company_id?: number | null; company_name?: string | null }
+    ) =>
+      request<any>(`/companies/accounts/${accountId}/company`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
   },
 
   tags: {
@@ -78,7 +123,7 @@ export const api = {
   prices: {
     record: (data: {
       product_id: number;
-      store_id: number;
+      firefly_account_id: number;
       recorded_date: string;
       regular_price: number;
       paid_price: number;
@@ -88,6 +133,7 @@ export const api = {
       quantity: number;
       unit: string;
       package_size?: number;
+      normalized_regular_price?: number;
       notes?: string;
     }) => request<PriceRecord>('/prices/', { method: 'POST', body: JSON.stringify(data) }),
     getHistory: (productId: number) =>
