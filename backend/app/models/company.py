@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 from sqlmodel import SQLModel, Field, Relationship
+
+if TYPE_CHECKING:
+    from app.models.account_metadata import AccountMetadata
 
 
 class CompanyBase(SQLModel):
@@ -14,6 +17,9 @@ class Company(CompanyBase, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     account_links: List["CompanyAccountLink"] = Relationship(
+        back_populates="company", cascade_delete=True
+    )
+    account_metadatas: List["AccountMetadata"] = Relationship(
         back_populates="company", cascade_delete=True
     )
 
