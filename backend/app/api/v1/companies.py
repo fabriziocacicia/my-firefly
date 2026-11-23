@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 import httpx
@@ -14,6 +15,7 @@ from app.models.company import (
     CompanyAccountLinkRead,
     AccountCompanyAssign,
 )
+from app.models.account_metadata import AccountMetadata, AccountRole
 from app.services.firefly import firefly_client
 
 router = APIRouter(prefix="/companies", tags=["Companies"])
@@ -22,12 +24,21 @@ router = APIRouter(prefix="/companies", tags=["Companies"])
 @router.get("/", response_model=List[CompanyWithCountRead])
 def get_companies(session: Session = Depends(get_session)):
     """List all companies with active linked account counts."""
+    subq_meta = (
+        select(AccountMetadata.firefly_account_id, AccountMetadata.company_id)
+        .where(AccountMetadata.role == AccountRole.CHAIN)
+    )
+    subq_link = (
+        select(CompanyAccountLink.firefly_account_id, CompanyAccountLink.company_id)
+    )
+    combined = subq_meta.union(subq_link).subquery()
+
     statement = (
         select(
             Company,
-            func.count(CompanyAccountLink.firefly_account_id).label("store_count"),
+            func.count(combined.c.firefly_account_id).label("store_count"),
         )
-        .outerjoin(CompanyAccountLink, CompanyAccountLink.company_id == Company.id)
+        .outerjoin(combined, combined.c.company_id == Company.id)
         .group_by(Company.id)
         .order_by(Company.name)
     )
@@ -144,6 +155,16 @@ def delete_company(company_id: int, session: Session = Depends(get_session)):
     for link in links:
         session.delete(link)
 
+    metas = session.exec(
+        select(AccountMetadata).where(AccountMetadata.company_id == company_id)
+    ).all()
+    now = datetime.now(timezone.utc)
+    for m in metas:
+        m.role = AccountRole.UNCLASSIFIED
+        m.company_id = None
+        m.updated_at = now
+        session.add(m)
+
     session.delete(company)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -188,7 +209,13 @@ async def assign_or_clear_account_company(
         existing_link = session.get(CompanyAccountLink, firefly_account_id)
         if existing_link:
             session.delete(existing_link)
-            session.commit()
+        meta = session.get(AccountMetadata, firefly_account_id)
+        if meta and meta.role == AccountRole.CHAIN:
+            meta.role = AccountRole.UNCLASSIFIED
+            meta.company_id = None
+            meta.updated_at = datetime.now(timezone.utc)
+            session.add(meta)
+        session.commit()
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     # 3. Verify account exists & is active in Firefly III
@@ -239,7 +266,7 @@ async def assign_or_clear_account_company(
             detail="Unable to resolve company for assignment",
         )
 
-    # 5. Upsert CompanyAccountLink
+    # 5. Upsert CompanyAccountLink and sync AccountMetadata
     link = session.get(CompanyAccountLink, firefly_account_id)
     if link:
         link.company_id = company.id
@@ -248,6 +275,25 @@ async def assign_or_clear_account_company(
             firefly_account_id=firefly_account_id, company_id=company.id
         )
     session.add(link)
+
+    meta = session.get(AccountMetadata, firefly_account_id)
+    now = datetime.now(timezone.utc)
+    if meta:
+        meta.role = AccountRole.CHAIN
+        meta.company_id = company.id
+        meta.category = None
+        meta.updated_at = now
+        session.add(meta)
+    else:
+        meta = AccountMetadata(
+            firefly_account_id=firefly_account_id,
+            role=AccountRole.CHAIN,
+            company_id=company.id,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(meta)
+
     session.commit()
     session.refresh(link)
 
