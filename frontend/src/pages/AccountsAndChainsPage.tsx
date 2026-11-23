@@ -16,7 +16,6 @@ import {
   Tag as TagIcon,
   User,
   HelpCircle,
-  Link as LinkIcon,
 } from 'lucide-react';
 
 export const AccountsAndChainsPage: React.FC = () => {
