@@ -1,4 +1,4 @@
-from datetime import datetime, date, timezone
+from datetime import datetime, date, time, timezone
 from typing import Optional, List, Literal
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.product import Product, ProductRead
@@ -7,6 +7,7 @@ from app.models.product import Product, ProductRead
 class ReceiptBase(SQLModel):
     firefly_account_id: int = Field(index=True)
     purchase_date: date = Field(default_factory=date.today, index=True)
+    purchase_time: Optional[time] = Field(default=None, description="Time of purchase on receipt (HH:MM:SS)")
     total_amount: float = Field(default=0.0)
     basket_discount: float = Field(default=0.0)
     source_account_id: Optional[int] = Field(default=None, description="Primary Firefly asset account")
@@ -75,6 +76,9 @@ class ReceiptItemCreate(SQLModel):
 class ReceiptCreate(SQLModel):
     firefly_account_id: int
     purchase_date: date = Field(default_factory=date.today)
+    purchase_time: Optional[time] = Field(
+        default_factory=lambda: datetime.now().time().replace(microsecond=0)
+    )
     total_amount: float = Field(gt=0)
     basket_discount: float = Field(default=0.0, ge=0)
     source_account_id: Optional[int] = None

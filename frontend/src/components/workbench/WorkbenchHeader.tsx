@@ -28,6 +28,8 @@ export const WorkbenchHeader: React.FC = () => {
     setStoreName,
     purchaseDate,
     setPurchaseDate,
+    purchaseTime,
+    setPurchaseTime,
     targetTotal,
     setTargetTotal,
     basketDiscount,
@@ -233,7 +235,7 @@ export const WorkbenchHeader: React.FC = () => {
 
       {/* Primary Receipt Metadata Controls */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-        <div className="md:col-span-4">
+        <div className="md:col-span-3">
           <label className="block text-xs font-semibold text-slate-700 mb-1">
             Store (Expense Account) *
           </label>
@@ -248,16 +250,31 @@ export const WorkbenchHeader: React.FC = () => {
           />
         </div>
 
-        <div className="md:col-span-2">
-          <label className="block text-xs font-semibold text-slate-700 mb-1">
-            Purchase Date *
-          </label>
-          <input
-            type="date"
-            value={purchaseDate}
-            onChange={e => setPurchaseDate(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+        <div className="md:col-span-3 grid grid-cols-5 gap-2">
+          <div className="col-span-3">
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Purchase Date *
+            </label>
+            <input
+              type="date"
+              required
+              value={purchaseDate}
+              onChange={e => setPurchaseDate(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Time *
+            </label>
+            <input
+              type="time"
+              required
+              value={purchaseTime}
+              onChange={e => setPurchaseTime(e.target.value)}
+              className="w-full px-2 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
         </div>
 
         <div className="md:col-span-2">

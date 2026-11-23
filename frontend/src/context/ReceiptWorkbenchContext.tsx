@@ -9,6 +9,11 @@ const round2 = (v: number): number => Math.round(v * 100) / 100;
 
 const todayIso = (): string => new Date().toISOString().split('T')[0];
 
+const nowTimeIso = (): string => {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
 const defaultEntryMode = (): EntryMode =>
   typeof window !== 'undefined' && window.innerWidth < 768 ? 'stream' : 'grid';
 
@@ -22,6 +27,7 @@ interface PersistedDraft {
   storeName: string;
   storeId?: number | null;
   purchaseDate: string;
+  purchaseTime: string;
   targetTotal: number;
   basketDiscount: number;
   notes: string;
@@ -41,6 +47,7 @@ const loadInitialDraft = (): PersistedDraft => {
     storeName: '',
     storeId: null,
     purchaseDate: todayIso(),
+    purchaseTime: nowTimeIso(),
     targetTotal: 0,
     basketDiscount: 0,
     notes: '',
@@ -65,6 +72,7 @@ const loadInitialDraft = (): PersistedDraft => {
       storeName: typeof parsed.storeName === 'string' ? parsed.storeName : '',
       storeId: resolvedAccountId,
       purchaseDate: parsed.purchaseDate || todayIso(),
+      purchaseTime: parsed.purchaseTime || nowTimeIso(),
       targetTotal: typeof parsed.targetTotal === 'number' ? parsed.targetTotal : 0,
       basketDiscount: typeof parsed.basketDiscount === 'number' ? parsed.basketDiscount : 0,
       notes: typeof parsed.notes === 'string' ? parsed.notes : '',
@@ -93,6 +101,8 @@ interface ReceiptWorkbenchContextValue {
   setStoreName: (name: string) => void;
   purchaseDate: string;
   setPurchaseDate: (date: string) => void;
+  purchaseTime: string;
+  setPurchaseTime: (time: string) => void;
   targetTotal: number;
   setTargetTotal: (total: number) => void;
   basketDiscount: number;
@@ -139,6 +149,7 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
   const [fireflyAccountId, setFireflyAccountId] = useState<number | null>(initial.fireflyAccountId);
   const [storeName, setStoreName] = useState<string>(initial.storeName);
   const [purchaseDate, setPurchaseDate] = useState<string>(initial.purchaseDate);
+  const [purchaseTime, setPurchaseTime] = useState<string>(initial.purchaseTime);
   const [targetTotal, setTargetTotal] = useState<number>(initial.targetTotal);
   const [basketDiscount, setBasketDiscount] = useState<number>(initial.basketDiscount);
   const [notes, setNotes] = useState<string>(initial.notes);
@@ -190,6 +201,7 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
         storeName,
         storeId: fireflyAccountId,
         purchaseDate,
+        purchaseTime,
         targetTotal,
         basketDiscount,
         notes,
@@ -214,6 +226,7 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     fireflyAccountId,
     storeName,
     purchaseDate,
+    purchaseTime,
     targetTotal,
     basketDiscount,
     notes,
@@ -274,6 +287,7 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     setFireflyAccountId(null);
     setStoreName('');
     setPurchaseDate(todayIso());
+    setPurchaseTime(nowTimeIso());
     setTargetTotal(0);
     setBasketDiscount(0);
     setNotes('');
@@ -313,6 +327,7 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
 
   const canSaveLocally =
     Boolean(fireflyAccountId) &&
+    Boolean(purchaseTime.trim()) &&
     isBalanced &&
     draftItems.every(
       i => i.product_id > 0 && i.quantity > 0 && i.package_size > 0 && i.paid_price >= 0
@@ -330,6 +345,8 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     setStoreName,
     purchaseDate,
     setPurchaseDate,
+    purchaseTime,
+    setPurchaseTime,
     targetTotal,
     setTargetTotal,
     basketDiscount,

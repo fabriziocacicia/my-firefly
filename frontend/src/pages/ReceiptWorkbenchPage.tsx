@@ -21,6 +21,7 @@ export const ReceiptWorkbenchPage: React.FC = () => {
   const {
     fireflyAccountId,
     purchaseDate,
+    purchaseTime,
     targetTotal,
     basketDiscount,
     notes,
@@ -86,12 +87,20 @@ export const ReceiptWorkbenchPage: React.FC = () => {
 
   const handleSaveOrPush = async (shouldPush: boolean) => {
     if (!fireflyAccountId) return;
+    if (!purchaseTime.trim()) {
+      setStatusMessage({
+        type: 'error',
+        text: 'Purchase time is required.',
+      });
+      return;
+    }
     setSubmitting(true);
     setStatusMessage(null);
 
     const payload: ReceiptCreatePayload = {
       firefly_account_id: fireflyAccountId,
       purchase_date: purchaseDate,
+      purchase_time: purchaseTime.trim(),
       total_amount: targetTotal,
       basket_discount: basketDiscount,
       source_account_id: sourceAccountId,
@@ -304,6 +313,7 @@ export const ReceiptWorkbenchPage: React.FC = () => {
                         </span>
                         <span className="text-xs text-slate-500">
                           {receipt.purchase_date}
+                          {receipt.purchase_time ? ` ${receipt.purchase_time.slice(0, 5)}` : ''}
                         </span>
                         <span className="text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
                           €{receipt.total_amount.toFixed(2)}

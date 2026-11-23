@@ -440,6 +440,55 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         self.assertEqual(rec_final["firefly_voucher_transaction_id"], 902)
         self.assertEqual(rec_final["firefly_transaction_id"], 903)
 
+    def test_receipt_purchase_time_custom_and_fallback(self):
+        # 1. Explicit purchase_time is saved and sent to Firefly
+        res = self.client.post(
+            "/api/v1/receipts/",
+            json={
+                "firefly_account_id": self.active_account_id,
+                "purchase_date": "2026-11-15",
+                "purchase_time": "09:30:00",
+                "total_amount": 2.00,
+                "source_account_id": 1,
+                "payment_mode": "single",
+                "items": [{"product_id": self.pasta_id, "paid_price": 2.00}],
+            },
+        )
+        self.assertEqual(res.status_code, 200, res.text)
+        data = res.json()
+        self.assertEqual(data["purchase_time"], "09:30:00")
+        receipt_id = data["id"]
+
+        create_mock = AsyncMock(return_value={"data": {"id": "1001"}})
+        asset_mock = AsyncMock(return_value=[{"id": "1"}])
+        with (
+            patch("app.api.v1.receipts.firefly_client.get_all_asset_accounts", asset_mock),
+            patch("app.api.v1.receipts.firefly_client.create_transaction", create_mock),
+        ):
+            push_res = self.client.post(f"/api/v1/receipts/{receipt_id}/push-to-firefly")
+            self.assertEqual(push_res.status_code, 200, push_res.text)
+            create_mock.assert_awaited_once()
+            call_payload = create_mock.await_args.args[0]
+            self.assertEqual(call_payload["transactions"][0]["date"], "2026-11-15T09:30:00")
+
+        # 2. Null purchase_time falls back to 12:00:00
+        with Session(self.engine) as session:
+            rec = session.get(Receipt, receipt_id)
+            rec.purchase_time = None
+            rec.firefly_transaction_id = None
+            session.add(rec)
+            session.commit()
+
+        create_mock2 = AsyncMock(return_value={"data": {"id": "1002"}})
+        with (
+            patch("app.api.v1.receipts.firefly_client.get_all_asset_accounts", asset_mock),
+            patch("app.api.v1.receipts.firefly_client.create_transaction", create_mock2),
+        ):
+            push_res2 = self.client.post(f"/api/v1/receipts/{receipt_id}/push-to-firefly")
+            self.assertEqual(push_res2.status_code, 200, push_res2.text)
+            call_payload2 = create_mock2.await_args.args[0]
+            self.assertEqual(call_payload2["transactions"][0]["date"], "2026-11-15T12:00:00")
+
     def test_company_crud_and_account_linking(self):
         # 1. Create company
         res = self.client.post("/api/v1/companies/", json={"name": "Esselunga"})
@@ -629,6 +678,7 @@ class LegacyDatabaseMigrationTests(unittest.TestCase):
             self.assertNotIn("store_id", receipt_cols)
             self.assertIn("basket_discount", receipt_cols)
             self.assertIn("firefly_voucher_transaction_id", receipt_cols)
+            self.assertIn("purchase_time", receipt_cols)
             item_cols = {c["name"]: c for c in insp.get_columns("receiptitem")}
             self.assertTrue(item_cols["regular_price"]["nullable"])
             self.assertIn("package_size", item_cols)
@@ -640,6 +690,7 @@ class LegacyDatabaseMigrationTests(unittest.TestCase):
                 self.assertEqual(row.firefly_account_id, 99)
                 self.assertEqual(row.payment_mode, "single")
                 self.assertEqual(row.basket_discount, 0.0)
+                self.assertIsNone(row.purchase_time)
 
             legacy_engine.dispose()
 

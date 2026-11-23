@@ -148,6 +148,7 @@ A persistent header bar displays synchronized figures:
 4. **Payment Split Preview**:
    - In `'single'` mode: `100% on [Card Account Name]`.
    - In `'split_vouchers'` mode: shows `Vouchers: €XX.XX` + `Card Remainder: €XX.XX`.
+5. **Purchase Date & Time Controls**: Captures both `purchase_date` (`date`) and `purchase_time` (`HH:MM`, mandatory in frontend), defaulting to current local time, ensuring itemized splits pushed to Firefly III reflect exact receipt transaction timestamps rather than generic defaults.
 
 #### C. Tabular Data Grid View
 * Spreadsheet-style matrix table selectable on any screen (defaults on viewports $\ge 768\text{px}$, horizontally scrollable via `overflow-x-auto` if selected on smaller viewports). Keeps uncommitted blank rows local until a valid product is selected.
@@ -189,7 +190,7 @@ package_size: Optional[float] = Field(default=None)
 normalized_regular_price: Optional[float] = Field(default=None, description="Normalized regular shelf price (€/kg, €/L, €/pc)")
 
 # In backend/app/models/receipt.py
-from datetime import datetime, date
+from datetime import datetime, date, time
 from typing import Optional, List, Literal
 from pydantic import model_validator
 from sqlmodel import SQLModel, Field, Relationship
@@ -199,6 +200,7 @@ from app.models.product import Product, ProductRead
 class ReceiptBase(SQLModel):
     store_id: int = Field(foreign_key="store.id", index=True)
     purchase_date: date = Field(default_factory=date.today, index=True)
+    purchase_time: Optional[time] = Field(default=None, description="Time of purchase on receipt (HH:MM:SS)")
     total_amount: float = Field(default=0.0)
     basket_discount: float = Field(default=0.0) # Persisted companion discount
     source_account_id: Optional[int] = Field(default=None, description="Primary Firefly asset account")
