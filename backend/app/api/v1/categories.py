@@ -13,10 +13,10 @@ router = APIRouter(prefix="/categories", tags=["Categories"])
 def list_categories(session: Session = Depends(get_session)) -> List[str]:
     """Returns sorted, distinct, non-empty category names from companies and accounts."""
     company_cats = session.exec(
-        select(Company.default_category).where(Company.default_category != None)  # noqa: E711
+        select(Company.default_category).where(Company.default_category.is_not(None))
     ).all()
     account_cats = session.exec(
-        select(AccountMetadata.category).where(AccountMetadata.category != None)  # noqa: E711
+        select(AccountMetadata.category).where(AccountMetadata.category.is_not(None))
     ).all()
 
     seen = set()

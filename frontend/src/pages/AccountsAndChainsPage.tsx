@@ -50,20 +50,46 @@ export const AccountsAndChainsPage: React.FC = () => {
 
   // Inline Triage Updating State
   const [updatingAccountId, setUpdatingAccountId] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const [accs, comps, cats] = await Promise.all([
+      const [accsRes, compsRes, catsRes] = await Promise.allSettled([
         api.firefly.listExpenseAccounts(),
         api.companies.list(),
         api.categories.list(),
       ]);
-      setAccounts(accs);
-      setCompanies(comps);
-      setCategories(cats);
-    } catch (err) {
+
+      if (accsRes.status === 'fulfilled') {
+        setAccounts(accsRes.value);
+      } else {
+        console.error('Failed to load accounts:', accsRes.reason);
+      }
+
+      if (compsRes.status === 'fulfilled') {
+        setCompanies(compsRes.value);
+      } else {
+        console.error('Failed to load companies:', compsRes.reason);
+      }
+
+      if (catsRes.status === 'fulfilled') {
+        setCategories(catsRes.value);
+      } else {
+        console.error('Failed to load categories:', catsRes.reason);
+      }
+
+      if (accsRes.status === 'rejected') {
+        setLoadError(`Expense accounts error: ${accsRes.reason?.message || 'Failed to fetch'}`);
+      } else if (compsRes.status === 'rejected') {
+        setLoadError(`Chains error: ${compsRes.reason?.message || 'Failed to fetch'}`);
+      } else if (catsRes.status === 'rejected') {
+        setLoadError(`Categories error: ${catsRes.reason?.message || 'Failed to fetch'}`);
+      }
+    } catch (err: any) {
       console.error('Failed to load accounts, companies, and categories:', err);
+      setLoadError(err.message || 'Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -326,6 +352,21 @@ export const AccountsAndChainsPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+            <span>{loadError}</span>
+          </div>
+          <button
+            onClick={loadData}
+            className="font-semibold text-red-800 hover:underline shrink-0"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="mt-6 flex border-b border-slate-200 gap-6 text-sm font-semibold">
