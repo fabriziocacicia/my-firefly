@@ -16,6 +16,8 @@ import {
   Tag as TagIcon,
   User,
   HelpCircle,
+  LayoutGrid,
+  List,
 } from 'lucide-react';
 
 export const AccountsAndChainsPage: React.FC = () => {
@@ -29,15 +31,34 @@ export const AccountsAndChainsPage: React.FC = () => {
   const [page, setPage] = useState(1);
   const ITEMS_PER_PAGE = 48;
 
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>(() => {
+    try {
+      return (localStorage.getItem('my-firefly:accounts-view-mode') as 'grid' | 'table') || 'grid';
+    } catch {
+      return 'grid';
+    }
+  });
+
+  const handleSetViewMode = (mode: 'grid' | 'table') => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('my-firefly:accounts-view-mode', mode);
+    } catch {
+      // ignore
+    }
+  };
+
   useEffect(() => {
     setPage(1);
   }, [search, filter]);
 
-  // Company Link Modal for Chain branches
-  const [assigningAccount, setAssigningAccount] = useState<FireflyExpenseAccount | null>(null);
-  const [companySelection, setCompanySelection] = useState<CompanySelection | null>(null);
-  const [savingLink, setSavingLink] = useState(false);
-  const [linkError, setLinkError] = useState<string | null>(null);
+  // Unified Classification Modal
+  const [classifyingAccount, setClassifyingAccount] = useState<FireflyExpenseAccount | null>(null);
+  const [modalRole, setModalRole] = useState<AccountRole>('unclassified');
+  const [modalCompanySelection, setModalCompanySelection] = useState<CompanySelection | null>(null);
+  const [modalCategory, setModalCategory] = useState<string | null>(null);
+  const [savingClassification, setSavingClassification] = useState(false);
+  const [classificationError, setClassificationError] = useState<string | null>(null);
 
   // Manage Companies State
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
@@ -48,8 +69,6 @@ export const AccountsAndChainsPage: React.FC = () => {
   const [savingCompany, setSavingCompany] = useState(false);
   const [companyError, setCompanyError] = useState<string | null>(null);
 
-  // Inline Triage Updating State
-  const [updatingAccountId, setUpdatingAccountId] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadData = async () => {
@@ -99,124 +118,68 @@ export const AccountsAndChainsPage: React.FC = () => {
     loadData();
   }, []);
 
-  // Quick Role Triage Handler
-  const handleRoleChange = async (acc: FireflyExpenseAccount, newRole: AccountRole) => {
-    if (acc.role === newRole && newRole !== 'chain') return;
-
-    if (newRole === 'chain') {
-      openAssignModal(acc);
-      return;
-    }
-
-    setUpdatingAccountId(acc.id);
-    try {
-      await api.accounts.updateMetadata(acc.id, {
-        role: newRole,
-        category: newRole === 'independent' ? acc.category || null : null,
-        company_id: null,
-      });
-
-      // Update local state optimistically
-      setAccounts((prev) =>
-        prev.map((item) =>
-          item.id === acc.id
-            ? {
-                ...item,
-                role: newRole,
-                company_id: null,
-                company_name: null,
-                category: newRole === 'independent' ? item.category : null,
-                is_inherited_category: false,
-              }
-            : item
-        )
-      );
-
-      // Refresh categories in background if needed
-      const updatedCats = await api.categories.list();
-      setCategories(updatedCats);
-    } catch (err: any) {
-      alert(`Failed to update account role: ${err.message}`);
-    } finally {
-      setUpdatingAccountId(null);
-    }
-  };
-
-  // Direct Category Change for Independent Store
-  const handleDirectCategoryChange = async (acc: FireflyExpenseAccount, newCategory: string | null) => {
-    setUpdatingAccountId(acc.id);
-    try {
-      await api.accounts.updateMetadata(acc.id, {
-        role: 'independent',
-        category: newCategory,
-        company_id: null,
-      });
-
-      setAccounts((prev) =>
-        prev.map((item) =>
-          item.id === acc.id
-            ? { ...item, role: 'independent', category: newCategory, is_inherited_category: false }
-            : item
-        )
-      );
-
-      const updatedCats = await api.categories.list();
-      setCategories(updatedCats);
-    } catch (err: any) {
-      alert(`Failed to update category: ${err.message}`);
-    } finally {
-      setUpdatingAccountId(null);
-    }
-  };
-
-  // Open modal to link chain
-  const openAssignModal = (acc: FireflyExpenseAccount) => {
-    setAssigningAccount(acc);
-    setCompanySelection({
+  // Open Unified Classification Modal
+  const openClassifyModal = (acc: FireflyExpenseAccount) => {
+    setClassifyingAccount(acc);
+    const effectiveRole: AccountRole = acc.role || (acc.company_id ? 'chain' : 'unclassified');
+    setModalRole(effectiveRole);
+    setModalCompanySelection({
       companyId: acc.company_id ?? null,
       companyName: acc.company_name ?? '',
       isNew: false,
     });
-    setLinkError(null);
+    setModalCategory(effectiveRole === 'independent' ? acc.category || null : null);
+    setClassificationError(null);
   };
 
-  // Save chain assignment
-  const handleSaveCompanyAssignment = async (e: React.FormEvent) => {
+  // Save Classification
+  const handleSaveClassification = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!assigningAccount) return;
+    if (!classifyingAccount) return;
 
-    setSavingLink(true);
-    setLinkError(null);
+    setSavingClassification(true);
+    setClassificationError(null);
     try {
-      let targetCompanyId = companySelection?.companyId ?? null;
+      let companyId: number | null = null;
+      let category: string | null = null;
 
-      if (companySelection?.isNew && companySelection.companyName.trim()) {
-        const created = await api.companies.create({
-          name: companySelection.companyName.trim(),
-        });
-        targetCompanyId = created.id;
+      if (modalRole === 'chain') {
+        if (!modalCompanySelection?.companyId && !modalCompanySelection?.companyName?.trim()) {
+          setClassificationError('Please select or enter a parent retail chain name.');
+          setSavingClassification(false);
+          return;
+        }
+
+        if (modalCompanySelection.isNew && modalCompanySelection.companyName.trim()) {
+          const created = await api.companies.create({
+            name: modalCompanySelection.companyName.trim(),
+          });
+          companyId = created.id;
+        } else {
+          companyId = modalCompanySelection.companyId ?? null;
+        }
+
+        if (!companyId) {
+          setClassificationError('Please select a valid parent chain.');
+          setSavingClassification(false);
+          return;
+        }
+      } else if (modalRole === 'independent') {
+        category = modalCategory?.trim() || null;
       }
 
-      if (!targetCompanyId) {
-        // Unlinking
-        await api.accounts.updateMetadata(assigningAccount.id, {
-          role: 'unclassified',
-          company_id: null,
-          category: null,
-        });
-      } else {
-        await api.accounts.updateMetadata(assigningAccount.id, {
-          role: 'chain',
-          company_id: targetCompanyId,
-        });
-      }
+      await api.accounts.updateMetadata(classifyingAccount.id, {
+        role: modalRole,
+        company_id: companyId,
+        category: category,
+      });
 
-      setAssigningAccount(null);
+      setClassifyingAccount(null);
       await loadData();
     } catch (err: any) {
-      setLinkError(err.message || 'Failed to assign chain');
+      setClassificationError(err.message || 'Failed to save classification');
     } finally {
-      setSavingLink(false);
+      setSavingClassification(false);
     }
   };
 
@@ -411,81 +374,109 @@ export const AccountsAndChainsPage: React.FC = () => {
               />
             </div>
 
-            {/* Filter Chips */}
-            <div className="flex flex-wrap bg-slate-100 p-1 rounded-lg text-xs font-semibold gap-1">
-              <button
-                onClick={() => setFilter('all')}
-                className={`px-2.5 py-1.5 rounded-md transition ${
-                  filter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                All ({counts.all})
-              </button>
-              <button
-                onClick={() => setFilter('chains')}
-                className={`px-2.5 py-1.5 rounded-md transition ${
-                  filter === 'chains' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Chains ({counts.chains})
-              </button>
-              <button
-                onClick={() => setFilter('independent')}
-                className={`px-2.5 py-1.5 rounded-md transition ${
-                  filter === 'independent' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Independent ({counts.independent})
-              </button>
-              <button
-                onClick={() => setFilter('person')}
-                className={`px-2.5 py-1.5 rounded-md transition ${
-                  filter === 'person' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Persons ({counts.person})
-              </button>
-              <button
-                onClick={() => setFilter('unclassified')}
-                className={`px-2.5 py-1.5 rounded-md transition ${
-                  filter === 'unclassified' ? 'bg-white text-amber-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Unclassified ({counts.unclassified})
-              </button>
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Filter Chips */}
+              <div className="flex flex-wrap bg-slate-100 p-1 rounded-lg text-xs font-semibold gap-1">
+                <button
+                  onClick={() => setFilter('all')}
+                  className={`px-2.5 py-1.5 rounded-md transition ${
+                    filter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All ({counts.all})
+                </button>
+                <button
+                  onClick={() => setFilter('chains')}
+                  className={`px-2.5 py-1.5 rounded-md transition ${
+                    filter === 'chains' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Chains ({counts.chains})
+                </button>
+                <button
+                  onClick={() => setFilter('independent')}
+                  className={`px-2.5 py-1.5 rounded-md transition ${
+                    filter === 'independent' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Independent ({counts.independent})
+                </button>
+                <button
+                  onClick={() => setFilter('person')}
+                  className={`px-2.5 py-1.5 rounded-md transition ${
+                    filter === 'person' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Persons ({counts.person})
+                </button>
+                <button
+                  onClick={() => setFilter('unclassified')}
+                  className={`px-2.5 py-1.5 rounded-md transition ${
+                    filter === 'unclassified' ? 'bg-white text-amber-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Unclassified ({counts.unclassified})
+                </button>
+              </div>
+
+              {/* Grid / Table View Switcher */}
+              <div className="flex items-center rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-slate-500">
+                <button
+                  type="button"
+                  onClick={() => handleSetViewMode('grid')}
+                  className={`p-1.5 rounded-md transition ${
+                    viewMode === 'grid' ? 'bg-white text-indigo-600 shadow-xs' : 'hover:text-slate-900'
+                  }`}
+                  title="Grid View (Cards)"
+                  aria-label="Grid View (Cards)"
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetViewMode('table')}
+                  className={`p-1.5 rounded-md transition ${
+                    viewMode === 'table' ? 'bg-white text-indigo-600 shadow-xs' : 'hover:text-slate-900'
+                  }`}
+                  title="Table View (Dense)"
+                  aria-label="Table View (Dense)"
+                >
+                  <List className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Accounts Grid */}
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {loading ? (
-              <div className="col-span-full py-16 text-center text-slate-400 text-sm">
-                Loading expense accounts from Firefly III...
-              </div>
-            ) : filteredAccounts.length === 0 ? (
-              <div className="col-span-full py-16 text-center text-slate-400 text-sm">
-                No accounts match the current search or filter.
-              </div>
-            ) : (
-              paginatedAccounts.map((acc) => {
+          {loading ? (
+            <div className="py-16 text-center text-slate-400 text-sm">
+              Loading expense accounts from Firefly III...
+            </div>
+          ) : filteredAccounts.length === 0 ? (
+            <div className="py-16 text-center text-slate-400 text-sm bg-white border border-slate-200 rounded-xl mt-6">
+              No accounts match the current search or filter.
+            </div>
+          ) : viewMode === 'grid' ? (
+            /* Quiet Cards Grid View */
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {paginatedAccounts.map((acc) => {
                 const effectiveRole: AccountRole = acc.role || (acc.company_id ? 'chain' : 'unclassified');
-                const isUpdating = updatingAccountId === acc.id;
+                const isUnclassified = effectiveRole === 'unclassified';
 
                 return (
                   <div
                     key={acc.id}
                     className={`p-4 rounded-xl border bg-white shadow-xs transition flex flex-col justify-between ${
                       effectiveRole === 'chain'
-                        ? 'border-indigo-100 hover:border-indigo-200'
+                        ? 'border-indigo-100/80 hover:border-indigo-200'
                         : effectiveRole === 'independent'
-                        ? 'border-emerald-100 hover:border-emerald-200'
+                        ? 'border-emerald-100/80 hover:border-emerald-200'
                         : effectiveRole === 'person'
-                        ? 'border-slate-200 bg-slate-50/60'
+                        ? 'border-slate-200 hover:border-slate-300'
                         : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
                     <div>
-                      {/* Card Header: Icon, Name & ID */}
+                      {/* Card Header: Icon, Name, ID & Action Button */}
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-start space-x-2.5 min-w-0">
                           <div
@@ -495,8 +486,8 @@ export const AccountsAndChainsPage: React.FC = () => {
                                 : effectiveRole === 'independent'
                                 ? 'bg-emerald-50 text-emerald-600'
                                 : effectiveRole === 'person'
-                                ? 'bg-slate-200 text-slate-600'
-                                : 'bg-slate-100 text-slate-500'
+                                ? 'bg-slate-100 text-slate-600'
+                                : 'bg-slate-100 text-slate-400'
                             }`}
                           >
                             {effectiveRole === 'chain' ? (
@@ -510,7 +501,7 @@ export const AccountsAndChainsPage: React.FC = () => {
                             )}
                           </div>
                           <div className="min-w-0">
-                            <h3 className="font-semibold text-sm text-slate-900 leading-snug truncate">
+                            <h3 className="font-semibold text-sm text-slate-900 leading-snug truncate" title={acc.name}>
                               {acc.name}
                             </h3>
                             <div className="flex items-center gap-2 mt-0.5">
@@ -524,122 +515,188 @@ export const AccountsAndChainsPage: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Chain link button if role is chain */}
-                        {effectiveRole === 'chain' && (
-                          <button
-                            onClick={() => openAssignModal(acc)}
-                            className="text-xs px-2 py-1 rounded font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 shrink-0 transition"
-                          >
-                            {acc.company_id ? 'Edit Chain' : 'Link Chain'}
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => openClassifyModal(acc)}
+                          className={`text-xs px-2.5 py-1 rounded-md font-medium shrink-0 transition border ${
+                            isUnclassified
+                              ? 'text-slate-600 bg-slate-50 hover:bg-slate-100 border-slate-200'
+                              : 'text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100 border-indigo-200/80'
+                          }`}
+                        >
+                          {isUnclassified ? 'Classify' : 'Edit'}
+                        </button>
                       </div>
 
-                      {/* Fast Role Selector */}
-                      <div className="mt-3.5 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Role</span>
-                        <div className="inline-flex rounded-lg bg-slate-100 p-0.5 text-[11px] font-semibold">
-                          <button
-                            type="button"
-                            disabled={isUpdating}
-                            onClick={() => handleRoleChange(acc, 'chain')}
-                            className={`px-2 py-1 rounded-md transition ${
-                              effectiveRole === 'chain'
-                                ? 'bg-white text-indigo-700 shadow-xs'
-                                : 'text-slate-500 hover:text-slate-800'
-                            }`}
-                            title="Chain Branch (inherits chain sector)"
-                          >
-                            Chain
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isUpdating}
-                            onClick={() => handleRoleChange(acc, 'independent')}
-                            className={`px-2 py-1 rounded-md transition ${
-                              effectiveRole === 'independent'
-                                ? 'bg-white text-emerald-700 shadow-xs'
-                                : 'text-slate-500 hover:text-slate-800'
-                            }`}
-                            title="Independent Business (direct category tag)"
-                          >
-                            Shop
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isUpdating}
-                            onClick={() => handleRoleChange(acc, 'person')}
-                            className={`px-2 py-1 rounded-md transition ${
-                              effectiveRole === 'person'
-                                ? 'bg-white text-slate-800 shadow-xs'
-                                : 'text-slate-500 hover:text-slate-800'
-                            }`}
-                            title="Personal Contact (no category tags)"
-                          >
-                            Person
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isUpdating}
-                            onClick={() => handleRoleChange(acc, 'unclassified')}
-                            className={`px-1.5 py-1 rounded-md transition ${
-                              effectiveRole === 'unclassified'
-                                ? 'bg-white text-amber-800 shadow-xs'
-                                : 'text-slate-400 hover:text-slate-600'
-                            }`}
-                            title="Unclassified"
-                          >
-                            ?
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Role-Specific Body: Category or Chain Info */}
-                      <div className="mt-3">
-                        {effectiveRole === 'chain' ? (
-                          <div className="flex flex-col gap-1.5 text-xs">
-                            <div className="flex items-center justify-between text-slate-600 bg-indigo-50/50 p-2 rounded-lg">
-                              <span className="flex items-center gap-1.5 font-medium truncate">
+                      {/* Classified Metadata Row (Clean and non-invasive) */}
+                      {!isUnclassified && (
+                        <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
+                          {effectiveRole === 'chain' && (
+                            <>
+                              <div className="flex items-center gap-1.5 truncate">
                                 <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                                {acc.company_name ? acc.company_name : <span className="text-amber-600 italic">No Chain Linked</span>}
-                              </span>
+                                <span className="truncate font-medium text-slate-800">
+                                  {acc.company_name || 'Chain Branch'}
+                                </span>
+                              </div>
                               {acc.category && (
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-800 shrink-0">
                                   {acc.category}
                                 </span>
                               )}
+                            </>
+                          )}
+
+                          {effectiveRole === 'independent' && (
+                            <>
+                              <div className="flex items-center gap-1.5 text-emerald-700 font-medium truncate">
+                                <Store className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                <span>Independent Shop</span>
+                              </div>
+                              {acc.category && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 shrink-0">
+                                  {acc.category}
+                                </span>
+                              )}
+                            </>
+                          )}
+
+                          {effectiveRole === 'person' && (
+                            <div className="flex items-center gap-1.5 text-slate-500 truncate">
+                              <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              <span>Personal Contact</span>
                             </div>
-                          </div>
-                        ) : effectiveRole === 'independent' ? (
-                          <div>
-                            <label className="block text-[11px] font-medium text-slate-500 mb-1">
-                              Sector Category
-                            </label>
-                            <CategoryCombobox
-                              size="sm"
-                              categories={categories}
-                              selectedCategory={acc.category || null}
-                              onChange={(cat) => handleDirectCategoryChange(acc, cat)}
-                              placeholder="Set sector (e.g. Bakery, Pharmacy)..."
-                            />
-                          </div>
-                        ) : effectiveRole === 'person' ? (
-                          <div className="text-xs text-slate-500 italic py-1 flex items-center gap-1.5">
-                            <User className="w-3.5 h-3.5 text-slate-400" />
-                            Personal Contact (excluded from store sectors)
-                          </div>
-                        ) : (
-                          <div className="text-xs text-slate-400 italic py-1">
-                            Unclassified account (runs normally)
-                          </div>
-                        )}
-                      </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
-              })
-            )}
-          </div>
+              })}
+            </div>
+          ) : (
+            /* High-Density Table View */
+            <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-xs">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="py-3 px-4">Account</th>
+                    <th className="py-3 px-4">Role</th>
+                    <th className="py-3 px-4">Chain / Entity</th>
+                    <th className="py-3 px-4">Category Tag</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {paginatedAccounts.map((acc) => {
+                    const effectiveRole: AccountRole = acc.role || (acc.company_id ? 'chain' : 'unclassified');
+                    const isUnclassified = effectiveRole === 'unclassified';
+
+                    return (
+                      <tr key={acc.id} className="hover:bg-slate-50/80 transition">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div
+                              className={`p-1.5 rounded-md shrink-0 ${
+                                effectiveRole === 'chain'
+                                  ? 'bg-indigo-50 text-indigo-600'
+                                  : effectiveRole === 'independent'
+                                  ? 'bg-emerald-50 text-emerald-600'
+                                  : effectiveRole === 'person'
+                                  ? 'bg-slate-100 text-slate-600'
+                                  : 'bg-slate-100 text-slate-400'
+                              }`}
+                            >
+                              {effectiveRole === 'chain' ? (
+                                <Building2 className="w-3.5 h-3.5" />
+                              ) : effectiveRole === 'independent' ? (
+                                <Store className="w-3.5 h-3.5" />
+                              ) : effectiveRole === 'person' ? (
+                                <User className="w-3.5 h-3.5" />
+                              ) : (
+                                <HelpCircle className="w-3.5 h-3.5" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-slate-900 truncate" title={acc.name}>
+                                  {acc.name}
+                                </span>
+                                {!acc.active && (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800">
+                                    Inactive
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-xs text-slate-400 font-mono">#{acc.id}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          {effectiveRole === 'chain' ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200/60">
+                              Chain Branch
+                            </span>
+                          ) : effectiveRole === 'independent' ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                              Independent
+                            </span>
+                          ) : effectiveRole === 'person' ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                              Person
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
+                          {effectiveRole === 'chain' && acc.company_name ? (
+                            <span className="font-medium text-slate-800 flex items-center gap-1.5 truncate">
+                              <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                              {acc.company_name}
+                            </span>
+                          ) : effectiveRole === 'person' ? (
+                            <span className="text-xs text-slate-500">Personal Contact</span>
+                          ) : (
+                            <span className="text-slate-400 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
+                          {acc.category ? (
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                effectiveRole === 'chain'
+                                  ? 'bg-indigo-50 text-indigo-700'
+                                  : 'bg-emerald-50 text-emerald-700'
+                              }`}
+                            >
+                              <TagIcon className="w-3 h-3 opacity-70" />
+                              {acc.category}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => openClassifyModal(acc)}
+                            className={`text-xs px-2.5 py-1 rounded-md font-medium transition border ${
+                              isUnclassified
+                                ? 'text-slate-600 bg-slate-50 hover:bg-slate-100 border-slate-200'
+                                : 'text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100 border-indigo-200/80'
+                            }`}
+                          >
+                            {isUnclassified ? 'Classify' : 'Edit'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Pagination */}
           {totalPages > 1 && (
@@ -773,63 +830,204 @@ export const AccountsAndChainsPage: React.FC = () => {
         </div>
       )}
 
-      {/* Assign Chain Modal */}
-      {assigningAccount && (
+      {/* Unified Account Classification Modal */}
+      {classifyingAccount && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-100">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200">
             <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">Link Store to Chain</h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Store: <strong className="text-slate-800">{assigningAccount.name}</strong>
-                </p>
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600">
+                  {modalRole === 'chain' ? (
+                    <Building2 className="w-5 h-5" />
+                  ) : modalRole === 'independent' ? (
+                    <Store className="w-5 h-5" />
+                  ) : modalRole === 'person' ? (
+                    <User className="w-5 h-5" />
+                  ) : (
+                    <HelpCircle className="w-5 h-5" />
+                  )}
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 leading-tight">
+                    Classify: {classifyingAccount.name}
+                  </h2>
+                  <span className="text-xs text-slate-400 font-mono">Firefly Account #{classifyingAccount.id}</span>
+                </div>
               </div>
               <button
-                onClick={() => setAssigningAccount(null)}
-                className="text-slate-400 hover:text-slate-600"
+                onClick={() => setClassifyingAccount(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveCompanyAssignment} className="mt-5 space-y-4">
-              {linkError && (
-                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-                  <span>{linkError}</span>
+            {classificationError && (
+              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-1.5">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{classificationError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveClassification} className="mt-5 space-y-4">
+              {/* Role Selection Grid */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2">Account Role</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setModalRole('chain')}
+                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition ${
+                      modalRole === 'chain'
+                        ? 'border-indigo-600 bg-indigo-50/40 text-indigo-900 ring-2 ring-indigo-500/20'
+                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <Building2
+                      className={`w-4 h-4 mt-0.5 shrink-0 ${
+                        modalRole === 'chain' ? 'text-indigo-600' : 'text-slate-400'
+                      }`}
+                    />
+                    <div>
+                      <span className="font-semibold text-xs block">Chain Branch</span>
+                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
+                        Inherits chain&apos;s sector
+                      </span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setModalRole('independent')}
+                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition ${
+                      modalRole === 'independent'
+                        ? 'border-emerald-600 bg-emerald-50/40 text-emerald-900 ring-2 ring-emerald-500/20'
+                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <Store
+                      className={`w-4 h-4 mt-0.5 shrink-0 ${
+                        modalRole === 'independent' ? 'text-emerald-600' : 'text-slate-400'
+                      }`}
+                    />
+                    <div>
+                      <span className="font-semibold text-xs block">Independent Store</span>
+                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
+                        Direct sector tag
+                      </span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setModalRole('person')}
+                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition ${
+                      modalRole === 'person'
+                        ? 'border-slate-600 bg-slate-100 text-slate-900 ring-2 ring-slate-400/20'
+                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <User
+                      className={`w-4 h-4 mt-0.5 shrink-0 ${
+                        modalRole === 'person' ? 'text-slate-700' : 'text-slate-400'
+                      }`}
+                    />
+                    <div>
+                      <span className="font-semibold text-xs block">Personal Contact</span>
+                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
+                        Individual peer
+                      </span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setModalRole('unclassified')}
+                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition ${
+                      modalRole === 'unclassified'
+                        ? 'border-amber-600 bg-amber-50/40 text-amber-900 ring-2 ring-amber-500/20'
+                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <HelpCircle
+                      className={`w-4 h-4 mt-0.5 shrink-0 ${
+                        modalRole === 'unclassified' ? 'text-amber-600' : 'text-slate-400'
+                      }`}
+                    />
+                    <div>
+                      <span className="font-semibold text-xs block">Unclassified</span>
+                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
+                        Standard account
+                      </span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Conditional Inputs Based on Selected Role */}
+              {modalRole === 'chain' && (
+                <div className="pt-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Parent Retail Chain *
+                  </label>
+                  <CompanyCombobox
+                    companies={companies}
+                    selectedCompanyId={modalCompanySelection?.companyId ?? null}
+                    initialNewName={modalCompanySelection?.isNew ? modalCompanySelection.companyName : ''}
+                    onChange={(sel) => setModalCompanySelection(sel)}
+                    placeholder="Search or type new chain (e.g. Conad, Lidl)..."
+                  />
+                  <p className="mt-1.5 text-[11px] text-slate-400">
+                    The account will inherit this retail chain&apos;s default sector category.
+                  </p>
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Parent Chain
-                </label>
-                <CompanyCombobox
-                  companies={companies}
-                  selectedCompanyId={companySelection?.companyId ?? null}
-                  initialNewName={companySelection?.isNew ? companySelection.companyName : ''}
-                  onChange={(sel) => setCompanySelection(sel)}
-                  placeholder="Search or create parent chain (e.g. Conad, Lidl)..."
-                />
-                <p className="mt-1.5 text-[11px] text-slate-400">
-                  Select an existing chain or type a new name to create it.
-                </p>
-              </div>
+              {modalRole === 'independent' && (
+                <div className="pt-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Sector Category Tag
+                  </label>
+                  <CategoryCombobox
+                    categories={categories}
+                    selectedCategory={modalCategory}
+                    onChange={(cat) => setModalCategory(cat)}
+                    placeholder="Search or type sector (e.g. Bakery, Pharmacy)..."
+                  />
+                  <p className="mt-1.5 text-[11px] text-slate-400">
+                    Direct category tag for this independent merchant or shop.
+                  </p>
+                </div>
+              )}
 
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
+              {modalRole === 'person' && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 flex items-center gap-2">
+                  <User className="w-4 h-4 text-slate-500 shrink-0" />
+                  <span>Marked as a personal contact. Excluded from retail chain and sector categorization.</span>
+                </div>
+              )}
+
+              {modalRole === 'unclassified' && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 flex items-center gap-2">
+                  <HelpCircle className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span>Standard account with no assigned role. You can classify it at any time.</span>
+                </div>
+              )}
+
+              <div className="pt-4 border-t border-slate-100 flex items-center justify-end space-x-2">
                 <button
                   type="button"
-                  onClick={() => setAssigningAccount(null)}
+                  onClick={() => setClassifyingAccount(null)}
                   className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={savingLink}
+                  disabled={savingClassification}
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition"
                 >
-                  {savingLink ? 'Saving...' : 'Save Link'}
+                  {savingClassification ? 'Saving...' : 'Save Classification'}
                 </button>
               </div>
             </form>

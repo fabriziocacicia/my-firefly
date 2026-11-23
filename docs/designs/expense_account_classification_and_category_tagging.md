@@ -266,16 +266,25 @@ class Company(CompanyBase, table=True):
 *   **Controls Bar:**
     *   Search input (matches account name, company name, or category tag).
     *   Filter Chips: `All (294)` | `Chains (48)` | `Independent (32)` | `Persons (18)` | `Unclassified (196)`.
-*   **Account Row Component (`AccountRow.tsx`):**
-    *   Account Name (from Firefly III).
-    *   Role Selector (quick dropdown / segmented button: `Unclassified`, `Person`, `Chain`, `Independent`).
-    *   Category Tag Column:
-        *   If `chain`: displays inherited badge `[ Supermarket ]` (with link to company).
-        *   If `independent`: renders inline `CategoryCombobox` to pick or type a custom category.
-        *   If `person`: displays muted gray badge `[ 👤 Person ]`.
-        *   If `unclassified`: subtle dashed placeholder `[ + Add Category ]`.
-    *   Chain Column:
-        *   If `chain`: renders `CompanyCombobox` allowing quick assignment to a parent chain.
+    *   **View Switcher Toggle:** Switchable between **Quiet Cards (Grid)** and **High-Density Table**, with persistence in `localStorage`.
+*   **Quiet Cards Grid View:**
+    *   **Unclassified cards:** Clean and quiet. Displays account icon, name, `#id`, and a single subtle `[Classify]` button. Zero invasive segmented control strips and zero redundant explanatory text.
+    *   **Classified cards:** Compact tile displaying the assigned badge:
+        *   `Chain`: `[Building2] Company Name` + Category pill (e.g. `[Drugstore]`) + `[Edit]` button.
+        *   `Independent`: `[Store] Independent Shop` + Category pill (e.g. `[Bakery]`) + `[Edit]` button.
+        *   `Person`: `[User] Personal Contact` + `[Edit]` button.
+*   **High-Density Table View:**
+    *   Fast scanning table for managing 300+ accounts.
+    *   Columns: `Account` (icon, name, `#id`, inactive badge), `Role` (colored badge or dash), `Chain / Entity`, `Category Tag`, `Actions` (`[Classify]` / `[Edit]`).
+*   **Unified Classification Modal (`classifyingAccount`):**
+    *   Triggered from both Grid and Table views when clicking `[Classify]` or `[Edit]`.
+    *   Role Selector: 4 clean tiles (`Chain Branch`, `Independent Store`, `Personal Contact`, `Unclassified`).
+    *   Conditional Form:
+        *   If `Chain`: `CompanyCombobox` to search/create parent retail chain.
+        *   If `Independent`: `CategoryCombobox` to search/create sector tag.
+        *   If `Person`: clear note that personal contacts are excluded from commercial categories.
+        *   If `Unclassified`: clear note confirming default standard account state.
+    *   Saves via `PUT /api/v1/accounts/{id}/metadata`.
 
 #### 4. Tab 2: Chains View
 *   **Controls Bar:** "New Parent Chain" modal button.
