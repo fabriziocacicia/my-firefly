@@ -175,6 +175,11 @@ def _build_firefly_tx_payload(
     account_name: str,
 ) -> dict:
     tx_splits = []
+    formatted_time = (
+        receipt.purchase_time.strftime("%H:%M:%S")
+        if receipt.purchase_time
+        else "12:00:00"
+    )
     for item, amount_cents, suffix in splits:
         product_name = (
             item.product.name if item.product else f"Product #{item.product_id}"
@@ -186,7 +191,7 @@ def _build_firefly_tx_payload(
         tx_splits.append(
             {
                 "type": "withdrawal",
-                "date": f"{receipt.purchase_date}T12:00:00+00:00",
+                "date": f"{receipt.purchase_date}T{formatted_time}",
                 "amount": f"{amount_cents / 100:.2f}",
                 "description": f"{product_name} (x{item.quantity})",
                 "source_id": str(source_account_id),
@@ -273,6 +278,7 @@ async def create_receipt(
     receipt = Receipt(
         firefly_account_id=receipt_in.firefly_account_id,
         purchase_date=receipt_in.purchase_date,
+        purchase_time=receipt_in.purchase_time,
         total_amount=round(receipt_in.total_amount, 2),
         basket_discount=round(receipt_in.basket_discount, 2),
         source_account_id=receipt_in.source_account_id,

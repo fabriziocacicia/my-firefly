@@ -117,6 +117,7 @@ export interface ReceiptItemPayload {
 export interface ReceiptCreatePayload {
   firefly_account_id: number;
   purchase_date: string;
+  purchase_time: string;
   total_amount: number;
   basket_discount: number;
   source_account_id?: number | null;
@@ -158,6 +159,7 @@ export interface ReceiptRecord {
   firefly_account_id: number;
   store_name?: string;
   purchase_date: string;
+  purchase_time?: string | null;
   total_amount: number;
   basket_discount: number;
   source_account_id?: number | null;
