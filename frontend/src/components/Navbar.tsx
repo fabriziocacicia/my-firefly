@@ -33,16 +33,16 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, onTabChange }) => {
 
           <nav className="flex items-center space-x-1 sm:space-x-2 overflow-x-auto no-scrollbar py-1">
             <button
-              onClick={() => onTabChange('stores')}
+              onClick={() => onTabChange('accounts-and-chains')}
               className={`flex items-center px-2.5 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${
-                activeTab === 'stores'
+                activeTab === 'accounts-and-chains' || activeTab === 'stores'
                   ? 'bg-blue-50 text-blue-700 font-semibold'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
               }`}
             >
               <Store className="w-4 h-4 mr-1 sm:mr-1.5 shrink-0" />
-              <span className="sm:hidden">Stores</span>
-              <span className="hidden sm:inline">Store Directory</span>
+              <span className="sm:hidden">Accounts</span>
+              <span className="hidden sm:inline">Accounts & Chains</span>
             </button>
 
             <button

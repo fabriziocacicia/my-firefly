@@ -3,7 +3,7 @@ import { Navbar } from './components/Navbar';
 import { ReceiptWorkbenchProvider } from './context/ReceiptWorkbenchContext';
 import { CatalogPage } from './pages/CatalogPage';
 import { ReceiptWorkbenchPage } from './pages/ReceiptWorkbenchPage';
-import { StoresPage } from './pages/StoresPage';
+import { AccountsAndChainsPage } from './pages/AccountsAndChainsPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
 import { AppTab } from './types';
 
@@ -15,7 +15,7 @@ export const App: React.FC = () => {
       <div className="min-h-screen bg-slate-50 flex flex-col">
         <Navbar activeTab={activeTab} onTabChange={setActiveTab} />
         <main className="flex-1">
-          {activeTab === 'stores' && <StoresPage />}
+          {(activeTab === 'accounts-and-chains' || activeTab === 'stores') && <AccountsAndChainsPage />}
           {activeTab === 'catalog' && <CatalogPage />}
           {activeTab === 'workbench' && <ReceiptWorkbenchPage />}
           {activeTab === 'workflows' && <WorkflowsPage />}
