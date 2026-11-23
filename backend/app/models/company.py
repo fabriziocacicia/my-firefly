@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, List
+import sqlalchemy as sa
 from sqlmodel import SQLModel, Field, Relationship
 
 
@@ -9,6 +10,31 @@ class AccountRole(str, Enum):
     PERSON = "person"
     CHAIN = "chain"
     INDEPENDENT = "independent"
+
+
+class AccountRoleType(sa.TypeDecorator):
+    """
+    SQLAlchemy TypeDecorator storing AccountRole as lowercase VARCHAR(32)
+    and deserializing case-insensitively to the AccountRole enum.
+    """
+    impl = sa.String(32)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return AccountRole.UNCLASSIFIED.value
+        if isinstance(value, AccountRole):
+            return value.value
+        return str(value).lower()
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return AccountRole.UNCLASSIFIED
+        val_str = str(value).lower()
+        for member in AccountRole:
+            if member.value == val_str or member.name.lower() == val_str:
+                return member
+        return AccountRole.UNCLASSIFIED
 
 
 class CompanyBase(SQLModel):
@@ -68,7 +94,15 @@ class AccountCompanyAssign(SQLModel):
 
 
 class AccountMetadataBase(SQLModel):
-    role: AccountRole = Field(default=AccountRole.UNCLASSIFIED, index=True)
+    role: AccountRole = Field(
+        default=AccountRole.UNCLASSIFIED,
+        sa_column=sa.Column(
+            AccountRoleType(),
+            default=AccountRole.UNCLASSIFIED,
+            index=True,
+            nullable=False,
+        ),
+    )
     category: Optional[str] = Field(default=None, index=True)
     company_id: Optional[int] = Field(default=None, foreign_key="company.id", index=True)
     notes: Optional[str] = Field(default=None)

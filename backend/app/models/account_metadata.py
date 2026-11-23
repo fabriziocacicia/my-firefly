@@ -1,5 +1,6 @@
 from app.models.company import (
     AccountRole,
+    AccountRoleType,
     AccountMetadataBase,
     AccountMetadata,
     AccountMetadataCreate,
@@ -9,6 +10,7 @@ from app.models.company import (
 
 __all__ = [
     "AccountRole",
+    "AccountRoleType",
     "AccountMetadataBase",
     "AccountMetadata",
     "AccountMetadataCreate",

@@ -98,6 +98,42 @@ class AccountMetadataModelTests(unittest.TestCase):
         self.assertEqual(update.category, "Pharmacy")
         self.assertIsNone(update.company_id)
 
+    def test_raw_sqlite_lowercase_enum_values_deserialization(self):
+        """
+        Regression test: Verify that raw SQLite rows storing lowercase strings
+        ('chain', 'person', 'independent', 'unclassified') or uppercase variants
+        deserialize cleanly into AccountRole enum instances without LookupError.
+        """
+        import sqlalchemy as sa
+
+        with self.engine.connect() as conn:
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO account_metadata (firefly_account_id, role, created_at, updated_at)
+                    VALUES
+                        (1001, 'chain', '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+                        (1002, 'CHAIN', '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+                        (1003, 'independent', '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+                        (1004, 'person', '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+                        (1005, 'unclassified', '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+                        (1006, 'non_existent_future_value', '2026-01-01 00:00:00', '2026-01-01 00:00:00')
+                    """
+                )
+            )
+            conn.commit()
+
+        with Session(self.engine) as session:
+            rows = session.exec(select(AccountMetadata).where(AccountMetadata.firefly_account_id >= 1001)).all()
+            row_map = {r.firefly_account_id: r for r in rows}
+
+            self.assertEqual(row_map[1001].role, AccountRole.CHAIN)
+            self.assertEqual(row_map[1002].role, AccountRole.CHAIN)
+            self.assertEqual(row_map[1003].role, AccountRole.INDEPENDENT)
+            self.assertEqual(row_map[1004].role, AccountRole.PERSON)
+            self.assertEqual(row_map[1005].role, AccountRole.UNCLASSIFIED)
+            self.assertEqual(row_map[1006].role, AccountRole.UNCLASSIFIED)
+
 
 if __name__ == "__main__":
     unittest.main()

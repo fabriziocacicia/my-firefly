@@ -87,71 +87,69 @@ async def list_expense_accounts(session: Session = Depends(get_session)):
     """Unpaginated directory listing of all Firefly expense accounts with metadata & company links."""
     try:
         accounts = await firefly_client.get_all_expense_accounts()
-
-        metas = session.exec(
-            select(AccountMetadata).options(
-                selectinload(AccountMetadata.company)
-            )
-        ).all()
-        meta_map = {m.firefly_account_id: m for m in metas}
-
-        links = session.exec(
-            select(CompanyAccountLink).options(
-                selectinload(CompanyAccountLink.company)
-            )
-        ).all()
-        link_map = {link.firefly_account_id: link for link in links}
-
-        results: List[FireflyExpenseAccount] = []
-        for acc in accounts:
-            try:
-                acc_id = int(acc.get("id"))
-                attr = acc.get("attributes", {})
-                meta = meta_map.get(acc_id)
-                link = link_map.get(acc_id)
-
-                role = AccountRole.UNCLASSIFIED
-                category = None
-                is_inherited = False
-                company_id = None
-                company_name = None
-
-                if meta:
-                    role = meta.role
-                    if meta.role == AccountRole.CHAIN and meta.company:
-                        company_id = meta.company_id
-                        company_name = meta.company.name
-                        category = meta.company.default_category
-                        is_inherited = bool(meta.company.default_category)
-                    elif meta.role == AccountRole.INDEPENDENT:
-                        category = meta.category
-                        is_inherited = False
-                elif link:
-                    role = AccountRole.CHAIN
-                    company_id = link.company_id
-                    company_name = link.company.name if link.company else None
-                    category = link.company.default_category if link.company else None
-                    is_inherited = bool(link.company and link.company.default_category)
-
-                results.append(
-                    FireflyExpenseAccount(
-                        id=acc_id,
-                        name=attr.get("name", f"Account #{acc_id}"),
-                        active=bool(attr.get("active", True)),
-                        role=role,
-                        category=category,
-                        is_inherited_category=is_inherited,
-                        company_id=company_id,
-                        company_name=company_name,
-                    )
-                )
-            except (ValueError, TypeError):
-                continue
-        return results
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Firefly API error: {str(e)}")
+
+    metas = session.exec(
+        select(AccountMetadata).options(
+            selectinload(AccountMetadata.company)
+        )
+    ).all()
+    meta_map = {m.firefly_account_id: m for m in metas}
+
+    links = session.exec(
+        select(CompanyAccountLink).options(
+            selectinload(CompanyAccountLink.company)
+        )
+    ).all()
+    link_map = {link.firefly_account_id: link for link in links}
+
+    results: List[FireflyExpenseAccount] = []
+    for acc in accounts:
+        try:
+            acc_id = int(acc.get("id"))
+            attr = acc.get("attributes", {})
+            meta = meta_map.get(acc_id)
+            link = link_map.get(acc_id)
+
+            role = AccountRole.UNCLASSIFIED
+            category = None
+            is_inherited = False
+            company_id = None
+            company_name = None
+
+            if meta:
+                role = meta.role
+                if meta.role == AccountRole.CHAIN and meta.company:
+                    company_id = meta.company_id
+                    company_name = meta.company.name
+                    category = meta.company.default_category
+                    is_inherited = bool(meta.company.default_category)
+                elif meta.role == AccountRole.INDEPENDENT:
+                    category = meta.category
+                    is_inherited = False
+            elif link:
+                role = AccountRole.CHAIN
+                company_id = link.company_id
+                company_name = link.company.name if link.company else None
+                category = link.company.default_category if link.company else None
+                is_inherited = bool(link.company and link.company.default_category)
+
+            results.append(
+                FireflyExpenseAccount(
+                    id=acc_id,
+                    name=attr.get("name", f"Account #{acc_id}"),
+                    active=bool(attr.get("active", True)),
+                    role=role,
+                    category=category,
+                    is_inherited_category=is_inherited,
+                    company_id=company_id,
+                    company_name=company_name,
+                )
+            )
+        except (ValueError, TypeError):
+            continue
+    return results
 
 
 @router.get(
@@ -164,62 +162,61 @@ async def get_expense_account(
     """Fetch single expense account by ID with optional metadata & company link."""
     try:
         acc = await firefly_client.get_expense_account(account_id)
-        if not acc:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Firefly expense account #{account_id} not found",
-            )
-
-        attr = acc.get("attributes", {})
-        meta = session.exec(
-            select(AccountMetadata)
-            .where(AccountMetadata.firefly_account_id == account_id)
-            .options(selectinload(AccountMetadata.company))
-        ).first()
-
-        link = session.exec(
-            select(CompanyAccountLink)
-            .where(CompanyAccountLink.firefly_account_id == account_id)
-            .options(selectinload(CompanyAccountLink.company))
-        ).first()
-
-        role = AccountRole.UNCLASSIFIED
-        category = None
-        is_inherited = False
-        company_id = None
-        company_name = None
-
-        if meta:
-            role = meta.role
-            if meta.role == AccountRole.CHAIN and meta.company:
-                company_id = meta.company_id
-                company_name = meta.company.name
-                category = meta.company.default_category
-                is_inherited = bool(meta.company.default_category)
-            elif meta.role == AccountRole.INDEPENDENT:
-                category = meta.category
-                is_inherited = False
-        elif link:
-            role = AccountRole.CHAIN
-            company_id = link.company_id
-            company_name = link.company.name if link.company else None
-            category = link.company.default_category if link.company else None
-            is_inherited = bool(link.company and link.company.default_category)
-
-        return FireflyExpenseAccount(
-            id=account_id,
-            name=attr.get("name", f"Account #{account_id}"),
-            active=bool(attr.get("active", True)),
-            role=role,
-            category=category,
-            is_inherited_category=is_inherited,
-            company_id=company_id,
-            company_name=company_name,
-        )
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Firefly API error: {str(e)}")
+
+    if not acc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Firefly expense account #{account_id} not found",
+        )
+
+    attr = acc.get("attributes", {})
+    meta = session.exec(
+        select(AccountMetadata)
+        .where(AccountMetadata.firefly_account_id == account_id)
+        .options(selectinload(AccountMetadata.company))
+    ).first()
+
+    link = session.exec(
+        select(CompanyAccountLink)
+        .where(CompanyAccountLink.firefly_account_id == account_id)
+        .options(selectinload(CompanyAccountLink.company))
+    ).first()
+
+    role = AccountRole.UNCLASSIFIED
+    category = None
+    is_inherited = False
+    company_id = None
+    company_name = None
+
+    if meta:
+        role = meta.role
+        if meta.role == AccountRole.CHAIN and meta.company:
+            company_id = meta.company_id
+            company_name = meta.company.name
+            category = meta.company.default_category
+            is_inherited = bool(meta.company.default_category)
+        elif meta.role == AccountRole.INDEPENDENT:
+            category = meta.category
+            is_inherited = False
+    elif link:
+        role = AccountRole.CHAIN
+        company_id = link.company_id
+        company_name = link.company.name if link.company else None
+        category = link.company.default_category if link.company else None
+        is_inherited = bool(link.company and link.company.default_category)
+
+    return FireflyExpenseAccount(
+        id=account_id,
+        name=attr.get("name", f"Account #{account_id}"),
+        active=bool(attr.get("active", True)),
+        role=role,
+        category=category,
+        is_inherited_category=is_inherited,
+        company_id=company_id,
+        company_name=company_name,
+    )
 
 
 @router.get("/asset-accounts")
