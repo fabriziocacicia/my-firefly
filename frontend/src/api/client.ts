@@ -1,6 +1,7 @@
 import {
   Company, Product, Brand, Tag, PriceRecord,
   FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount,
+  AccountMetadata, AccountMetadataUpdate,
   ProductPriceHistoryResponse, ReceiptCreatePayload, ReceiptRecord, ReceiptAttachment
 } from '../types';
 
@@ -90,6 +91,20 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(payload),
       }),
+  },
+
+  accounts: {
+    getMetadata: (accountId: number) =>
+      request<AccountMetadata>(`/accounts/${accountId}/metadata`),
+    updateMetadata: (accountId: number, data: AccountMetadataUpdate) =>
+      request<AccountMetadata>(`/accounts/${accountId}/metadata`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+  },
+
+  categories: {
+    list: () => request<string[]>('/categories'),
   },
 
   tags: {

@@ -1,4 +1,25 @@
-export type AppTab = 'stores' | 'catalog' | 'workflows' | 'workbench';
+export type AppTab = 'stores' | 'accounts-and-chains' | 'catalog' | 'workflows' | 'workbench';
+
+export type AccountRole = 'unclassified' | 'person' | 'chain' | 'independent';
+
+export interface AccountMetadata {
+  firefly_account_id: number;
+  role: AccountRole;
+  category?: string | null;
+  is_inherited_category?: boolean;
+  company_id?: number | null;
+  company_name?: string | null;
+  notes?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AccountMetadataUpdate {
+  role: AccountRole;
+  category?: string | null;
+  company_id?: number | null;
+  notes?: string | null;
+}
 
 export interface Tag {
   id: number;
@@ -76,6 +97,9 @@ export interface FireflyExpenseAccount {
   id: number;
   name: string;
   active: boolean;
+  role?: AccountRole;
+  category?: string | null;
+  is_inherited_category?: boolean;
   company_id?: number | null;
   company_name?: string | null;
 }
