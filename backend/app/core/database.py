@@ -43,12 +43,12 @@ def auto_migrate_sqlite_columns(target_engine=engine):
             cursor.execute("PRAGMA table_info(company)")
             comp_cols = [row[1] for row in cursor.fetchall()]
             if comp_cols and "business_types" not in comp_cols:
-                cursor.execute("ALTER TABLE company ADD COLUMN business_types TEXT NOT NULL DEFAULT '[]'")
+                cursor.execute("ALTER TABLE company ADD COLUMN business_types TEXT DEFAULT '[]'")
 
             cursor.execute("PRAGMA table_info(account_metadata)")
             meta_cols = [row[1] for row in cursor.fetchall()]
             if meta_cols and "business_types" not in meta_cols:
-                cursor.execute("ALTER TABLE account_metadata ADD COLUMN business_types TEXT NOT NULL DEFAULT '[]'")
+                cursor.execute("ALTER TABLE account_metadata ADD COLUMN business_types TEXT DEFAULT '[]'")
             conn.connection.commit()
         except Exception:
             pass

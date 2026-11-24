@@ -11,7 +11,7 @@ from sqlalchemy import inspect
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.core.database import create_db_and_tables, engine
+from app.core.database import create_db_and_tables, engine, auto_migrate_sqlite_columns
 from app.services.firefly import firefly_client
 
 
@@ -44,11 +44,13 @@ def run_db_migrations(target_engine=engine) -> None:
             if not has_alembic:
                 command.stamp(alembic_cfg, "0001_pre_workbench_baseline")
             command.upgrade(alembic_cfg, "head")
+        auto_migrate_sqlite_columns(target_engine)
         return
 
     if not has_alembic:
         command.stamp(alembic_cfg, "0001_pre_workbench_baseline")
     command.upgrade(alembic_cfg, "head")
+    auto_migrate_sqlite_columns(target_engine)
 
 
 @asynccontextmanager

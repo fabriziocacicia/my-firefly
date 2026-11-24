@@ -191,6 +191,52 @@ class AccountMetadataModelTests(unittest.TestCase):
             self.assertEqual(row_map[1005].role, AccountRole.UNCLASSIFIED)
             self.assertEqual(row_map[1006].role, AccountRole.UNCLASSIFIED)
 
+    def test_alembic_upgrade_0006_adds_business_types_to_existing_db(self):
+        """
+        Regression test: Verify that an existing SQLite database that was at
+        revision 0005 safely receives the business_types columns in company
+        and account_metadata when run_db_migrations runs.
+        """
+        import tempfile
+        from pathlib import Path
+        from alembic.config import Config
+        from alembic import command
+        from app.main import run_db_migrations
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            tmp_db_url = f"sqlite:///{tmp.name}"
+            tmp_engine = create_engine(tmp_db_url)
+            backend_dir = Path(__file__).resolve().parents[1]
+            alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+            alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+            alembic_cfg.set_main_option("sqlalchemy.url", tmp_db_url)
+
+            # Step 1: Migrate up to 0005 (where business_types was not yet in the schema)
+            command.upgrade(alembic_cfg, "0005_account_metadata_and_classification")
+
+            # Step 2: Run startup migrations
+            run_db_migrations(tmp_engine)
+
+            # Step 3: Verify that querying AccountMetadata and Company succeeds
+            with Session(tmp_engine) as session:
+                comp = Company(name="TestChain", default_category="Fuel", business_types=["Gas Station", "Carwash"])
+                session.add(comp)
+                session.commit()
+                session.refresh(comp)
+
+                meta = AccountMetadata(
+                    firefly_account_id=9999,
+                    role=AccountRole.LOCAL_BUSINESS,
+                    business_types=["Bar/Cafe", "Tobacconist"],
+                )
+                session.add(meta)
+                session.commit()
+                session.refresh(meta)
+
+                self.assertEqual(comp.business_types, ["Gas Station", "Carwash"])
+                self.assertEqual(meta.business_types, ["Bar/Cafe", "Tobacconist"])
+                self.assertEqual(meta.role, AccountRole.LOCAL_BUSINESS)
+
 
 if __name__ == "__main__":
     unittest.main()
