@@ -240,13 +240,15 @@ export const AccountsAndChainsPage: React.FC = () => {
     if (comp) {
       setEditingCompany(comp);
       setCompFormName(comp.name);
-      setCompFormCategory(comp.default_category || null);
-      setCompFormBusinessTypes(comp.business_types || []);
+      setCompFormBusinessTypes(
+        comp.business_types && comp.business_types.length > 0
+          ? comp.business_types
+          : (comp.default_category ? [comp.default_category] : [])
+      );
       setCompFormNotes(comp.notes || '');
     } else {
       setEditingCompany(null);
       setCompFormName('');
-      setCompFormCategory(null);
       setCompFormBusinessTypes([]);
       setCompFormNotes('');
     }
