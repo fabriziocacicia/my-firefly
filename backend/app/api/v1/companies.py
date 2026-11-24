@@ -76,14 +76,14 @@ def create_company(
             status_code=400, detail=f"Company '{clean_name}' already exists"
         )
 
+    btypes = company_in.business_types or []
+    if not btypes and company_in.default_category and company_in.default_category.strip():
+        btypes = [company_in.default_category.strip()]
+
     company = Company(
         name=clean_name,
-        default_category=(
-            company_in.default_category.strip()
-            if company_in.default_category
-            else None
-        ),
-        business_types=company_in.business_types or [],
+        default_category=None,
+        business_types=btypes,
         notes=company_in.notes.strip() if company_in.notes else None,
     )
     session.add(company)
@@ -124,11 +124,14 @@ def update_company(
         company.name = clean_name
 
     if company_update.default_category is not None:
-        company.default_category = (
+        cat = (
             company_update.default_category.strip()
             if company_update.default_category
             else None
         )
+        if cat and not company_update.business_types and not company.business_types:
+            company.business_types = [cat]
+        company.default_category = None
 
     if company_update.business_types is not None:
         company.business_types = company_update.business_types

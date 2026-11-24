@@ -36,7 +36,7 @@ class AccountClassificationApiTests(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json(), [])
 
-        # 2. Add company with category and account with category
+        # 2. Add company (should NOT leak into categories) and accounts with category
         with Session(self.engine) as session:
             comp1 = Company(name="Conad", default_category="Supermarket")
             comp2 = Company(name="Eni", default_category="Gas Station")
@@ -60,7 +60,21 @@ class AccountClassificationApiTests(unittest.TestCase):
         res = self.client.get("/api/v1/categories")
         self.assertEqual(res.status_code, 200)
         data = res.json()
-        self.assertEqual(data, ["Bakery", "Gas Station", "Supermarket"])
+        # Categories now strictly reflect account_metadata categories, ignoring companies
+        self.assertEqual(data, ["Bakery", "supermarket"])
+
+        # 3. Unset or change accounts -> categories dynamically disappear
+        self.client.put(
+            "/api/v1/accounts/1/metadata",
+            json={"role": "local_business", "category": None},
+        )
+        self.client.put(
+            "/api/v1/accounts/2/metadata",
+            json={"role": "person"},
+        )
+        res_empty = self.client.get("/api/v1/categories")
+        self.assertEqual(res_empty.status_code, 200)
+        self.assertEqual(res_empty.json(), [])
 
     def test_get_account_metadata_unclassified_fallback(self):
         res = self.client.get("/api/v1/accounts/999/metadata")

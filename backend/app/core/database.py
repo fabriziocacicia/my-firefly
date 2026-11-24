@@ -34,9 +34,10 @@ configure_sqlite_pragmas(engine, foreign_keys=True)
 
 
 def auto_migrate_sqlite_columns(target_engine=engine):
-    """Ensure newly added columns exist in existing SQLite tables without losing data."""
+    """Ensure newly added columns exist in existing SQLite tables and clean up legacy category data."""
     if not str(target_engine.url).startswith("sqlite"):
         return
+    import json
     with target_engine.connect() as conn:
         cursor = conn.connection.cursor()
         try:
@@ -49,6 +50,35 @@ def auto_migrate_sqlite_columns(target_engine=engine):
             meta_cols = [row[1] for row in cursor.fetchall()]
             if meta_cols and "business_types" not in meta_cols:
                 cursor.execute("ALTER TABLE account_metadata ADD COLUMN business_types TEXT DEFAULT '[]'")
+
+            # Migrate company.default_category into business_types if empty, then clear default_category
+            if comp_cols and "default_category" in comp_cols:
+                cursor.execute(
+                    "SELECT id, default_category, business_types FROM company WHERE default_category IS NOT NULL AND default_category != ''"
+                )
+                rows = cursor.fetchall()
+                for cid, def_cat, btypes_raw in rows:
+                    btypes = []
+                    if btypes_raw:
+                        try:
+                            parsed = json.loads(btypes_raw)
+                            if isinstance(parsed, list):
+                                btypes = parsed
+                        except Exception:
+                            pass
+                    if not btypes and def_cat and def_cat.strip():
+                        btypes = [def_cat.strip()]
+                    cursor.execute(
+                        "UPDATE company SET default_category = NULL, business_types = ? WHERE id = ?",
+                        (json.dumps(btypes), cid),
+                    )
+
+            # Clear legacy category tag on chain accounts
+            if meta_cols and "role" in meta_cols and "category" in meta_cols:
+                cursor.execute(
+                    "UPDATE account_metadata SET category = NULL WHERE role = 'chain' AND category IS NOT NULL"
+                )
+
             conn.connection.commit()
         except Exception:
             pass

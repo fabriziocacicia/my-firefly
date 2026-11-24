@@ -245,8 +245,8 @@ class Company(CompanyBase, table=True):
 
 #### 3. Category Typeahead Autocomplete
 `GET /api/v1/categories`
-*   Returns distinct, non-empty, sorted category strings from both `Company.default_category` and `AccountMetadata.category`.
-*   **Response:** `["Bakery", "Drugstore", "Gas Station", "Pharmacy", "Supermarket"]`
+*   Returns distinct, non-empty, sorted category strings from active non-chain accounts in `AccountMetadata.category` (chains use `business_types`). Disappears dynamically if no accounts are tagged with that category.
+*   **Response:** `["Bakery", "Electronics", "Pharmacy", "Streaming"]`
 
 ---
 

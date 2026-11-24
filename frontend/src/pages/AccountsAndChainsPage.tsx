@@ -160,7 +160,7 @@ export const AccountsAndChainsPage: React.FC = () => {
       const comp = companies.find((c) => c.id === acc.company_id);
       const inherited = comp?.business_types?.length
         ? comp.business_types
-        : (comp?.default_category ? [comp.default_category] : (acc.inherited_business_types || []));
+        : (acc.inherited_business_types || []);
       const inheritedLower = new Set(inherited.map((t) => t.trim().toLowerCase()));
       setModalBusinessTypes(rawBusinessTypes.filter((t) => !inheritedLower.has(t.trim().toLowerCase())));
     } else {
@@ -240,11 +240,7 @@ export const AccountsAndChainsPage: React.FC = () => {
     if (comp) {
       setEditingCompany(comp);
       setCompFormName(comp.name);
-      setCompFormBusinessTypes(
-        comp.business_types && comp.business_types.length > 0
-          ? comp.business_types
-          : (comp.default_category ? [comp.default_category] : [])
-      );
+      setCompFormBusinessTypes(comp.business_types || []);
       setCompFormNotes(comp.notes || '');
     } else {
       setEditingCompany(null);
@@ -263,18 +259,15 @@ export const AccountsAndChainsPage: React.FC = () => {
     setSavingCompany(true);
     setCompanyError(null);
     try {
-      const defaultCategory = compFormBusinessTypes.length > 0 ? compFormBusinessTypes[0] : undefined;
       if (editingCompany) {
         await api.companies.update(editingCompany.id, {
           name: compFormName.trim(),
-          default_category: defaultCategory,
           business_types: compFormBusinessTypes,
           notes: compFormNotes.trim() || undefined,
         });
       } else {
         await api.companies.create({
           name: compFormName.trim(),
-          default_category: defaultCategory,
           business_types: compFormBusinessTypes,
           notes: compFormNotes.trim() || undefined,
         });
@@ -374,13 +367,7 @@ export const AccountsAndChainsPage: React.FC = () => {
 
   const chainInheritedTypes = useMemo(() => {
     if (!selectedChainCompany) return [];
-    if (selectedChainCompany.business_types && selectedChainCompany.business_types.length > 0) {
-      return selectedChainCompany.business_types;
-    }
-    if (selectedChainCompany.default_category) {
-      return [selectedChainCompany.default_category];
-    }
-    return [];
+    return selectedChainCompany.business_types || [];
   }, [selectedChainCompany]);
 
   // Ensure modalBusinessTypes never duplicates types inherited from the selected chain
@@ -1053,11 +1040,6 @@ export const AccountsAndChainsPage: React.FC = () => {
                                 </span>
                               ))}
                             </div>
-                          ) : comp.default_category ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100 mt-1">
-                              <TagIcon className="w-2.5 h-2.5 mr-1 text-indigo-500" />
-                              {comp.default_category}
-                            </span>
                           ) : (
                             <span className="text-[11px] text-slate-400 italic mt-0.5 block">No types set</span>
                           )}
