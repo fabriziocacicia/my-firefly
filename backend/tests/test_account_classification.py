@@ -128,8 +128,8 @@ class AccountClassificationApiTests(unittest.TestCase):
         data = res.json()
         self.assertEqual(data["role"], "chain")
         self.assertEqual(data["company_id"], comp_id)
-        self.assertEqual(data["category"], "Gas Station")
-        self.assertTrue(data["is_inherited_category"])
+        self.assertIsNone(data["category"])
+        self.assertFalse(data["is_inherited_category"])
         self.assertEqual(data["inherited_business_types"], ["Gas Station"])
         self.assertEqual(data["business_types"], ["Bar/Cafe", "Carwash"])
         self.assertEqual(
@@ -202,8 +202,8 @@ class AccountClassificationApiTests(unittest.TestCase):
         self.assertEqual(data["role"], "chain")
         self.assertEqual(data["company_id"], comp_id)
         self.assertEqual(data["company_name"], "Lidl")
-        self.assertEqual(data["category"], "Supermarket")
-        self.assertTrue(data["is_inherited_category"])
+        self.assertIsNone(data["category"])
+        self.assertFalse(data["is_inherited_category"])
 
     def test_update_account_metadata_person_clears_associations(self):
         # First set as independent
@@ -265,9 +265,10 @@ class AccountClassificationApiTests(unittest.TestCase):
 
         acc1 = next(a for a in items if a["id"] == 1)
         self.assertEqual(acc1["role"], "chain")
-        self.assertEqual(acc1["category"], "Supermarket")
-        self.assertTrue(acc1["is_inherited_category"])
+        self.assertIsNone(acc1["category"])
+        self.assertFalse(acc1["is_inherited_category"])
         self.assertEqual(acc1["company_name"], "Conad")
+        self.assertEqual(acc1["effective_business_types"], ["Supermarket"])
 
         acc2 = next(a for a in items if a["id"] == 2)
         self.assertEqual(acc2["role"], "independent")

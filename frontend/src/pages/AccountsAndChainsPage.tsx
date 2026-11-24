@@ -663,19 +663,11 @@ export const AccountsAndChainsPage: React.FC = () => {
                         <div className="mt-3 pt-2.5 border-t border-slate-100 text-xs">
                           {effectiveRole === 'chain' && (
                             <div className="space-y-1.5">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-1.5 truncate">
-                                  <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                                  <span className="truncate font-medium text-slate-800">
-                                    {acc.company_name || 'Chain Branch'}
-                                  </span>
-                                </div>
-                                {acc.category && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/60 shrink-0">
-                                    <TagIcon className="w-2.5 h-2.5 opacity-70" />
-                                    {acc.category}
-                                  </span>
-                                )}
+                              <div className="flex items-center gap-1.5 truncate">
+                                <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                <span className="truncate font-medium text-slate-800">
+                                  {acc.company_name || 'Chain Branch'}
+                                </span>
                               </div>
 
                               {/* Multi-type badges (Inherited & Local) */}
@@ -796,7 +788,6 @@ export const AccountsAndChainsPage: React.FC = () => {
                       <th className="py-3 px-4">Business Types</th>
                     )}
                     {(filter === 'all' ||
-                      filter === 'chains' ||
                       filter === 'local_business' ||
                       filter === 'ecommerce' ||
                       filter === 'service') && (
@@ -933,17 +924,14 @@ export const AccountsAndChainsPage: React.FC = () => {
                         )}
 
                         {(filter === 'all' ||
-                          filter === 'chains' ||
                           filter === 'local_business' ||
                           filter === 'ecommerce' ||
                           filter === 'service') && (
                           <td className="py-3 px-4">
-                            {acc.category ? (
+                            {effectiveRole !== 'chain' && acc.category ? (
                               <span
                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                  effectiveRole === 'chain'
-                                    ? 'bg-indigo-50 text-indigo-700'
-                                    : effectiveRole === 'local_business'
+                                  effectiveRole === 'local_business'
                                     ? 'bg-emerald-50 text-emerald-700'
                                     : effectiveRole === 'ecommerce'
                                     ? 'bg-sky-50 text-sky-700'

@@ -51,14 +51,8 @@ def get_account_metadata(
         )
 
     company = session.get(Company, meta.company_id) if meta.company_id else None
-    effective_category = (
-        company.default_category
-        if (meta.role == AccountRole.CHAIN and company)
-        else meta.category
-    )
-    is_inherited = bool(
-        meta.role == AccountRole.CHAIN and company and company.default_category
-    )
+    effective_category = meta.category if meta.role != AccountRole.CHAIN else None
+    is_inherited = False
 
     inherited_business_types: List[str] = []
     local_business_types: List[str] = meta.business_types or []
@@ -198,14 +192,8 @@ def update_account_metadata(
     session.commit()
     session.refresh(meta)
 
-    effective_category = (
-        company.default_category
-        if (role == AccountRole.CHAIN and company)
-        else meta.category
-    )
-    is_inherited = bool(
-        role == AccountRole.CHAIN and company and company.default_category
-    )
+    effective_category = meta.category if role != AccountRole.CHAIN else None
+    is_inherited = False
 
     inherited_business_types: List[str] = []
     local_business_types: List[str] = meta.business_types or []
@@ -215,9 +203,13 @@ def update_account_metadata(
         inherited_business_types = company.business_types or []
         if not inherited_business_types and company.default_category:
             inherited_business_types = [company.default_category]
-        effective_business_types = list(
-            dict.fromkeys(inherited_business_types + local_business_types)
-        )
+        inherited_lower = {t.strip().lower() for t in inherited_business_types}
+        local_business_types = [
+            t.strip()
+            for t in local_business_types
+            if t.strip() and t.strip().lower() not in inherited_lower
+        ]
+        effective_business_types = inherited_business_types + local_business_types
     elif role in (
         AccountRole.LOCAL_BUSINESS,
         AccountRole.PHYSICAL_STORE,

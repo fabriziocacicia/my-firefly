@@ -129,8 +129,8 @@ async def list_expense_accounts(session: Session = Depends(get_session)):
                 if meta.role == AccountRole.CHAIN and meta.company:
                     company_id = meta.company_id
                     company_name = meta.company.name
-                    category = meta.company.default_category
-                    is_inherited = bool(meta.company.default_category)
+                    category = None  # Chains use business_types, not category tags
+                    is_inherited = False
                     inherited_business_types = meta.company.business_types or []
                     if not inherited_business_types and meta.company.default_category:
                         inherited_business_types = [meta.company.default_category]
@@ -163,8 +163,8 @@ async def list_expense_accounts(session: Session = Depends(get_session)):
                 role = AccountRole.CHAIN
                 company_id = link.company_id
                 company_name = link.company.name if link.company else None
-                category = link.company.default_category if link.company else None
-                is_inherited = bool(link.company and link.company.default_category)
+                category = None
+                is_inherited = False
                 if link.company:
                     inherited_business_types = link.company.business_types or []
                     if not inherited_business_types and link.company.default_category:
@@ -237,8 +237,8 @@ async def get_expense_account(
         if meta.role == AccountRole.CHAIN and meta.company:
             company_id = meta.company_id
             company_name = meta.company.name
-            category = meta.company.default_category
-            is_inherited = bool(meta.company.default_category)
+            category = None
+            is_inherited = False
             inherited_business_types = meta.company.business_types or []
             if not inherited_business_types and meta.company.default_category:
                 inherited_business_types = [meta.company.default_category]
@@ -271,8 +271,8 @@ async def get_expense_account(
         role = AccountRole.CHAIN
         company_id = link.company_id
         company_name = link.company.name if link.company else None
-        category = link.company.default_category if link.company else None
-        is_inherited = bool(link.company and link.company.default_category)
+        category = None
+        is_inherited = False
         if link.company:
             inherited_business_types = link.company.business_types or []
             if not inherited_business_types and link.company.default_category:
