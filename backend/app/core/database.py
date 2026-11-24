@@ -33,9 +33,33 @@ def configure_sqlite_pragmas(target_engine, foreign_keys: bool = True):
 configure_sqlite_pragmas(engine, foreign_keys=True)
 
 
+def auto_migrate_sqlite_columns(target_engine=engine):
+    """Ensure newly added columns exist in existing SQLite tables without losing data."""
+    if not str(target_engine.url).startswith("sqlite"):
+        return
+    with target_engine.connect() as conn:
+        cursor = conn.connection.cursor()
+        try:
+            cursor.execute("PRAGMA table_info(company)")
+            comp_cols = [row[1] for row in cursor.fetchall()]
+            if comp_cols and "business_types" not in comp_cols:
+                cursor.execute("ALTER TABLE company ADD COLUMN business_types TEXT NOT NULL DEFAULT '[]'")
+
+            cursor.execute("PRAGMA table_info(account_metadata)")
+            meta_cols = [row[1] for row in cursor.fetchall()]
+            if meta_cols and "business_types" not in meta_cols:
+                cursor.execute("ALTER TABLE account_metadata ADD COLUMN business_types TEXT NOT NULL DEFAULT '[]'")
+            conn.connection.commit()
+        except Exception:
+            pass
+        finally:
+            cursor.close()
+
+
 def create_db_and_tables(target_engine=engine):
     import app.models  # noqa: F401
     SQLModel.metadata.create_all(target_engine)
+    auto_migrate_sqlite_columns(target_engine)
 
 
 def get_session():

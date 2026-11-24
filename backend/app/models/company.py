@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, List
@@ -9,7 +10,8 @@ class AccountRole(str, Enum):
     UNCLASSIFIED = "unclassified"
     PERSON = "person"
     CHAIN = "chain"
-    PHYSICAL_STORE = "physical_store"
+    LOCAL_BUSINESS = "local_business"
+    PHYSICAL_STORE = "physical_store"  # Legacy / transitional compatibility
     ECOMMERCE = "ecommerce"
     SERVICE = "service"
     INDEPENDENT = "independent"  # Legacy / transitional compatibility
@@ -40,9 +42,47 @@ class AccountRoleType(sa.TypeDecorator):
         return AccountRole.UNCLASSIFIED
 
 
+class JSONListType(sa.TypeDecorator):
+    """
+    Stores a list of strings as JSON text in SQLite,
+    deserializing to list[str].
+    """
+    impl = sa.Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return "[]"
+        if isinstance(value, (list, tuple, set)):
+            cleaned = []
+            for item in value:
+                s = str(item).strip()
+                if s and s not in cleaned:
+                    cleaned.append(s)
+            return json.dumps(cleaned)
+        s = str(value).strip()
+        return json.dumps([s]) if s else "[]"
+
+    def process_result_value(self, value, dialect):
+        if not value:
+            return []
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+            s = str(parsed).strip()
+            return [s] if s else []
+        except Exception:
+            return []
+
+
 class CompanyBase(SQLModel):
     name: str = Field(index=True, unique=True)
     default_category: Optional[str] = Field(default=None)  # e.g. "Groceries", "Household"
+    business_types: List[str] = Field(
+        default_factory=list,
+        sa_column=sa.Column(JSONListType(), nullable=True, server_default="[]"),
+    )
     notes: Optional[str] = Field(default=None)
 
 
@@ -65,6 +105,7 @@ class CompanyCreate(CompanyBase):
 class CompanyUpdate(SQLModel):
     name: Optional[str] = None
     default_category: Optional[str] = None
+    business_types: Optional[List[str]] = None
     notes: Optional[str] = None
 
 
@@ -107,6 +148,10 @@ class AccountMetadataBase(SQLModel):
         ),
     )
     category: Optional[str] = Field(default=None, index=True)
+    business_types: List[str] = Field(
+        default_factory=list,
+        sa_column=sa.Column(JSONListType(), nullable=True, server_default="[]"),
+    )
     company_id: Optional[int] = Field(default=None, foreign_key="company.id", index=True)
     notes: Optional[str] = Field(default=None)
 
@@ -128,6 +173,7 @@ class AccountMetadataCreate(AccountMetadataBase):
 class AccountMetadataUpdate(SQLModel):
     role: AccountRole = AccountRole.UNCLASSIFIED
     category: Optional[str] = None
+    business_types: Optional[List[str]] = None
     company_id: Optional[int] = None
     notes: Optional[str] = None
 

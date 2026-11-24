@@ -21,10 +21,41 @@ class AccountMetadataModelTests(unittest.TestCase):
         self.assertEqual(AccountRole.UNCLASSIFIED.value, "unclassified")
         self.assertEqual(AccountRole.PERSON.value, "person")
         self.assertEqual(AccountRole.CHAIN.value, "chain")
+        self.assertEqual(AccountRole.LOCAL_BUSINESS.value, "local_business")
         self.assertEqual(AccountRole.PHYSICAL_STORE.value, "physical_store")
         self.assertEqual(AccountRole.ECOMMERCE.value, "ecommerce")
         self.assertEqual(AccountRole.SERVICE.value, "service")
         self.assertEqual(AccountRole.INDEPENDENT.value, "independent")
+
+    def test_create_local_business_multi_types(self):
+        with Session(self.engine) as session:
+            meta = AccountMetadata(
+                firefly_account_id=601,
+                role=AccountRole.LOCAL_BUSINESS,
+                business_types=["Bar/Cafe", "Tobacconist"],
+                category="Food & Drink",
+            )
+            session.add(meta)
+            session.commit()
+            session.refresh(meta)
+
+            self.assertEqual(meta.role, AccountRole.LOCAL_BUSINESS)
+            self.assertEqual(meta.business_types, ["Bar/Cafe", "Tobacconist"])
+            self.assertEqual(meta.category, "Food & Drink")
+
+    def test_company_multi_business_types(self):
+        with Session(self.engine) as session:
+            company = Company(
+                name="Eni Station",
+                default_category="Gas Station",
+                business_types=["Gas Station", "Carwash"],
+            )
+            session.add(company)
+            session.commit()
+            session.refresh(company)
+
+            self.assertEqual(company.name, "Eni Station")
+            self.assertEqual(company.business_types, ["Gas Station", "Carwash"])
 
     def test_create_ecommerce_and_physical_store_metadata(self):
         with Session(self.engine) as session:

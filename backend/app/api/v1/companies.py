@@ -48,6 +48,7 @@ def get_companies(session: Session = Depends(get_session)):
             id=company.id,
             name=company.name,
             default_category=company.default_category,
+            business_types=company.business_types if company.business_types else ([company.default_category] if company.default_category else []),
             notes=company.notes,
             created_at=company.created_at,
             store_count=count,
@@ -82,6 +83,7 @@ def create_company(
             if company_in.default_category
             else None
         ),
+        business_types=company_in.business_types or [],
         notes=company_in.notes.strip() if company_in.notes else None,
     )
     session.add(company)
@@ -127,6 +129,9 @@ def update_company(
             if company_update.default_category
             else None
         )
+
+    if company_update.business_types is not None:
+        company.business_types = company_update.business_types
 
     if company_update.notes is not None:
         company.notes = (

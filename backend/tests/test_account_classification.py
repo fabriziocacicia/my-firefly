@@ -88,6 +88,55 @@ class AccountClassificationApiTests(unittest.TestCase):
         self.assertIsNone(data["company_id"])
         self.assertEqual(data["notes"], "Main street pharmacy")
 
+    def test_update_account_metadata_local_business_multi_types(self):
+        payload = {
+            "role": "local_business",
+            "business_types": ["Bar/Cafe", "Tobacconist"],
+            "category": "Food & Drink",
+            "notes": "Bar and tobacconist shop",
+        }
+        res = self.client.put("/api/v1/accounts/101/metadata", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["firefly_account_id"], 101)
+        self.assertEqual(data["role"], "local_business")
+        self.assertEqual(data["business_types"], ["Bar/Cafe", "Tobacconist"])
+        self.assertEqual(data["effective_business_types"], ["Bar/Cafe", "Tobacconist"])
+        self.assertEqual(data["category"], "Food & Drink")
+        self.assertFalse(data["is_inherited_category"])
+        self.assertIsNone(data["company_id"])
+
+    def test_chain_branch_inherits_and_extends_business_types(self):
+        with Session(self.engine) as session:
+            comp = Company(
+                name="Eni",
+                default_category="Gas Station",
+                business_types=["Gas Station"],
+            )
+            session.add(comp)
+            session.commit()
+            session.refresh(comp)
+            comp_id = comp.id
+
+        payload = {
+            "role": "chain",
+            "company_id": comp_id,
+            "business_types": ["Bar/Cafe", "Carwash"],
+        }
+        res = self.client.put("/api/v1/accounts/102/metadata", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["role"], "chain")
+        self.assertEqual(data["company_id"], comp_id)
+        self.assertEqual(data["category"], "Gas Station")
+        self.assertTrue(data["is_inherited_category"])
+        self.assertEqual(data["inherited_business_types"], ["Gas Station"])
+        self.assertEqual(data["business_types"], ["Bar/Cafe", "Carwash"])
+        self.assertEqual(
+            data["effective_business_types"],
+            ["Gas Station", "Bar/Cafe", "Carwash"],
+        )
+
     def test_update_account_metadata_chain_requires_valid_company(self):
         # Missing company_id
         res = self.client.put(

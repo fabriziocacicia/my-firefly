@@ -4,6 +4,7 @@ export type AccountRole =
   | 'unclassified'
   | 'person'
   | 'chain'
+  | 'local_business'
   | 'physical_store'
   | 'ecommerce'
   | 'service'
@@ -14,6 +15,9 @@ export interface AccountMetadata {
   role: AccountRole;
   category?: string | null;
   is_inherited_category?: boolean;
+  business_types?: string[];
+  inherited_business_types?: string[];
+  effective_business_types?: string[];
   company_id?: number | null;
   company_name?: string | null;
   notes?: string | null;
@@ -24,6 +28,7 @@ export interface AccountMetadata {
 export interface AccountMetadataUpdate {
   role: AccountRole;
   category?: string | null;
+  business_types?: string[];
   company_id?: number | null;
   notes?: string | null;
 }
@@ -46,6 +51,7 @@ export interface Company {
   id: number;
   name: string;
   default_category?: string;
+  business_types?: string[];
   notes?: string;
   store_count?: number;
 }
@@ -107,9 +113,35 @@ export interface FireflyExpenseAccount {
   role?: AccountRole;
   category?: string | null;
   is_inherited_category?: boolean;
+  business_types?: string[];
+  inherited_business_types?: string[];
+  effective_business_types?: string[];
   company_id?: number | null;
   company_name?: string | null;
 }
+
+export const COMMON_BUSINESS_TYPES = [
+  'Supermarket',
+  'Bar/Cafe',
+  'Restaurant',
+  'Pharmacy',
+  'Tobacconist',
+  'Bakery',
+  'Gas Station',
+  'Carwash',
+  'Gym',
+  'Hairdresser',
+  'Florist',
+  'Bookstore',
+  'Electronics',
+  'Clothing',
+  'Pet Shop',
+  'Hardware Store',
+  'Dry Cleaner',
+  'Airport',
+  'Nightclub',
+  'Hotel',
+] as const;
 
 export interface FireflyAssetAccount {
   id: number;

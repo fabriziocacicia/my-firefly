@@ -77,7 +77,7 @@ export const api = {
 
   companies: {
     list: () => request<Company[]>('/companies/'),
-    create: (data: { name: string; default_category?: string; notes?: string }) =>
+    create: (data: { name: string; default_category?: string; business_types?: string[]; notes?: string }) =>
       request<Company>('/companies/', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<Company>) =>
       request<Company>(`/companies/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),

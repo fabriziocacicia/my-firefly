@@ -23,6 +23,9 @@ class FireflyExpenseAccount(BaseModel):
     role: AccountRole = AccountRole.UNCLASSIFIED
     category: Optional[str] = None
     is_inherited_category: bool = False
+    business_types: List[str] = []
+    inherited_business_types: List[str] = []
+    effective_business_types: List[str] = []
     company_id: Optional[int] = None
     company_name: Optional[str] = None
 
@@ -117,6 +120,9 @@ async def list_expense_accounts(session: Session = Depends(get_session)):
             is_inherited = False
             company_id = None
             company_name = None
+            inherited_business_types: List[str] = []
+            local_business_types: List[str] = meta.business_types or [] if meta else []
+            effective_business_types: List[str] = []
 
             if meta:
                 role = meta.role
@@ -125,20 +131,41 @@ async def list_expense_accounts(session: Session = Depends(get_session)):
                     company_name = meta.company.name
                     category = meta.company.default_category
                     is_inherited = bool(meta.company.default_category)
+                    inherited_business_types = meta.company.business_types or []
+                    if not inherited_business_types and meta.company.default_category:
+                        inherited_business_types = [meta.company.default_category]
+                    effective_business_types = list(
+                        dict.fromkeys(inherited_business_types + local_business_types)
+                    )
                 elif meta.role in (
+                    AccountRole.LOCAL_BUSINESS,
                     AccountRole.PHYSICAL_STORE,
-                    AccountRole.ECOMMERCE,
-                    AccountRole.SERVICE,
                     AccountRole.INDEPENDENT,
                 ):
                     category = meta.category
                     is_inherited = False
+                    effective_business_types = local_business_types
+                elif meta.role in (AccountRole.ECOMMERCE, AccountRole.SERVICE):
+                    category = meta.category
+                    is_inherited = False
+                    local_business_types = []
+                    effective_business_types = []
+                else:
+                    category = None
+                    is_inherited = False
+                    local_business_types = []
+                    effective_business_types = []
             elif link:
                 role = AccountRole.CHAIN
                 company_id = link.company_id
                 company_name = link.company.name if link.company else None
                 category = link.company.default_category if link.company else None
                 is_inherited = bool(link.company and link.company.default_category)
+                if link.company:
+                    inherited_business_types = link.company.business_types or []
+                    if not inherited_business_types and link.company.default_category:
+                        inherited_business_types = [link.company.default_category]
+                effective_business_types = inherited_business_types
 
             results.append(
                 FireflyExpenseAccount(
@@ -148,6 +175,9 @@ async def list_expense_accounts(session: Session = Depends(get_session)):
                     role=role,
                     category=category,
                     is_inherited_category=is_inherited,
+                    business_types=local_business_types,
+                    inherited_business_types=inherited_business_types,
+                    effective_business_types=effective_business_types,
                     company_id=company_id,
                     company_name=company_name,
                 )
@@ -194,6 +224,9 @@ async def get_expense_account(
     is_inherited = False
     company_id = None
     company_name = None
+    inherited_business_types: List[str] = []
+    local_business_types: List[str] = meta.business_types or [] if meta else []
+    effective_business_types: List[str] = []
 
     if meta:
         role = meta.role
@@ -202,20 +235,41 @@ async def get_expense_account(
             company_name = meta.company.name
             category = meta.company.default_category
             is_inherited = bool(meta.company.default_category)
+            inherited_business_types = meta.company.business_types or []
+            if not inherited_business_types and meta.company.default_category:
+                inherited_business_types = [meta.company.default_category]
+            effective_business_types = list(
+                dict.fromkeys(inherited_business_types + local_business_types)
+            )
         elif meta.role in (
+            AccountRole.LOCAL_BUSINESS,
             AccountRole.PHYSICAL_STORE,
-            AccountRole.ECOMMERCE,
-            AccountRole.SERVICE,
             AccountRole.INDEPENDENT,
         ):
             category = meta.category
             is_inherited = False
+            effective_business_types = local_business_types
+        elif meta.role in (AccountRole.ECOMMERCE, AccountRole.SERVICE):
+            category = meta.category
+            is_inherited = False
+            local_business_types = []
+            effective_business_types = []
+        else:
+            category = None
+            is_inherited = False
+            local_business_types = []
+            effective_business_types = []
     elif link:
         role = AccountRole.CHAIN
         company_id = link.company_id
         company_name = link.company.name if link.company else None
         category = link.company.default_category if link.company else None
         is_inherited = bool(link.company and link.company.default_category)
+        if link.company:
+            inherited_business_types = link.company.business_types or []
+            if not inherited_business_types and link.company.default_category:
+                inherited_business_types = [link.company.default_category]
+        effective_business_types = inherited_business_types
 
     return FireflyExpenseAccount(
         id=account_id,
@@ -224,6 +278,9 @@ async def get_expense_account(
         role=role,
         category=category,
         is_inherited_category=is_inherited,
+        business_types=local_business_types,
+        inherited_business_types=inherited_business_types,
+        effective_business_types=effective_business_types,
         company_id=company_id,
         company_name=company_name,
     )

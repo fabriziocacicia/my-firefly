@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
@@ -20,6 +20,9 @@ class AccountMetadataResponse(BaseModel):
     role: AccountRole
     category: Optional[str] = None
     is_inherited_category: bool = False
+    business_types: List[str] = []
+    inherited_business_types: List[str] = []
+    effective_business_types: List[str] = []
     company_id: Optional[int] = None
     company_name: Optional[str] = None
     notes: Optional[str] = None
@@ -40,6 +43,9 @@ def get_account_metadata(
             role=AccountRole.UNCLASSIFIED,
             category=None,
             is_inherited_category=False,
+            business_types=[],
+            inherited_business_types=[],
+            effective_business_types=[],
             company_id=None,
             company_name=None,
         )
@@ -54,11 +60,36 @@ def get_account_metadata(
         meta.role == AccountRole.CHAIN and company and company.default_category
     )
 
+    inherited_business_types: List[str] = []
+    local_business_types: List[str] = meta.business_types or []
+    effective_business_types: List[str] = []
+
+    if meta.role == AccountRole.CHAIN and company:
+        inherited_business_types = company.business_types or []
+        if not inherited_business_types and company.default_category:
+            inherited_business_types = [company.default_category]
+        effective_business_types = list(
+            dict.fromkeys(inherited_business_types + local_business_types)
+        )
+    elif meta.role in (
+        AccountRole.LOCAL_BUSINESS,
+        AccountRole.PHYSICAL_STORE,
+        AccountRole.INDEPENDENT,
+    ):
+        effective_business_types = local_business_types
+    else:
+        inherited_business_types = []
+        local_business_types = []
+        effective_business_types = []
+
     return AccountMetadataResponse(
         firefly_account_id=meta.firefly_account_id,
         role=meta.role,
         category=effective_category,
         is_inherited_category=is_inherited,
+        business_types=local_business_types,
+        inherited_business_types=inherited_business_types,
+        effective_business_types=effective_business_types,
         company_id=meta.company_id if meta.role == AccountRole.CHAIN else None,
         company_name=company.name if (meta.role == AccountRole.CHAIN and company) else None,
         notes=meta.notes,
@@ -76,14 +107,15 @@ def update_account_metadata(
     """
     Update or create local metadata for an account.
     Validation rules:
-    - CHAIN: requires company_id to exist; direct category is cleared (inherited from company).
-    - INDEPENDENT: company_id is cleared; category is an optional trimmed string.
-    - PERSON: category and company_id are cleared.
-    - UNCLASSIFIED: category and company_id are cleared.
+    - CHAIN: requires company_id to exist; inherits category from company; business_types allow branch-specific additions.
+    - LOCAL_BUSINESS / PHYSICAL_STORE / INDEPENDENT: company_id is cleared; category and business_types are supported.
+    - ECOMMERCE / SERVICE: category is supported; business_types are cleared.
+    - PERSON / UNCLASSIFIED: category, business_types, and company_id are cleared.
     """
     role = payload.role
     company_id: Optional[int] = None
     category: Optional[str] = None
+    business_types: List[str] = []
     company: Optional[Company] = None
 
     if role == AccountRole.CHAIN:
@@ -100,10 +132,10 @@ def update_account_metadata(
             )
         company_id = company.id
         category = None  # inherited from company
+        business_types = payload.business_types or []
     elif role in (
+        AccountRole.LOCAL_BUSINESS,
         AccountRole.PHYSICAL_STORE,
-        AccountRole.ECOMMERCE,
-        AccountRole.SERVICE,
         AccountRole.INDEPENDENT,
     ):
         category = (
@@ -111,9 +143,19 @@ def update_account_metadata(
             if payload.category and payload.category.strip()
             else None
         )
+        business_types = payload.business_types or []
+        company_id = None
+    elif role in (AccountRole.ECOMMERCE, AccountRole.SERVICE):
+        category = (
+            payload.category.strip()
+            if payload.category and payload.category.strip()
+            else None
+        )
+        business_types = []
         company_id = None
     elif role in (AccountRole.PERSON, AccountRole.UNCLASSIFIED):
         category = None
+        business_types = []
         company_id = None
 
     meta = session.get(AccountMetadata, account_id)
@@ -123,6 +165,7 @@ def update_account_metadata(
             firefly_account_id=account_id,
             role=role,
             category=category,
+            business_types=business_types,
             company_id=company_id,
             notes=payload.notes.strip() if payload.notes else None,
             created_at=now,
@@ -132,6 +175,7 @@ def update_account_metadata(
     else:
         meta.role = role
         meta.category = category
+        meta.business_types = business_types
         meta.company_id = company_id
         if payload.notes is not None:
             meta.notes = payload.notes.strip() if payload.notes else None
@@ -150,11 +194,36 @@ def update_account_metadata(
         role == AccountRole.CHAIN and company and company.default_category
     )
 
+    inherited_business_types: List[str] = []
+    local_business_types: List[str] = meta.business_types or []
+    effective_business_types: List[str] = []
+
+    if role == AccountRole.CHAIN and company:
+        inherited_business_types = company.business_types or []
+        if not inherited_business_types and company.default_category:
+            inherited_business_types = [company.default_category]
+        effective_business_types = list(
+            dict.fromkeys(inherited_business_types + local_business_types)
+        )
+    elif role in (
+        AccountRole.LOCAL_BUSINESS,
+        AccountRole.PHYSICAL_STORE,
+        AccountRole.INDEPENDENT,
+    ):
+        effective_business_types = local_business_types
+    else:
+        inherited_business_types = []
+        local_business_types = []
+        effective_business_types = []
+
     return AccountMetadataResponse(
         firefly_account_id=meta.firefly_account_id,
         role=meta.role,
         category=effective_category,
         is_inherited_category=is_inherited,
+        business_types=local_business_types,
+        inherited_business_types=inherited_business_types,
+        effective_business_types=effective_business_types,
         company_id=meta.company_id if meta.role == AccountRole.CHAIN else None,
         company_name=company.name if (meta.role == AccountRole.CHAIN and company) else None,
         notes=meta.notes,
