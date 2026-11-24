@@ -1,0 +1,242 @@
+import unittest
+from sqlmodel import SQLModel, Session, create_engine, select
+from app.models.account_metadata import (
+    AccountRole,
+    AccountMetadata,
+    AccountMetadataUpdate,
+    AccountMetadataRead,
+)
+from app.models.company import Company
+
+
+class AccountMetadataModelTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine("sqlite:///:memory:", echo=False)
+        SQLModel.metadata.create_all(self.engine)
+
+    def tearDown(self):
+        SQLModel.metadata.drop_all(self.engine)
+
+    def test_account_role_enum_values(self):
+        self.assertEqual(AccountRole.UNCLASSIFIED.value, "unclassified")
+        self.assertEqual(AccountRole.PERSON.value, "person")
+        self.assertEqual(AccountRole.CHAIN.value, "chain")
+        self.assertEqual(AccountRole.LOCAL_BUSINESS.value, "local_business")
+        self.assertEqual(AccountRole.PHYSICAL_STORE.value, "physical_store")
+        self.assertEqual(AccountRole.ECOMMERCE.value, "ecommerce")
+        self.assertEqual(AccountRole.SERVICE.value, "service")
+        self.assertEqual(AccountRole.INDEPENDENT.value, "independent")
+
+    def test_create_local_business_multi_types(self):
+        with Session(self.engine) as session:
+            meta = AccountMetadata(
+                firefly_account_id=601,
+                role=AccountRole.LOCAL_BUSINESS,
+                business_types=["Bar/Cafe", "Tobacconist"],
+                category="Food & Drink",
+            )
+            session.add(meta)
+            session.commit()
+            session.refresh(meta)
+
+            self.assertEqual(meta.role, AccountRole.LOCAL_BUSINESS)
+            self.assertEqual(meta.business_types, ["Bar/Cafe", "Tobacconist"])
+            self.assertEqual(meta.category, "Food & Drink")
+
+    def test_company_multi_business_types(self):
+        with Session(self.engine) as session:
+            company = Company(
+                name="Eni Station",
+                default_category="Gas Station",
+                business_types=["Gas Station", "Carwash"],
+            )
+            session.add(company)
+            session.commit()
+            session.refresh(company)
+
+            self.assertEqual(company.name, "Eni Station")
+            self.assertEqual(company.business_types, ["Gas Station", "Carwash"])
+
+    def test_create_ecommerce_and_physical_store_metadata(self):
+        with Session(self.engine) as session:
+            meta_ecom = AccountMetadata(
+                firefly_account_id=505,
+                role=AccountRole.ECOMMERCE,
+                category="Supplements",
+            )
+            meta_phys = AccountMetadata(
+                firefly_account_id=506,
+                role=AccountRole.PHYSICAL_STORE,
+                category="Pharmacy",
+            )
+            session.add(meta_ecom)
+            session.add(meta_phys)
+            session.commit()
+            session.refresh(meta_ecom)
+            session.refresh(meta_phys)
+
+            self.assertEqual(meta_ecom.role, AccountRole.ECOMMERCE)
+            self.assertEqual(meta_ecom.category, "Supplements")
+            self.assertEqual(meta_phys.role, AccountRole.PHYSICAL_STORE)
+            self.assertEqual(meta_phys.category, "Pharmacy")
+
+    def test_create_unclassified_account_metadata_defaults(self):
+        with Session(self.engine) as session:
+            meta = AccountMetadata(firefly_account_id=101)
+            session.add(meta)
+            session.commit()
+            session.refresh(meta)
+
+            self.assertEqual(meta.firefly_account_id, 101)
+            self.assertEqual(meta.role, AccountRole.UNCLASSIFIED)
+            self.assertIsNone(meta.category)
+            self.assertIsNone(meta.company_id)
+            self.assertIsNotNone(meta.created_at)
+            self.assertIsNotNone(meta.updated_at)
+
+    def test_create_chain_account_metadata(self):
+        with Session(self.engine) as session:
+            company = Company(name="Conad", default_category="Supermarket")
+            session.add(company)
+            session.commit()
+            session.refresh(company)
+
+            meta = AccountMetadata(
+                firefly_account_id=202,
+                role=AccountRole.CHAIN,
+                company_id=company.id,
+            )
+            session.add(meta)
+            session.commit()
+            session.refresh(meta)
+
+            self.assertEqual(meta.role, AccountRole.CHAIN)
+            self.assertEqual(meta.company_id, company.id)
+            self.assertIsNotNone(meta.company)
+            self.assertEqual(meta.company.name, "Conad")
+
+    def test_create_independent_account_metadata(self):
+        with Session(self.engine) as session:
+            meta = AccountMetadata(
+                firefly_account_id=303,
+                role=AccountRole.INDEPENDENT,
+                category="Bakery",
+                notes="Local organic bakery",
+            )
+            session.add(meta)
+            session.commit()
+            session.refresh(meta)
+
+            self.assertEqual(meta.role, AccountRole.INDEPENDENT)
+            self.assertEqual(meta.category, "Bakery")
+            self.assertEqual(meta.notes, "Local organic bakery")
+            self.assertIsNone(meta.company_id)
+
+    def test_create_person_account_metadata(self):
+        with Session(self.engine) as session:
+            meta = AccountMetadata(
+                firefly_account_id=404,
+                role=AccountRole.PERSON,
+            )
+            session.add(meta)
+            session.commit()
+            session.refresh(meta)
+
+            self.assertEqual(meta.role, AccountRole.PERSON)
+            self.assertIsNone(meta.category)
+            self.assertIsNone(meta.company_id)
+
+    def test_account_metadata_update_schema(self):
+        update = AccountMetadataUpdate(
+            role=AccountRole.INDEPENDENT,
+            category="Pharmacy",
+        )
+        self.assertEqual(update.role, AccountRole.INDEPENDENT)
+        self.assertEqual(update.category, "Pharmacy")
+        self.assertIsNone(update.company_id)
+
+    def test_raw_sqlite_lowercase_enum_values_deserialization(self):
+        """
+        Regression test: Verify that raw SQLite rows storing lowercase strings
+        ('chain', 'person', 'independent', 'unclassified') or uppercase variants
+        deserialize cleanly into AccountRole enum instances without LookupError.
+        """
+        import sqlalchemy as sa
+
+        with self.engine.connect() as conn:
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO account_metadata (firefly_account_id, role, created_at, updated_at)
+                    VALUES
+                        (1001, 'chain', '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+                        (1002, 'CHAIN', '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+                        (1003, 'independent', '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+                        (1004, 'person', '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+                        (1005, 'unclassified', '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+                        (1006, 'non_existent_future_value', '2026-01-01 00:00:00', '2026-01-01 00:00:00')
+                    """
+                )
+            )
+            conn.commit()
+
+        with Session(self.engine) as session:
+            rows = session.exec(select(AccountMetadata).where(AccountMetadata.firefly_account_id >= 1001)).all()
+            row_map = {r.firefly_account_id: r for r in rows}
+
+            self.assertEqual(row_map[1001].role, AccountRole.CHAIN)
+            self.assertEqual(row_map[1002].role, AccountRole.CHAIN)
+            self.assertEqual(row_map[1003].role, AccountRole.INDEPENDENT)
+            self.assertEqual(row_map[1004].role, AccountRole.PERSON)
+            self.assertEqual(row_map[1005].role, AccountRole.UNCLASSIFIED)
+            self.assertEqual(row_map[1006].role, AccountRole.UNCLASSIFIED)
+
+    def test_alembic_upgrade_0006_adds_business_types_to_existing_db(self):
+        """
+        Regression test: Verify that an existing SQLite database that was at
+        revision 0005 safely receives the business_types columns in company
+        and account_metadata when run_db_migrations runs.
+        """
+        import tempfile
+        from pathlib import Path
+        from alembic.config import Config
+        from alembic import command
+        from app.main import run_db_migrations
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            tmp_db_url = f"sqlite:///{tmp.name}"
+            tmp_engine = create_engine(tmp_db_url)
+            backend_dir = Path(__file__).resolve().parents[1]
+            alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+            alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+            alembic_cfg.set_main_option("sqlalchemy.url", tmp_db_url)
+
+            # Step 1: Migrate up to 0005 (where business_types was not yet in the schema)
+            command.upgrade(alembic_cfg, "0005_account_metadata_and_classification")
+
+            # Step 2: Run startup migrations
+            run_db_migrations(tmp_engine)
+
+            # Step 3: Verify that querying AccountMetadata and Company succeeds
+            with Session(tmp_engine) as session:
+                comp = Company(name="TestChain", default_category="Fuel", business_types=["Gas Station", "Carwash"])
+                session.add(comp)
+                session.commit()
+                session.refresh(comp)
+
+                meta = AccountMetadata(
+                    firefly_account_id=9999,
+                    role=AccountRole.LOCAL_BUSINESS,
+                    business_types=["Bar/Cafe", "Tobacconist"],
+                )
+                session.add(meta)
+                session.commit()
+                session.refresh(meta)
+
+                self.assertEqual(comp.business_types, ["Gas Station", "Carwash"])
+                self.assertEqual(meta.business_types, ["Bar/Cafe", "Tobacconist"])
+                self.assertEqual(meta.role, AccountRole.LOCAL_BUSINESS)
+
+
+if __name__ == "__main__":
+    unittest.main()

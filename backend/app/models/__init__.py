@@ -1,3 +1,11 @@
+from app.models.account_metadata import (
+    AccountRole,
+    AccountMetadata,
+    AccountMetadataBase,
+    AccountMetadataCreate,
+    AccountMetadataUpdate,
+    AccountMetadataRead,
+)
 from app.models.tag import Tag, TagBase, TagCreate, TagRead, ProductTagLink
 from app.models.brand import Brand, BrandBase, BrandCreate, BrandRead
 from app.models.company import (
@@ -28,6 +36,8 @@ from app.models.receipt import (
 )
 
 __all__ = [
+    "AccountRole", "AccountMetadata", "AccountMetadataBase",
+    "AccountMetadataCreate", "AccountMetadataUpdate", "AccountMetadataRead",
     "Tag", "TagBase", "TagCreate", "TagRead", "ProductTagLink",
     "Brand", "BrandBase", "BrandCreate", "BrandRead",
     "Company", "CompanyBase", "CompanyCreate", "CompanyRead",

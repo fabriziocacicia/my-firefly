@@ -5,7 +5,12 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 from app.core.database import get_session
 from app.services.firefly import firefly_client
+from app.services.classification import (
+    ResolvedAccountClassification,
+    resolve_account_classification,
+)
 from app.models.company import CompanyAccountLink
+from app.models.account_metadata import AccountMetadata, AccountRole
 
 router = APIRouter(prefix="/firefly", tags=["Firefly Sync"])
 
@@ -19,6 +24,12 @@ class FireflyExpenseAccount(BaseModel):
     id: int
     name: str
     active: bool = True
+    role: AccountRole = AccountRole.UNCLASSIFIED
+    category: Optional[str] = None
+    is_inherited_category: bool = False
+    business_types: List[str] = []
+    inherited_business_types: List[str] = []
+    effective_business_types: List[str] = []
     company_id: Optional[int] = None
     company_name: Optional[str] = None
 
@@ -75,44 +86,64 @@ async def search_expense_accounts(
         raise HTTPException(status_code=502, detail=f"Firefly search error: {str(e)}")
 
 
+def _build_expense_account(
+    acc_id: int,
+    attr: dict,
+    resolved: ResolvedAccountClassification,
+) -> FireflyExpenseAccount:
+    return FireflyExpenseAccount(
+        id=acc_id,
+        name=attr.get("name", f"Account #{acc_id}"),
+        active=bool(attr.get("active", True)),
+        role=resolved.role,
+        category=resolved.category,
+        is_inherited_category=resolved.is_inherited_category,
+        business_types=resolved.business_types,
+        inherited_business_types=resolved.inherited_business_types,
+        effective_business_types=resolved.effective_business_types,
+        company_id=resolved.company_id,
+        company_name=resolved.company_name,
+    )
+
+
 @router.get(
     "/expense-accounts",
     response_model=List[FireflyExpenseAccount],
 )
 async def list_expense_accounts(session: Session = Depends(get_session)):
-    """Unpaginated directory listing of all Firefly expense accounts with company links."""
+    """Unpaginated directory listing of all Firefly expense accounts with metadata & company links."""
     try:
         accounts = await firefly_client.get_all_expense_accounts()
-
-        links = session.exec(
-            select(CompanyAccountLink).options(
-                selectinload(CompanyAccountLink.company)
-            )
-        ).all()
-        link_map = {link.firefly_account_id: link for link in links}
-
-        results: List[FireflyExpenseAccount] = []
-        for acc in accounts:
-            try:
-                acc_id = int(acc.get("id"))
-                attr = acc.get("attributes", {})
-                link = link_map.get(acc_id)
-                results.append(
-                    FireflyExpenseAccount(
-                        id=acc_id,
-                        name=attr.get("name", f"Account #{acc_id}"),
-                        active=bool(attr.get("active", True)),
-                        company_id=link.company_id if link else None,
-                        company_name=link.company.name if (link and link.company) else None,
-                    )
-                )
-            except (ValueError, TypeError):
-                continue
-        return results
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Firefly API error: {str(e)}")
+
+    metas = session.exec(
+        select(AccountMetadata).options(
+            selectinload(AccountMetadata.company)
+        )
+    ).all()
+    meta_map = {m.firefly_account_id: m for m in metas}
+
+    links = session.exec(
+        select(CompanyAccountLink).options(
+            selectinload(CompanyAccountLink.company)
+        )
+    ).all()
+    link_map = {link.firefly_account_id: link for link in links}
+
+    results: List[FireflyExpenseAccount] = []
+    for acc in accounts:
+        try:
+            acc_id = int(acc.get("id"))
+            attr = acc.get("attributes", {})
+            resolved = resolve_account_classification(
+                meta_map.get(acc_id),
+                link_map.get(acc_id),
+            )
+            results.append(_build_expense_account(acc_id, attr, resolved))
+        except (ValueError, TypeError):
+            continue
+    return results
 
 
 @router.get(
@@ -122,33 +153,33 @@ async def list_expense_accounts(session: Session = Depends(get_session)):
 async def get_expense_account(
     account_id: int, session: Session = Depends(get_session)
 ):
-    """Fetch single expense account by ID with optional company link."""
+    """Fetch single expense account by ID with optional metadata & company link."""
     try:
         acc = await firefly_client.get_expense_account(account_id)
-        if not acc:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Firefly expense account #{account_id} not found",
-            )
-
-        attr = acc.get("attributes", {})
-        link = session.exec(
-            select(CompanyAccountLink)
-            .where(CompanyAccountLink.firefly_account_id == account_id)
-            .options(selectinload(CompanyAccountLink.company))
-        ).first()
-
-        return FireflyExpenseAccount(
-            id=account_id,
-            name=attr.get("name", f"Account #{account_id}"),
-            active=bool(attr.get("active", True)),
-            company_id=link.company_id if link else None,
-            company_name=link.company.name if (link and link.company) else None,
-        )
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Firefly API error: {str(e)}")
+
+    if not acc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Firefly expense account #{account_id} not found",
+        )
+
+    attr = acc.get("attributes", {})
+    meta = session.exec(
+        select(AccountMetadata)
+        .where(AccountMetadata.firefly_account_id == account_id)
+        .options(selectinload(AccountMetadata.company))
+    ).first()
+
+    link = session.exec(
+        select(CompanyAccountLink)
+        .where(CompanyAccountLink.firefly_account_id == account_id)
+        .options(selectinload(CompanyAccountLink.company))
+    ).first()
+
+    resolved = resolve_account_classification(meta, link)
+    return _build_expense_account(account_id, attr, resolved)
 
 
 @router.get("/asset-accounts")

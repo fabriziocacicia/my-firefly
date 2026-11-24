@@ -1,4 +1,37 @@
-export type AppTab = 'stores' | 'catalog' | 'workflows' | 'workbench';
+export type AppTab = 'stores' | 'accounts-and-chains' | 'catalog' | 'workflows' | 'workbench';
+
+export type AccountRole =
+  | 'unclassified'
+  | 'person'
+  | 'chain'
+  | 'local_business'
+  | 'physical_store'
+  | 'ecommerce'
+  | 'service'
+  | 'independent';
+
+export interface AccountMetadata {
+  firefly_account_id: number;
+  role: AccountRole;
+  category?: string | null;
+  is_inherited_category?: boolean;
+  business_types?: string[];
+  inherited_business_types?: string[];
+  effective_business_types?: string[];
+  company_id?: number | null;
+  company_name?: string | null;
+  notes?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AccountMetadataUpdate {
+  role: AccountRole;
+  category?: string | null;
+  business_types?: string[];
+  company_id?: number | null;
+  notes?: string | null;
+}
 
 export interface Tag {
   id: number;
@@ -18,6 +51,7 @@ export interface Company {
   id: number;
   name: string;
   default_category?: string;
+  business_types?: string[];
   notes?: string;
   store_count?: number;
 }
@@ -76,9 +110,38 @@ export interface FireflyExpenseAccount {
   id: number;
   name: string;
   active: boolean;
+  role?: AccountRole;
+  category?: string | null;
+  is_inherited_category?: boolean;
+  business_types?: string[];
+  inherited_business_types?: string[];
+  effective_business_types?: string[];
   company_id?: number | null;
   company_name?: string | null;
 }
+
+export const COMMON_BUSINESS_TYPES = [
+  'Supermarket',
+  'Bar/Cafe',
+  'Restaurant',
+  'Pharmacy',
+  'Tobacconist',
+  'Bakery',
+  'Gas Station',
+  'Carwash',
+  'Gym',
+  'Hairdresser',
+  'Florist',
+  'Bookstore',
+  'Electronics',
+  'Clothing',
+  'Pet Shop',
+  'Hardware Store',
+  'Dry Cleaner',
+  'Airport',
+  'Nightclub',
+  'Hotel',
+] as const;
 
 export interface FireflyAssetAccount {
   id: number;

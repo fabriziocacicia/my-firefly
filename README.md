@@ -12,9 +12,11 @@ A companion web application for **Firefly III** to track SKU-level product price
    - Built-in receipt image attachment preview and local draft autosave in browser storage.
    - 1-click push to Firefly III split transactions with optional meal voucher splits.
 
-2. **Live Firefly Stores & Optional Companies**:
+2. **Accounts & Chains (Classification, Multi-Types & Sector Tagging)**:
    - Instant live lookup and autocomplete across all Firefly III expense accounts without upfront manual mapping.
-   - Optionally group flat accounts (e.g. `Acqua e Sapone Via Milano Catania`, `Acqua e Sapone Palermo`) under parent companies (`Acqua e Sapone`, `Conad`, `Lidl`, `MD`) for cross-branch price comparisons.
+   - Classify accounts by role (`Local Business`, `Chain Branch`, `E-Commerce`, `Service`, `Person`, `Unclassified`).
+   - Multi-type business modeling (`business_types` array, e.g. `[Bar/Cafe, Tobacconist]`) with automatic retail chain branch inheritance.
+   - Sector category tagging (`category`) with zero-maintenance dynamic garbage collection (disappears automatically when unused).
 
 3. **Products, Brands & Price Intelligence**:
    - Track products with brands, package sizes, and multi-dimensional tags (e.g. `[Food, Pasta, Organic]`, `[Fruit, Bio]`).
@@ -34,9 +36,9 @@ A companion web application for **Firefly III** to track SKU-level product price
 my-firefly/
 ├── backend/                  # Python 3.11 + FastAPI + SQLModel
 │   ├── app/
-│   │   ├── api/v1/           # REST endpoints (companies, products, prices, firefly, workflows, receipts)
+│   │   ├── api/v1/           # REST endpoints (companies, products, prices, firefly, workflows, receipts, accounts, categories)
 │   │   ├── core/             # Configuration & SQLite connection
-│   │   ├── models/           # SQLModel domain models (Company, Product, Price, Tag, Receipt)
+│   │   ├── models/           # SQLModel domain models (Company, AccountMetadata, Product, Price, Tag, Receipt)
 │   │   ├── services/         # Firefly III client & price normalization
 │   │   └── main.py           # FastAPI entrypoint
 │   ├── requirements.txt
@@ -45,7 +47,7 @@ my-firefly/
 │   ├── src/
 │   │   ├── api/client.ts     # Typed API client
 │   │   ├── components/       # UI components (Workbench, Common, Navigation)
-│   │   ├── pages/            # ReceiptWorkbenchPage, StoresPage, CatalogPage, WorkflowsPage
+│   │   ├── pages/            # ReceiptWorkbenchPage, AccountsAndChainsPage, CatalogPage, WorkflowsPage
 │   │   └── types/            # TypeScript interfaces
 │   ├── package.json
 │   ├── vite.config.ts
@@ -61,11 +63,13 @@ my-firefly/
 
 ## 📖 Architecture & Design Specifications
 
-All significant architecture decisions, domain models, and RFCs are maintained in [`docs/designs/`](docs/designs/):
+All significant architecture decisions, domain models, and RFCs are maintained in [`docs/designs/`](docs/designs/) and [`docs/decisions/`](docs/decisions/):
 
 - [Design Documents Sitemap](docs/designs/SITEMAP.md)
 - [Receipt Workbench & Price Analytics](docs/designs/receipt_workbench_and_price_analytics.md)
 - [Live Firefly Store Lookup & Optional Companies](docs/designs/live_firefly_stores_and_optional_company.md)
+- [Expense Account Classification & Category Tagging](docs/designs/expense_account_classification_and_category_tagging.md)
+- [ADR-001: Multi-Type Business Modeling and Dynamic Category Tagging](docs/decisions/ADR-001-multi-type-business-modeling-and-dynamic-categories.md)
 
 ---
 
