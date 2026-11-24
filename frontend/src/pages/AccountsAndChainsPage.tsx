@@ -18,6 +18,11 @@ import {
   HelpCircle,
   LayoutGrid,
   List,
+  Globe,
+  Zap,
+  Sparkles,
+  ArrowRight,
+  CheckCircle2,
 } from 'lucide-react';
 
 export const AccountsAndChainsPage: React.FC = () => {
@@ -26,10 +31,18 @@ export const AccountsAndChainsPage: React.FC = () => {
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'chains' | 'independent' | 'person' | 'unclassified'>('all');
+  const [filter, setFilter] = useState<
+    'all' | 'chains' | 'physical_store' | 'ecommerce' | 'service' | 'person' | 'unclassified' | 'independent'
+  >('all');
   const [activeTab, setActiveTab] = useState<'accounts' | 'chains'>('accounts');
   const [page, setPage] = useState(1);
   const ITEMS_PER_PAGE = 48;
+
+  // Rapid Triage Wizard State (temporary on this branch to migrate legacy independent accounts)
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingIndex, setOnboardingIndex] = useState(0);
+  const [onboardingSaving, setOnboardingSaving] = useState(false);
+  const [onboardingCompleted, setOnboardingCompleted] = useState(false);
 
   const [viewMode, setViewMode] = useState<'grid' | 'table'>(() => {
     try {
@@ -128,7 +141,8 @@ export const AccountsAndChainsPage: React.FC = () => {
       companyName: acc.company_name ?? '',
       isNew: false,
     });
-    setModalCategory(effectiveRole === 'independent' ? acc.category || null : null);
+    const supportsCategory = ['physical_store', 'ecommerce', 'service', 'independent'].includes(effectiveRole);
+    setModalCategory(supportsCategory ? acc.category || null : null);
     setClassificationError(null);
   };
 
@@ -164,7 +178,7 @@ export const AccountsAndChainsPage: React.FC = () => {
           setSavingClassification(false);
           return;
         }
-      } else if (modalRole === 'independent') {
+      } else if (['physical_store', 'ecommerce', 'service', 'independent'].includes(modalRole)) {
         category = modalCategory?.trim() || null;
       }
 
@@ -246,6 +260,73 @@ export const AccountsAndChainsPage: React.FC = () => {
     }
   };
 
+  // Legacy independent accounts to migrate
+  const legacyIndependentAccounts = useMemo(() => {
+    return accounts.filter((a) => a.role === 'independent');
+  }, [accounts]);
+
+  const currentOnboardingAccount = legacyIndependentAccounts[onboardingIndex];
+
+  // Quick triage classification for onboarding
+  const handleQuickClassify = async (targetRole: AccountRole) => {
+    if (!currentOnboardingAccount || onboardingSaving) return;
+    setOnboardingSaving(true);
+    try {
+      await api.accounts.updateMetadata(currentOnboardingAccount.id, {
+        role: targetRole,
+        company_id: null,
+        category: currentOnboardingAccount.category || null,
+      });
+
+      // Optimistically update local account role
+      setAccounts((prev) =>
+        prev.map((a) =>
+          a.id === currentOnboardingAccount.id ? { ...a, role: targetRole } : a
+        )
+      );
+
+      if (onboardingIndex + 1 < legacyIndependentAccounts.length) {
+        setOnboardingIndex((idx) => idx + 1);
+      } else {
+        setOnboardingCompleted(true);
+        await loadData();
+      }
+    } catch (err: any) {
+      alert(`Errore nel salvataggio della classificazione: ${err.message || 'Errore di rete'}`);
+    } finally {
+      setOnboardingSaving(false);
+    }
+  };
+
+  // Keyboard shortcuts listener for rapid triage wizard
+  useEffect(() => {
+    if (!onboardingOpen || onboardingCompleted || !currentOnboardingAccount) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+
+      if (e.key === '1') {
+        e.preventDefault();
+        handleQuickClassify('physical_store');
+      } else if (e.key === '2') {
+        e.preventDefault();
+        handleQuickClassify('ecommerce');
+      } else if (e.key === '3') {
+        e.preventDefault();
+        handleQuickClassify('service');
+      } else if (e.key === '4') {
+        e.preventDefault();
+        handleQuickClassify('person');
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setOnboardingOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onboardingOpen, onboardingCompleted, currentOnboardingAccount, onboardingSaving]);
+
   // Filtered Accounts
   const filteredAccounts = useMemo(() => {
     return accounts.filter((a) => {
@@ -260,9 +341,12 @@ export const AccountsAndChainsPage: React.FC = () => {
       const effectiveRole: AccountRole = a.role || (a.company_id ? 'chain' : 'unclassified');
 
       if (filter === 'chains') return effectiveRole === 'chain';
-      if (filter === 'independent') return effectiveRole === 'independent';
+      if (filter === 'physical_store') return effectiveRole === 'physical_store';
+      if (filter === 'ecommerce') return effectiveRole === 'ecommerce';
+      if (filter === 'service') return effectiveRole === 'service';
       if (filter === 'person') return effectiveRole === 'person';
       if (filter === 'unclassified') return effectiveRole === 'unclassified';
+      if (filter === 'independent') return effectiveRole === 'independent';
       return true;
     });
   }, [accounts, search, filter]);
@@ -270,19 +354,34 @@ export const AccountsAndChainsPage: React.FC = () => {
   // Counts for filter chips
   const counts = useMemo(() => {
     let chains = 0;
-    let independent = 0;
+    let physical_store = 0;
+    let ecommerce = 0;
+    let service = 0;
     let person = 0;
     let unclassified = 0;
+    let independent = 0;
 
     for (const a of accounts) {
       const effectiveRole: AccountRole = a.role || (a.company_id ? 'chain' : 'unclassified');
       if (effectiveRole === 'chain') chains++;
-      else if (effectiveRole === 'independent') independent++;
+      else if (effectiveRole === 'physical_store') physical_store++;
+      else if (effectiveRole === 'ecommerce') ecommerce++;
+      else if (effectiveRole === 'service') service++;
       else if (effectiveRole === 'person') person++;
+      else if (effectiveRole === 'independent') independent++;
       else unclassified++;
     }
 
-    return { all: accounts.length, chains, independent, person, unclassified };
+    return {
+      all: accounts.length,
+      chains,
+      physical_store,
+      ecommerce,
+      service,
+      person,
+      unclassified,
+      independent,
+    };
   }, [accounts]);
 
   const totalPages = Math.ceil(filteredAccounts.length / ITEMS_PER_PAGE) || 1;
@@ -361,6 +460,43 @@ export const AccountsAndChainsPage: React.FC = () => {
       {/* TAB 1: Expense Accounts Directory */}
       {activeTab === 'accounts' ? (
         <>
+          {/* Migration / Rapid Triage Banner for Legacy Independent Accounts */}
+          {legacyIndependentAccounts.length > 0 && (
+            <div className="mt-6 p-4 rounded-xl border border-amber-300 bg-amber-50/90 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-lg bg-amber-100 text-amber-700 shrink-0 mt-0.5">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-amber-950">
+                      Nuovi Ruoli Disponibili: {legacyIndependentAccounts.length} account da specificare
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 text-amber-900 uppercase tracking-wide">
+                      Azione Rapida
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-900/80 mt-1 leading-relaxed max-w-2xl">
+                    Specifica rapidamente se questi account sono <strong>Negozi Fisici</strong>, <strong>E-Commerce</strong> o <strong>Servizi/Utenze</strong>. Le categorie già associate (es. Farmacia, Integratori) verranno <strong>preservate al 100%</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setOnboardingIndex(0);
+                  setOnboardingCompleted(false);
+                  setOnboardingOpen(true);
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs font-semibold rounded-lg shadow-xs transition shrink-0 cursor-pointer"
+              >
+                <span>Avvia Revisione Rapida ({legacyIndependentAccounts.length})</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* Controls & Filter Bar */}
           <div className="mt-6 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
             <div className="relative flex-1 max-w-md">
@@ -394,12 +530,28 @@ export const AccountsAndChainsPage: React.FC = () => {
                   Chains ({counts.chains})
                 </button>
                 <button
-                  onClick={() => setFilter('independent')}
+                  onClick={() => setFilter('physical_store')}
                   className={`px-2.5 py-1.5 rounded-md transition ${
-                    filter === 'independent' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    filter === 'physical_store' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  Independent ({counts.independent})
+                  Physical Shops ({counts.physical_store})
+                </button>
+                <button
+                  onClick={() => setFilter('ecommerce')}
+                  className={`px-2.5 py-1.5 rounded-md transition ${
+                    filter === 'ecommerce' ? 'bg-white text-sky-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  E-Commerce ({counts.ecommerce})
+                </button>
+                <button
+                  onClick={() => setFilter('service')}
+                  className={`px-2.5 py-1.5 rounded-md transition ${
+                    filter === 'service' ? 'bg-white text-purple-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Services ({counts.service})
                 </button>
                 <button
                   onClick={() => setFilter('person')}
@@ -417,6 +569,16 @@ export const AccountsAndChainsPage: React.FC = () => {
                 >
                   Unclassified ({counts.unclassified})
                 </button>
+                {counts.independent > 0 && (
+                  <button
+                    onClick={() => setFilter('independent')}
+                    className={`px-2.5 py-1.5 rounded-md transition flex items-center gap-1 ${
+                      filter === 'independent' ? 'bg-white text-amber-900 shadow-xs' : 'text-amber-800 hover:text-amber-950 bg-amber-200/60'
+                    }`}
+                  >
+                    <span>⚠️ Da Specificare ({counts.independent})</span>
+                  </button>
+                )}
               </div>
 
               {/* Grid / Table View Switcher */}
@@ -468,8 +630,14 @@ export const AccountsAndChainsPage: React.FC = () => {
                     className={`p-4 rounded-xl border bg-white shadow-xs transition flex flex-col justify-between ${
                       effectiveRole === 'chain'
                         ? 'border-indigo-100/80 hover:border-indigo-200'
-                        : effectiveRole === 'independent'
+                        : effectiveRole === 'physical_store'
                         ? 'border-emerald-100/80 hover:border-emerald-200'
+                        : effectiveRole === 'ecommerce'
+                        ? 'border-sky-100/80 hover:border-sky-200'
+                        : effectiveRole === 'service'
+                        ? 'border-purple-100/80 hover:border-purple-200'
+                        : effectiveRole === 'independent'
+                        ? 'border-amber-200 hover:border-amber-300 bg-amber-50/20'
                         : effectiveRole === 'person'
                         ? 'border-slate-200 hover:border-slate-300'
                         : 'border-slate-200 hover:border-slate-300'
@@ -483,8 +651,14 @@ export const AccountsAndChainsPage: React.FC = () => {
                             className={`p-2 rounded-lg shrink-0 mt-0.5 ${
                               effectiveRole === 'chain'
                                 ? 'bg-indigo-50 text-indigo-600'
-                                : effectiveRole === 'independent'
+                                : effectiveRole === 'physical_store'
                                 ? 'bg-emerald-50 text-emerald-600'
+                                : effectiveRole === 'ecommerce'
+                                ? 'bg-sky-50 text-sky-600'
+                                : effectiveRole === 'service'
+                                ? 'bg-purple-50 text-purple-600'
+                                : effectiveRole === 'independent'
+                                ? 'bg-amber-100 text-amber-700'
                                 : effectiveRole === 'person'
                                 ? 'bg-slate-100 text-slate-600'
                                 : 'bg-slate-100 text-slate-400'
@@ -492,6 +666,12 @@ export const AccountsAndChainsPage: React.FC = () => {
                           >
                             {effectiveRole === 'chain' ? (
                               <Building2 className="w-4 h-4" />
+                            ) : effectiveRole === 'physical_store' ? (
+                              <Store className="w-4 h-4" />
+                            ) : effectiveRole === 'ecommerce' ? (
+                              <Globe className="w-4 h-4" />
+                            ) : effectiveRole === 'service' ? (
+                              <Zap className="w-4 h-4" />
                             ) : effectiveRole === 'independent' ? (
                               <Store className="w-4 h-4" />
                             ) : effectiveRole === 'person' ? (
@@ -547,14 +727,56 @@ export const AccountsAndChainsPage: React.FC = () => {
                             </>
                           )}
 
-                          {effectiveRole === 'independent' && (
+                          {effectiveRole === 'physical_store' && (
                             <>
                               <div className="flex items-center gap-1.5 text-emerald-700 font-medium truncate">
                                 <Store className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                                <span>Independent Shop</span>
+                                <span>Negozio Fisico</span>
                               </div>
                               {acc.category && (
                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 shrink-0">
+                                  {acc.category}
+                                </span>
+                              )}
+                            </>
+                          )}
+
+                          {effectiveRole === 'ecommerce' && (
+                            <>
+                              <div className="flex items-center gap-1.5 text-sky-700 font-medium truncate">
+                                <Globe className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                                <span>E-Commerce</span>
+                              </div>
+                              {acc.category && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-100 text-sky-800 shrink-0">
+                                  {acc.category}
+                                </span>
+                              )}
+                            </>
+                          )}
+
+                          {effectiveRole === 'service' && (
+                            <>
+                              <div className="flex items-center gap-1.5 text-purple-700 font-medium truncate">
+                                <Zap className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                                <span>Servizio / Utenza</span>
+                              </div>
+                              {acc.category && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-100 text-purple-800 shrink-0">
+                                  {acc.category}
+                                </span>
+                              )}
+                            </>
+                          )}
+
+                          {effectiveRole === 'independent' && (
+                            <>
+                              <div className="flex items-center gap-1.5 text-amber-800 font-medium truncate">
+                                <Store className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                <span>Da Specificare</span>
+                              </div>
+                              {acc.category && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-900 shrink-0">
                                   {acc.category}
                                 </span>
                               )}
@@ -585,7 +807,12 @@ export const AccountsAndChainsPage: React.FC = () => {
                     {(filter === 'all' || filter === 'chains') && (
                       <th className="py-3 px-4">{filter === 'chains' ? 'Parent Chain' : 'Chain'}</th>
                     )}
-                    {(filter === 'all' || filter === 'chains' || filter === 'independent') && (
+                    {(filter === 'all' ||
+                      filter === 'chains' ||
+                      filter === 'physical_store' ||
+                      filter === 'ecommerce' ||
+                      filter === 'service' ||
+                      filter === 'independent') && (
                       <th className="py-3 px-4">Category Tag</th>
                     )}
                     <th className="py-3 px-4 text-right">Actions</th>
@@ -604,8 +831,14 @@ export const AccountsAndChainsPage: React.FC = () => {
                               className={`p-1.5 rounded-md shrink-0 ${
                                 effectiveRole === 'chain'
                                   ? 'bg-indigo-50 text-indigo-600'
-                                  : effectiveRole === 'independent'
+                                  : effectiveRole === 'physical_store'
                                   ? 'bg-emerald-50 text-emerald-600'
+                                  : effectiveRole === 'ecommerce'
+                                  ? 'bg-sky-50 text-sky-600'
+                                  : effectiveRole === 'service'
+                                  ? 'bg-purple-50 text-purple-600'
+                                  : effectiveRole === 'independent'
+                                  ? 'bg-amber-100 text-amber-700'
                                   : effectiveRole === 'person'
                                   ? 'bg-slate-100 text-slate-600'
                                   : 'bg-slate-100 text-slate-400'
@@ -613,6 +846,12 @@ export const AccountsAndChainsPage: React.FC = () => {
                             >
                               {effectiveRole === 'chain' ? (
                                 <Building2 className="w-3.5 h-3.5" />
+                              ) : effectiveRole === 'physical_store' ? (
+                                <Store className="w-3.5 h-3.5" />
+                              ) : effectiveRole === 'ecommerce' ? (
+                                <Globe className="w-3.5 h-3.5" />
+                              ) : effectiveRole === 'service' ? (
+                                <Zap className="w-3.5 h-3.5" />
                               ) : effectiveRole === 'independent' ? (
                                 <Store className="w-3.5 h-3.5" />
                               ) : effectiveRole === 'person' ? (
@@ -643,9 +882,21 @@ export const AccountsAndChainsPage: React.FC = () => {
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200/60">
                                 Chain Branch
                               </span>
-                            ) : effectiveRole === 'independent' ? (
+                            ) : effectiveRole === 'physical_store' ? (
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                                Independent
+                                Negozio Fisico
+                              </span>
+                            ) : effectiveRole === 'ecommerce' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-sky-50 text-sky-700 border border-sky-200/60">
+                                E-Commerce
+                              </span>
+                            ) : effectiveRole === 'service' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200/60">
+                                Servizio
+                              </span>
+                            ) : effectiveRole === 'independent' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200">
+                                Da Specificare
                               </span>
                             ) : effectiveRole === 'person' ? (
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
@@ -670,14 +921,25 @@ export const AccountsAndChainsPage: React.FC = () => {
                           </td>
                         )}
 
-                        {(filter === 'all' || filter === 'chains' || filter === 'independent') && (
+                        {(filter === 'all' ||
+                          filter === 'chains' ||
+                          filter === 'physical_store' ||
+                          filter === 'ecommerce' ||
+                          filter === 'service' ||
+                          filter === 'independent') && (
                           <td className="py-3 px-4">
                             {acc.category ? (
                               <span
                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
                                   effectiveRole === 'chain'
                                     ? 'bg-indigo-50 text-indigo-700'
-                                    : 'bg-emerald-50 text-emerald-700'
+                                    : effectiveRole === 'physical_store'
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : effectiveRole === 'ecommerce'
+                                    ? 'bg-sky-50 text-sky-700'
+                                    : effectiveRole === 'service'
+                                    ? 'bg-purple-50 text-purple-700'
+                                    : 'bg-amber-50 text-amber-800'
                                 }`}
                               >
                                 <TagIcon className="w-3 h-3 opacity-70" />
@@ -851,6 +1113,12 @@ export const AccountsAndChainsPage: React.FC = () => {
                 <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600">
                   {modalRole === 'chain' ? (
                     <Building2 className="w-5 h-5" />
+                  ) : modalRole === 'physical_store' ? (
+                    <Store className="w-5 h-5" />
+                  ) : modalRole === 'ecommerce' ? (
+                    <Globe className="w-5 h-5" />
+                  ) : modalRole === 'service' ? (
+                    <Zap className="w-5 h-5" />
                   ) : modalRole === 'independent' ? (
                     <Store className="w-5 h-5" />
                   ) : modalRole === 'person' ? (
@@ -910,22 +1178,66 @@ export const AccountsAndChainsPage: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={() => setModalRole('independent')}
+                    onClick={() => setModalRole('physical_store')}
                     className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition ${
-                      modalRole === 'independent'
+                      modalRole === 'physical_store'
                         ? 'border-emerald-600 bg-emerald-50/40 text-emerald-900 ring-2 ring-emerald-500/20'
                         : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
                     }`}
                   >
                     <Store
                       className={`w-4 h-4 mt-0.5 shrink-0 ${
-                        modalRole === 'independent' ? 'text-emerald-600' : 'text-slate-400'
+                        modalRole === 'physical_store' ? 'text-emerald-600' : 'text-slate-400'
                       }`}
                     />
                     <div>
-                      <span className="font-semibold text-xs block">Independent Store</span>
+                      <span className="font-semibold text-xs block">Negozio Fisico</span>
                       <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
-                        Direct sector tag
+                        Standalone local shop
+                      </span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setModalRole('ecommerce')}
+                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition ${
+                      modalRole === 'ecommerce'
+                        ? 'border-sky-600 bg-sky-50/40 text-sky-900 ring-2 ring-sky-500/20'
+                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <Globe
+                      className={`w-4 h-4 mt-0.5 shrink-0 ${
+                        modalRole === 'ecommerce' ? 'text-sky-600' : 'text-slate-400'
+                      }`}
+                    />
+                    <div>
+                      <span className="font-semibold text-xs block">E-Commerce</span>
+                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
+                        Online store / web shop
+                      </span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setModalRole('service')}
+                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition ${
+                      modalRole === 'service'
+                        ? 'border-purple-600 bg-purple-50/40 text-purple-900 ring-2 ring-purple-500/20'
+                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <Zap
+                      className={`w-4 h-4 mt-0.5 shrink-0 ${
+                        modalRole === 'service' ? 'text-purple-600' : 'text-slate-400'
+                      }`}
+                    />
+                    <div>
+                      <span className="font-semibold text-xs block">Servizio / Utenza</span>
+                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
+                        Subscription, utility, bills
                       </span>
                     </div>
                   </button>
@@ -995,7 +1307,7 @@ export const AccountsAndChainsPage: React.FC = () => {
                 </div>
               )}
 
-              {modalRole === 'independent' && (
+              {['physical_store', 'ecommerce', 'service', 'independent'].includes(modalRole) && (
                 <div className="pt-2">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Sector Category Tag
@@ -1004,10 +1316,10 @@ export const AccountsAndChainsPage: React.FC = () => {
                     categories={categories}
                     selectedCategory={modalCategory}
                     onChange={(cat) => setModalCategory(cat)}
-                    placeholder="Search or type sector (e.g. Bakery, Pharmacy)..."
+                    placeholder="Search or type sector (e.g. Pharmacy, Supplements, Clothes, Streaming)..."
                   />
                   <p className="mt-1.5 text-[11px] text-slate-400">
-                    Direct category tag for this independent merchant or shop.
+                    Direct category tag for this account (e.g. Farmacia, Integratori, Abbigliamento, Software).
                   </p>
                 </div>
               )}
@@ -1043,6 +1355,243 @@ export const AccountsAndChainsPage: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Rapid Triage Onboarding Wizard Modal (Temporary on this branch) */}
+      {onboardingOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-100 text-amber-800">
+                  <Sparkles className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">
+                    Revisione Rapida Account
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Classificazione a 1 clic con scorciatoie da tastiera
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setOnboardingOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+                title="Chiudi (Esc)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {onboardingCompleted || legacyIndependentAccounts.length === 0 ? (
+              /* All Done State */
+              <div className="py-8 text-center space-y-4">
+                <div className="w-16 h-16 mx-auto rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <CheckCircle2 className="w-10 h-10" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">
+                    Tutto completato! 🎉
+                  </h3>
+                  <p className="text-sm text-slate-600 mt-1 max-w-md mx-auto">
+                    Tutti i tuoi account sono stati aggiornati con successo ai nuovi ruoli e le categorie esistenti sono state preservate.
+                  </p>
+                </div>
+                <div className="pt-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOnboardingOpen(false);
+                      loadData();
+                    }}
+                    className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow-xs transition"
+                  >
+                    Chiudi e torna alla pagina
+                  </button>
+                </div>
+              </div>
+            ) : currentOnboardingAccount ? (
+              /* Wizard Step */
+              <div className="mt-5 space-y-5">
+                {/* Progress bar */}
+                <div>
+                  <div className="flex justify-between items-center text-xs font-semibold text-slate-600 mb-1.5">
+                    <span>Account {onboardingIndex + 1} di {legacyIndependentAccounts.length}</span>
+                    <span>{Math.round(((onboardingIndex) / legacyIndependentAccounts.length) * 100)}%</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-amber-500 h-2 rounded-full transition-all duration-300"
+                      style={{
+                        width: `${((onboardingIndex) / legacyIndependentAccounts.length) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Account card highlight */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <span className="text-[11px] font-mono text-slate-400 block mb-0.5">
+                        #{currentOnboardingAccount.id}
+                      </span>
+                      <h3 className="text-xl font-bold text-slate-900 tracking-tight">
+                        {currentOnboardingAccount.name}
+                      </h3>
+                    </div>
+                    {currentOnboardingAccount.category && (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200/60">
+                        <TagIcon className="w-3.5 h-3.5" />
+                        <span>Categoria: {currentOnboardingAccount.category}</span>
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Scegli il tipo appropriato: la categoria attuale verrà mantenuta intatta.
+                  </p>
+                </div>
+
+                {/* Big Action Buttons Grid */}
+                <div className="grid grid-cols-2 gap-3">
+                  {/* [1] Physical Store */}
+                  <button
+                    type="button"
+                    disabled={onboardingSaving}
+                    onClick={() => handleQuickClassify('physical_store')}
+                    className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50 hover:border-emerald-400 text-left transition group cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 group-hover:bg-emerald-200 transition">
+                        <Store className="w-5 h-5" />
+                      </div>
+                      <span className="px-2 py-0.5 rounded font-mono text-xs font-bold bg-emerald-200 text-emerald-900">
+                        1
+                      </span>
+                    </div>
+                    <div className="mt-2.5">
+                      <span className="font-bold text-sm text-emerald-950 block">
+                        Negozio Fisico
+                      </span>
+                      <span className="text-[11px] text-emerald-800/80 block mt-0.5">
+                        Negozio o bottega locale
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* [2] E-Commerce */}
+                  <button
+                    type="button"
+                    disabled={onboardingSaving}
+                    onClick={() => handleQuickClassify('ecommerce')}
+                    className="p-3.5 rounded-xl border border-sky-200 bg-sky-50/40 hover:bg-sky-50 hover:border-sky-400 text-left transition group cursor-pointer focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="p-2 rounded-lg bg-sky-100 text-sky-700 group-hover:bg-sky-200 transition">
+                        <Globe className="w-5 h-5" />
+                      </div>
+                      <span className="px-2 py-0.5 rounded font-mono text-xs font-bold bg-sky-200 text-sky-900">
+                        2
+                      </span>
+                    </div>
+                    <div className="mt-2.5">
+                      <span className="font-bold text-sm text-sky-950 block">
+                        E-Commerce
+                      </span>
+                      <span className="text-[11px] text-sky-800/80 block mt-0.5">
+                        Store online o piattaforma web
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* [3] Service / Utility */}
+                  <button
+                    type="button"
+                    disabled={onboardingSaving}
+                    onClick={() => handleQuickClassify('service')}
+                    className="p-3.5 rounded-xl border border-purple-200 bg-purple-50/40 hover:bg-purple-50 hover:border-purple-400 text-left transition group cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="p-2 rounded-lg bg-purple-100 text-purple-700 group-hover:bg-purple-200 transition">
+                        <Zap className="w-5 h-5" />
+                      </div>
+                      <span className="px-2 py-0.5 rounded font-mono text-xs font-bold bg-purple-200 text-purple-900">
+                        3
+                      </span>
+                    </div>
+                    <div className="mt-2.5">
+                      <span className="font-bold text-sm text-purple-950 block">
+                        Servizio / Utenza
+                      </span>
+                      <span className="text-[11px] text-purple-800/80 block mt-0.5">
+                        Abbonamenti, software, bollette
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* [4] Person */}
+                  <button
+                    type="button"
+                    disabled={onboardingSaving}
+                    onClick={() => handleQuickClassify('person')}
+                    className="p-3.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 text-left transition group cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-400"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="p-2 rounded-lg bg-slate-100 text-slate-700 group-hover:bg-slate-200 transition">
+                        <User className="w-5 h-5" />
+                      </div>
+                      <span className="px-2 py-0.5 rounded font-mono text-xs font-bold bg-slate-200 text-slate-800">
+                        4
+                      </span>
+                    </div>
+                    <div className="mt-2.5">
+                      <span className="font-bold text-sm text-slate-900 block">
+                        Persona
+                      </span>
+                      <span className="text-[11px] text-slate-500 block mt-0.5">
+                        Contatto personale o privato
+                      </span>
+                    </div>
+                  </button>
+                </div>
+
+                {/* Footer helpers */}
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const acc = currentOnboardingAccount;
+                      setOnboardingOpen(false);
+                      openClassifyModal(acc);
+                    }}
+                    className="text-indigo-600 hover:text-indigo-800 font-medium hover:underline"
+                  >
+                    È una filiale di catena? Configura in dettaglio →
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={onboardingSaving}
+                      onClick={() => {
+                        if (onboardingIndex + 1 < legacyIndependentAccounts.length) {
+                          setOnboardingIndex((i) => i + 1);
+                        } else {
+                          setOnboardingCompleted(true);
+                        }
+                      }}
+                      className="px-3 py-1.5 text-slate-500 hover:text-slate-800 font-medium transition"
+                    >
+                      Salta
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       )}

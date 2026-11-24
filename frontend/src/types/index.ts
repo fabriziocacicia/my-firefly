@@ -1,6 +1,13 @@
 export type AppTab = 'stores' | 'accounts-and-chains' | 'catalog' | 'workflows' | 'workbench';
 
-export type AccountRole = 'unclassified' | 'person' | 'chain' | 'independent';
+export type AccountRole =
+  | 'unclassified'
+  | 'person'
+  | 'chain'
+  | 'physical_store'
+  | 'ecommerce'
+  | 'service'
+  | 'independent';
 
 export interface AccountMetadata {
   firefly_account_id: number;

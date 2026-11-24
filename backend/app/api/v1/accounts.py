@@ -100,7 +100,12 @@ def update_account_metadata(
             )
         company_id = company.id
         category = None  # inherited from company
-    elif role == AccountRole.INDEPENDENT:
+    elif role in (
+        AccountRole.PHYSICAL_STORE,
+        AccountRole.ECOMMERCE,
+        AccountRole.SERVICE,
+        AccountRole.INDEPENDENT,
+    ):
         category = (
             payload.category.strip()
             if payload.category and payload.category.strip()

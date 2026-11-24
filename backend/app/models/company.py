@@ -9,7 +9,10 @@ class AccountRole(str, Enum):
     UNCLASSIFIED = "unclassified"
     PERSON = "person"
     CHAIN = "chain"
-    INDEPENDENT = "independent"
+    PHYSICAL_STORE = "physical_store"
+    ECOMMERCE = "ecommerce"
+    SERVICE = "service"
+    INDEPENDENT = "independent"  # Legacy / transitional compatibility
 
 
 class AccountRoleType(sa.TypeDecorator):

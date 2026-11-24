@@ -21,7 +21,33 @@ class AccountMetadataModelTests(unittest.TestCase):
         self.assertEqual(AccountRole.UNCLASSIFIED.value, "unclassified")
         self.assertEqual(AccountRole.PERSON.value, "person")
         self.assertEqual(AccountRole.CHAIN.value, "chain")
+        self.assertEqual(AccountRole.PHYSICAL_STORE.value, "physical_store")
+        self.assertEqual(AccountRole.ECOMMERCE.value, "ecommerce")
+        self.assertEqual(AccountRole.SERVICE.value, "service")
         self.assertEqual(AccountRole.INDEPENDENT.value, "independent")
+
+    def test_create_ecommerce_and_physical_store_metadata(self):
+        with Session(self.engine) as session:
+            meta_ecom = AccountMetadata(
+                firefly_account_id=505,
+                role=AccountRole.ECOMMERCE,
+                category="Supplements",
+            )
+            meta_phys = AccountMetadata(
+                firefly_account_id=506,
+                role=AccountRole.PHYSICAL_STORE,
+                category="Pharmacy",
+            )
+            session.add(meta_ecom)
+            session.add(meta_phys)
+            session.commit()
+            session.refresh(meta_ecom)
+            session.refresh(meta_phys)
+
+            self.assertEqual(meta_ecom.role, AccountRole.ECOMMERCE)
+            self.assertEqual(meta_ecom.category, "Supplements")
+            self.assertEqual(meta_phys.role, AccountRole.PHYSICAL_STORE)
+            self.assertEqual(meta_phys.category, "Pharmacy")
 
     def test_create_unclassified_account_metadata_defaults(self):
         with Session(self.engine) as session:

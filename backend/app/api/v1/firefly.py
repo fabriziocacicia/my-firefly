@@ -125,7 +125,12 @@ async def list_expense_accounts(session: Session = Depends(get_session)):
                     company_name = meta.company.name
                     category = meta.company.default_category
                     is_inherited = bool(meta.company.default_category)
-                elif meta.role == AccountRole.INDEPENDENT:
+                elif meta.role in (
+                    AccountRole.PHYSICAL_STORE,
+                    AccountRole.ECOMMERCE,
+                    AccountRole.SERVICE,
+                    AccountRole.INDEPENDENT,
+                ):
                     category = meta.category
                     is_inherited = False
             elif link:
@@ -197,7 +202,12 @@ async def get_expense_account(
             company_name = meta.company.name
             category = meta.company.default_category
             is_inherited = bool(meta.company.default_category)
-        elif meta.role == AccountRole.INDEPENDENT:
+        elif meta.role in (
+            AccountRole.PHYSICAL_STORE,
+            AccountRole.ECOMMERCE,
+            AccountRole.SERVICE,
+            AccountRole.INDEPENDENT,
+        ):
             category = meta.category
             is_inherited = False
     elif link:
