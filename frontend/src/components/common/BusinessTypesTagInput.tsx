@@ -51,14 +51,23 @@ export const BusinessTypesTagInput: React.FC<BusinessTypesTagInputProps> = ({
     }
   };
 
-  // Merge common business types + any other types already used
-  const combinedSuggestions = Array.from(
-    new Set([...COMMON_BUSINESS_TYPES, ...allAvailableTypes])
-  ).filter(
-    (t) =>
-      !cleanValue.some((v) => v.trim().toLowerCase() === t.trim().toLowerCase()) &&
-      !normalizedInherited.includes(t.trim().toLowerCase())
-  );
+  // Merge common business types + any other types already used (case-insensitive deduplication)
+  const seenSuggestions = new Set<string>();
+  const combinedSuggestions: string[] = [];
+  for (const rawType of [...COMMON_BUSINESS_TYPES, ...allAvailableTypes]) {
+    const clean = rawType.trim();
+    if (!clean) continue;
+    const lower = clean.toLowerCase();
+    if (
+      seenSuggestions.has(lower) ||
+      normalizedInherited.includes(lower) ||
+      cleanValue.some((v) => v.trim().toLowerCase() === lower)
+    ) {
+      continue;
+    }
+    seenSuggestions.add(lower);
+    combinedSuggestions.push(clean);
+  }
 
   const filteredSuggestions = inputVal.trim()
     ? combinedSuggestions.filter((t) =>

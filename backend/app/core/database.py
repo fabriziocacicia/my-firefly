@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
@@ -80,8 +81,10 @@ def auto_migrate_sqlite_columns(target_engine=engine):
                 )
 
             conn.connection.commit()
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "auto_migrate_sqlite_columns failed: %s", exc
+            )
         finally:
             cursor.close()
 

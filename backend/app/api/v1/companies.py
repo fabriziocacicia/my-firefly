@@ -16,6 +16,10 @@ from app.models.company import (
     AccountCompanyAssign,
 )
 from app.models.account_metadata import AccountMetadata, AccountRole
+from app.services.classification import (
+    get_company_business_types,
+    normalize_business_types,
+)
 from app.services.firefly import firefly_client
 
 router = APIRouter(prefix="/companies", tags=["Companies"])
@@ -48,7 +52,7 @@ def get_companies(session: Session = Depends(get_session)):
             id=company.id,
             name=company.name,
             default_category=company.default_category,
-            business_types=company.business_types if company.business_types else ([company.default_category] if company.default_category else []),
+            business_types=get_company_business_types(company),
             notes=company.notes,
             created_at=company.created_at,
             store_count=count,
@@ -76,7 +80,7 @@ def create_company(
             status_code=400, detail=f"Company '{clean_name}' already exists"
         )
 
-    btypes = company_in.business_types or []
+    btypes = normalize_business_types(company_in.business_types)
     if not btypes and company_in.default_category and company_in.default_category.strip():
         btypes = [company_in.default_category.strip()]
 
@@ -134,7 +138,7 @@ def update_company(
         company.default_category = None
 
     if company_update.business_types is not None:
-        company.business_types = company_update.business_types
+        company.business_types = normalize_business_types(company_update.business_types)
 
     if company_update.notes is not None:
         company.notes = (

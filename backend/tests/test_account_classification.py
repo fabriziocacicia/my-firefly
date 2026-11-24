@@ -53,8 +53,15 @@ class AccountClassificationApiTests(unittest.TestCase):
                 role=AccountRole.INDEPENDENT,
                 category="supermarket",
             )
+            # Legacy leftover category on a chain account (must be ignored)
+            meta3 = AccountMetadata(
+                firefly_account_id=3,
+                role=AccountRole.CHAIN,
+                category="LegacyGhost",
+            )
             session.add(meta1)
             session.add(meta2)
+            session.add(meta3)
             session.commit()
 
         res = self.client.get("/api/v1/categories")
@@ -105,7 +112,7 @@ class AccountClassificationApiTests(unittest.TestCase):
     def test_update_account_metadata_local_business_multi_types(self):
         payload = {
             "role": "local_business",
-            "business_types": ["Bar/Cafe", "Tobacconist"],
+            "business_types": [" Bar/Cafe ", "bar/cafe", "Tobacconist", "   "],
             "category": "Food & Drink",
             "notes": "Bar and tobacconist shop",
         }

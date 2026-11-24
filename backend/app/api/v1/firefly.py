@@ -5,6 +5,10 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 from app.core.database import get_session
 from app.services.firefly import firefly_client
+from app.services.classification import (
+    ResolvedAccountClassification,
+    resolve_account_classification,
+)
 from app.models.company import CompanyAccountLink
 from app.models.account_metadata import AccountMetadata, AccountRole
 
@@ -82,6 +86,26 @@ async def search_expense_accounts(
         raise HTTPException(status_code=502, detail=f"Firefly search error: {str(e)}")
 
 
+def _build_expense_account(
+    acc_id: int,
+    attr: dict,
+    resolved: ResolvedAccountClassification,
+) -> FireflyExpenseAccount:
+    return FireflyExpenseAccount(
+        id=acc_id,
+        name=attr.get("name", f"Account #{acc_id}"),
+        active=bool(attr.get("active", True)),
+        role=resolved.role,
+        category=resolved.category,
+        is_inherited_category=resolved.is_inherited_category,
+        business_types=resolved.business_types,
+        inherited_business_types=resolved.inherited_business_types,
+        effective_business_types=resolved.effective_business_types,
+        company_id=resolved.company_id,
+        company_name=resolved.company_name,
+    )
+
+
 @router.get(
     "/expense-accounts",
     response_model=List[FireflyExpenseAccount],
@@ -112,80 +136,11 @@ async def list_expense_accounts(session: Session = Depends(get_session)):
         try:
             acc_id = int(acc.get("id"))
             attr = acc.get("attributes", {})
-            meta = meta_map.get(acc_id)
-            link = link_map.get(acc_id)
-
-            role = AccountRole.UNCLASSIFIED
-            category = None
-            is_inherited = False
-            company_id = None
-            company_name = None
-            inherited_business_types: List[str] = []
-            local_business_types: List[str] = meta.business_types or [] if meta else []
-            effective_business_types: List[str] = []
-
-            if meta:
-                role = meta.role
-                if meta.role == AccountRole.CHAIN and meta.company:
-                    company_id = meta.company_id
-                    company_name = meta.company.name
-                    category = None  # Chains use business_types, not category tags
-                    is_inherited = False
-                    inherited_business_types = meta.company.business_types or []
-                    if not inherited_business_types and meta.company.default_category:
-                        inherited_business_types = [meta.company.default_category]
-                    inherited_lower = {t.strip().lower() for t in inherited_business_types}
-                    local_business_types = [
-                        t.strip()
-                        for t in local_business_types
-                        if t.strip() and t.strip().lower() not in inherited_lower
-                    ]
-                    effective_business_types = inherited_business_types + local_business_types
-                elif meta.role in (
-                    AccountRole.LOCAL_BUSINESS,
-                    AccountRole.PHYSICAL_STORE,
-                    AccountRole.INDEPENDENT,
-                ):
-                    category = meta.category
-                    is_inherited = False
-                    effective_business_types = local_business_types
-                elif meta.role in (AccountRole.ECOMMERCE, AccountRole.SERVICE):
-                    category = meta.category
-                    is_inherited = False
-                    local_business_types = []
-                    effective_business_types = []
-                else:
-                    category = None
-                    is_inherited = False
-                    local_business_types = []
-                    effective_business_types = []
-            elif link:
-                role = AccountRole.CHAIN
-                company_id = link.company_id
-                company_name = link.company.name if link.company else None
-                category = None
-                is_inherited = False
-                if link.company:
-                    inherited_business_types = link.company.business_types or []
-                    if not inherited_business_types and link.company.default_category:
-                        inherited_business_types = [link.company.default_category]
-                effective_business_types = inherited_business_types
-
-            results.append(
-                FireflyExpenseAccount(
-                    id=acc_id,
-                    name=attr.get("name", f"Account #{acc_id}"),
-                    active=bool(attr.get("active", True)),
-                    role=role,
-                    category=category,
-                    is_inherited_category=is_inherited,
-                    business_types=local_business_types,
-                    inherited_business_types=inherited_business_types,
-                    effective_business_types=effective_business_types,
-                    company_id=company_id,
-                    company_name=company_name,
-                )
+            resolved = resolve_account_classification(
+                meta_map.get(acc_id),
+                link_map.get(acc_id),
             )
+            results.append(_build_expense_account(acc_id, attr, resolved))
         except (ValueError, TypeError):
             continue
     return results
@@ -223,75 +178,8 @@ async def get_expense_account(
         .options(selectinload(CompanyAccountLink.company))
     ).first()
 
-    role = AccountRole.UNCLASSIFIED
-    category = None
-    is_inherited = False
-    company_id = None
-    company_name = None
-    inherited_business_types: List[str] = []
-    local_business_types: List[str] = meta.business_types or [] if meta else []
-    effective_business_types: List[str] = []
-
-    if meta:
-        role = meta.role
-        if meta.role == AccountRole.CHAIN and meta.company:
-            company_id = meta.company_id
-            company_name = meta.company.name
-            category = None
-            is_inherited = False
-            inherited_business_types = meta.company.business_types or []
-            if not inherited_business_types and meta.company.default_category:
-                inherited_business_types = [meta.company.default_category]
-            inherited_lower = {t.strip().lower() for t in inherited_business_types}
-            local_business_types = [
-                t.strip()
-                for t in local_business_types
-                if t.strip() and t.strip().lower() not in inherited_lower
-            ]
-            effective_business_types = inherited_business_types + local_business_types
-        elif meta.role in (
-            AccountRole.LOCAL_BUSINESS,
-            AccountRole.PHYSICAL_STORE,
-            AccountRole.INDEPENDENT,
-        ):
-            category = meta.category
-            is_inherited = False
-            effective_business_types = local_business_types
-        elif meta.role in (AccountRole.ECOMMERCE, AccountRole.SERVICE):
-            category = meta.category
-            is_inherited = False
-            local_business_types = []
-            effective_business_types = []
-        else:
-            category = None
-            is_inherited = False
-            local_business_types = []
-            effective_business_types = []
-    elif link:
-        role = AccountRole.CHAIN
-        company_id = link.company_id
-        company_name = link.company.name if link.company else None
-        category = None
-        is_inherited = False
-        if link.company:
-            inherited_business_types = link.company.business_types or []
-            if not inherited_business_types and link.company.default_category:
-                inherited_business_types = [link.company.default_category]
-        effective_business_types = inherited_business_types
-
-    return FireflyExpenseAccount(
-        id=account_id,
-        name=attr.get("name", f"Account #{account_id}"),
-        active=bool(attr.get("active", True)),
-        role=role,
-        category=category,
-        is_inherited_category=is_inherited,
-        business_types=local_business_types,
-        inherited_business_types=inherited_business_types,
-        effective_business_types=effective_business_types,
-        company_id=company_id,
-        company_name=company_name,
-    )
+    resolved = resolve_account_classification(meta, link)
+    return _build_expense_account(account_id, attr, resolved)
 
 
 @router.get("/asset-accounts")
