@@ -750,7 +750,7 @@ export const AccountsAndChainsPage: React.FC = () => {
                           {effectiveRole === 'person' && (
                             <div className="flex items-center gap-1.5 text-slate-500 truncate">
                               <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                              <span>Personal Contact</span>
+                              <span>Person</span>
                             </div>
                           )}
                         </div>
@@ -1244,7 +1244,7 @@ export const AccountsAndChainsPage: React.FC = () => {
                       }`}
                     />
                     <div>
-                      <span className="font-semibold text-xs block">Personal Contact</span>
+                      <span className="font-semibold text-xs block">Person</span>
                       <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
                         Individual peer
                       </span>
@@ -1361,7 +1361,7 @@ export const AccountsAndChainsPage: React.FC = () => {
               {modalRole === 'person' && (
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 flex items-center gap-2">
                   <User className="w-4 h-4 text-slate-500 shrink-0" />
-                  <span>Marked as a personal contact. Excluded from retail chain and business type categorization.</span>
+                  <span>Marked as a person. Excluded from retail chain and business type categorization.</span>
                 </div>
               )}
 
