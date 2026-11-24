@@ -68,9 +68,13 @@ def get_account_metadata(
         inherited_business_types = company.business_types or []
         if not inherited_business_types and company.default_category:
             inherited_business_types = [company.default_category]
-        effective_business_types = list(
-            dict.fromkeys(inherited_business_types + local_business_types)
-        )
+        inherited_lower = {t.strip().lower() for t in inherited_business_types}
+        local_business_types = [
+            t.strip()
+            for t in local_business_types
+            if t.strip() and t.strip().lower() not in inherited_lower
+        ]
+        effective_business_types = inherited_business_types + local_business_types
     elif meta.role in (
         AccountRole.LOCAL_BUSINESS,
         AccountRole.PHYSICAL_STORE,
@@ -132,7 +136,16 @@ def update_account_metadata(
             )
         company_id = company.id
         category = None  # inherited from company
-        business_types = payload.business_types or []
+        # Purge any local business types already provided by the parent chain
+        inherited = company.business_types or []
+        if not inherited and company.default_category:
+            inherited = [company.default_category]
+        inherited_lower = {t.strip().lower() for t in inherited}
+        business_types = [
+            t.strip()
+            for t in (payload.business_types or [])
+            if t.strip() and t.strip().lower() not in inherited_lower
+        ]
     elif role in (
         AccountRole.LOCAL_BUSINESS,
         AccountRole.PHYSICAL_STORE,

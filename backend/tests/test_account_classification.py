@@ -137,6 +137,38 @@ class AccountClassificationApiTests(unittest.TestCase):
             ["Gas Station", "Bar/Cafe", "Carwash"],
         )
 
+    def test_update_chain_account_metadata_strips_duplicate_inherited_types(self):
+        """
+        Regression test: Verify that if a payload attempts to add a business type
+        that is already inherited from the parent chain (e.g. 'Fast Food' on Burger King),
+        the backend automatically purges the duplicate from the branch's business_types.
+        """
+        with Session(self.engine) as session:
+            comp = Company(
+                name="Burger King",
+                default_category="Fast Food",
+                business_types=["Fast Food"],
+            )
+            session.add(comp)
+            session.commit()
+            session.refresh(comp)
+            comp_id = comp.id
+
+        payload = {
+            "role": "chain",
+            "company_id": comp_id,
+            "business_types": ["Fast Food", "Drive-thru", "fast food"],
+        }
+        res = self.client.put("/api/v1/accounts/103/metadata", json=payload)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["role"], "chain")
+        self.assertEqual(data["inherited_business_types"], ["Fast Food"])
+        # 'Fast Food' must not be in local business_types because it's already inherited
+        self.assertEqual(data["business_types"], ["Drive-thru"])
+        # effective_business_types contains each type exactly once
+        self.assertEqual(data["effective_business_types"], ["Fast Food", "Drive-thru"])
+
     def test_update_account_metadata_chain_requires_valid_company(self):
         # Missing company_id
         res = self.client.put(

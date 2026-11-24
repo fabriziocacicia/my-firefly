@@ -19,17 +19,29 @@ export const BusinessTypesTagInput: React.FC<BusinessTypesTagInputProps> = ({
 }) => {
   const [inputVal, setInputVal] = useState('');
 
+  // Normalized list of inherited types (lowercase, trimmed)
+  const normalizedInherited = inheritedTypes.map((t) => t.trim().toLowerCase());
+
+  // Clean value: never display or contain any type that is already inherited from parent chain
+  const cleanValue = value.filter(
+    (t) => !normalizedInherited.includes(t.trim().toLowerCase())
+  );
+
   const handleAdd = (typeToAdd: string) => {
     const clean = typeToAdd.trim();
     if (!clean) return;
-    if (!value.includes(clean) && !inheritedTypes.includes(clean)) {
-      onChange([...value, clean]);
+    const cleanLower = clean.toLowerCase();
+    const alreadyInInherited = normalizedInherited.includes(cleanLower);
+    const alreadyInValue = cleanValue.some((v) => v.trim().toLowerCase() === cleanLower);
+
+    if (!alreadyInInherited && !alreadyInValue) {
+      onChange([...cleanValue, clean]);
     }
     setInputVal('');
   };
 
   const handleRemove = (typeToRemove: string) => {
-    onChange(value.filter((t) => t !== typeToRemove));
+    onChange(cleanValue.filter((t) => t.trim().toLowerCase() !== typeToRemove.trim().toLowerCase()));
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -42,7 +54,11 @@ export const BusinessTypesTagInput: React.FC<BusinessTypesTagInputProps> = ({
   // Merge common business types + any other types already used
   const combinedSuggestions = Array.from(
     new Set([...COMMON_BUSINESS_TYPES, ...allAvailableTypes])
-  ).filter((t) => !value.includes(t) && !inheritedTypes.includes(t));
+  ).filter(
+    (t) =>
+      !cleanValue.some((v) => v.trim().toLowerCase() === t.trim().toLowerCase()) &&
+      !normalizedInherited.includes(t.trim().toLowerCase())
+  );
 
   const filteredSuggestions = inputVal.trim()
     ? combinedSuggestions.filter((t) =>
@@ -54,20 +70,20 @@ export const BusinessTypesTagInput: React.FC<BusinessTypesTagInputProps> = ({
     <div className="space-y-2">
       {/* Tags Container */}
       <div className="p-2 border border-slate-300 rounded-xl bg-white focus-within:ring-2 focus-within:ring-emerald-500 focus-within:border-emerald-500 transition min-h-[46px] flex flex-wrap items-center gap-1.5">
-        {/* Inherited Types (Read-only) */}
+        {/* Inherited Types (Read-only from chain) */}
         {inheritedTypes.map((t) => (
           <span
             key={`inherited-${t}`}
             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/70 shadow-2xs"
-            title="Inherited from parent retail chain"
+            title="Inherited from parent retail chain (cannot be duplicated)"
           >
             <span className="text-[10px] uppercase tracking-wider text-indigo-500 font-bold">Chain:</span>
             {t}
           </span>
         ))}
 
-        {/* Selected Local Types */}
-        {value.map((t) => (
+        {/* Selected Local Types (deduplicated against inherited types) */}
+        {cleanValue.map((t) => (
           <span
             key={t}
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200/80 shadow-2xs animate-in fade-in"
@@ -77,7 +93,7 @@ export const BusinessTypesTagInput: React.FC<BusinessTypesTagInputProps> = ({
             <button
               type="button"
               onClick={() => handleRemove(t)}
-              className="text-emerald-600 hover:text-emerald-950 p-0.5 rounded-full hover:bg-emerald-200/60 transition"
+              className="text-emerald-600 hover:text-emerald-950 p-0.5 rounded-full hover:bg-emerald-200/60 transition cursor-pointer"
               title={`Remove ${t}`}
             >
               <X className="w-3 h-3" />
@@ -91,7 +107,7 @@ export const BusinessTypesTagInput: React.FC<BusinessTypesTagInputProps> = ({
           value={inputVal}
           onChange={(e) => setInputVal(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={value.length === 0 && inheritedTypes.length === 0 ? placeholder : 'Add more...'}
+          placeholder={cleanValue.length === 0 && inheritedTypes.length === 0 ? placeholder : 'Add more...'}
           className="flex-1 min-w-[140px] px-2 py-1 text-xs text-slate-800 bg-transparent border-none outline-none focus:ring-0 placeholder:text-slate-400"
         />
       </div>

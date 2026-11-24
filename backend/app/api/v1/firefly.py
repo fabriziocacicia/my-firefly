@@ -134,9 +134,13 @@ async def list_expense_accounts(session: Session = Depends(get_session)):
                     inherited_business_types = meta.company.business_types or []
                     if not inherited_business_types and meta.company.default_category:
                         inherited_business_types = [meta.company.default_category]
-                    effective_business_types = list(
-                        dict.fromkeys(inherited_business_types + local_business_types)
-                    )
+                    inherited_lower = {t.strip().lower() for t in inherited_business_types}
+                    local_business_types = [
+                        t.strip()
+                        for t in local_business_types
+                        if t.strip() and t.strip().lower() not in inherited_lower
+                    ]
+                    effective_business_types = inherited_business_types + local_business_types
                 elif meta.role in (
                     AccountRole.LOCAL_BUSINESS,
                     AccountRole.PHYSICAL_STORE,
@@ -238,9 +242,13 @@ async def get_expense_account(
             inherited_business_types = meta.company.business_types or []
             if not inherited_business_types and meta.company.default_category:
                 inherited_business_types = [meta.company.default_category]
-            effective_business_types = list(
-                dict.fromkeys(inherited_business_types + local_business_types)
-            )
+            inherited_lower = {t.strip().lower() for t in inherited_business_types}
+            local_business_types = [
+                t.strip()
+                for t in local_business_types
+                if t.strip() and t.strip().lower() not in inherited_lower
+            ]
+            effective_business_types = inherited_business_types + local_business_types
         elif meta.role in (
             AccountRole.LOCAL_BUSINESS,
             AccountRole.PHYSICAL_STORE,

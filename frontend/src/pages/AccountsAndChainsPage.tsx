@@ -154,7 +154,19 @@ export const AccountsAndChainsPage: React.FC = () => {
     });
     const supportsCategory = ['local_business', 'ecommerce', 'service'].includes(effectiveRole);
     setModalCategory(supportsCategory ? acc.category || null : null);
-    setModalBusinessTypes(acc.business_types || []);
+
+    // Strip any business types already inherited from parent chain
+    const rawBusinessTypes = acc.business_types || [];
+    if (effectiveRole === 'chain') {
+      const comp = companies.find((c) => c.id === acc.company_id);
+      const inherited = comp?.business_types?.length
+        ? comp.business_types
+        : (comp?.default_category ? [comp.default_category] : (acc.inherited_business_types || []));
+      const inheritedLower = new Set(inherited.map((t) => t.trim().toLowerCase()));
+      setModalBusinessTypes(rawBusinessTypes.filter((t) => !inheritedLower.has(t.trim().toLowerCase())));
+    } else {
+      setModalBusinessTypes(rawBusinessTypes);
+    }
     setClassificationError(null);
   };
 
@@ -183,8 +195,13 @@ export const AccountsAndChainsPage: React.FC = () => {
             business_types: modalBusinessTypes.length > 0 ? modalBusinessTypes : undefined,
           });
           companyId = created.id;
+          // The new chain owns these business_types, branch inherits them and does not duplicate
+          businessTypes = [];
         } else {
           companyId = modalCompanySelection.companyId ?? null;
+          // Purge any types already inherited from the selected chain
+          const inheritedLower = new Set(chainInheritedTypes.map((t) => t.trim().toLowerCase()));
+          businessTypes = modalBusinessTypes.filter((t) => !inheritedLower.has(t.trim().toLowerCase()));
         }
 
         if (!companyId) {
@@ -192,9 +209,6 @@ export const AccountsAndChainsPage: React.FC = () => {
           setSavingClassification(false);
           return;
         }
-
-        // Branch-specific business types
-        businessTypes = modalBusinessTypes;
       } else if (modalRole === 'local_business') {
         category = modalCategory?.trim() || null;
         businessTypes = modalBusinessTypes;
@@ -248,17 +262,18 @@ export const AccountsAndChainsPage: React.FC = () => {
     setSavingCompany(true);
     setCompanyError(null);
     try {
+      const defaultCategory = compFormBusinessTypes.length > 0 ? compFormBusinessTypes[0] : undefined;
       if (editingCompany) {
         await api.companies.update(editingCompany.id, {
           name: compFormName.trim(),
-          default_category: compFormCategory?.trim() || undefined,
+          default_category: defaultCategory,
           business_types: compFormBusinessTypes,
           notes: compFormNotes.trim() || undefined,
         });
       } else {
         await api.companies.create({
           name: compFormName.trim(),
-          default_category: compFormCategory?.trim() || undefined,
+          default_category: defaultCategory,
           business_types: compFormBusinessTypes,
           notes: compFormNotes.trim() || undefined,
         });
@@ -366,6 +381,16 @@ export const AccountsAndChainsPage: React.FC = () => {
     }
     return [];
   }, [selectedChainCompany]);
+
+  // Ensure modalBusinessTypes never duplicates types inherited from the selected chain
+  useEffect(() => {
+    if (modalRole === 'chain' && chainInheritedTypes.length > 0) {
+      const inheritedLower = new Set(chainInheritedTypes.map((t) => t.trim().toLowerCase()));
+      setModalBusinessTypes((prev) =>
+        prev.filter((t) => !inheritedLower.has(t.trim().toLowerCase()))
+      );
+    }
+  }, [modalRole, chainInheritedTypes]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -1448,18 +1473,6 @@ export const AccountsAndChainsPage: React.FC = () => {
                 <p className="mt-1 text-[11px] text-slate-400">
                   All branches linked to this chain will automatically inherit these business types.
                 </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Sector Category Tag (Optional)
-                </label>
-                <CategoryCombobox
-                  categories={categories}
-                  selectedCategory={compFormCategory}
-                  onChange={(cat) => setCompFormCategory(cat)}
-                  placeholder="Search or create sector (e.g. Supermarket, Fuel)..."
-                />
               </div>
 
               <div>
