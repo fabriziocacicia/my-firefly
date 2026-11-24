@@ -12,10 +12,11 @@ A companion web application for **Firefly III** to track SKU-level product price
    - Built-in receipt image attachment preview and local draft autosave in browser storage.
    - 1-click push to Firefly III split transactions with optional meal voucher splits.
 
-2. **Accounts & Chains (Classification & Custom Categories)**:
+2. **Accounts & Chains (Classification, Multi-Types & Sector Tagging)**:
    - Instant live lookup and autocomplete across all Firefly III expense accounts without upfront manual mapping.
-   - Classify accounts by role (`Chain Branch`, `Independent Store`, `Person`, `Unclassified`).
-   - Group retail branches under parent chains (`Acqua e Sapone`, `Conad`, `Lidl`, `MD`, `Eni`) and tag sectors with custom categories on the fly.
+   - Classify accounts by role (`Local Business`, `Chain Branch`, `E-Commerce`, `Service`, `Person`, `Unclassified`).
+   - Multi-type business modeling (`business_types` array, e.g. `[Bar/Cafe, Tobacconist]`) with automatic retail chain branch inheritance.
+   - Sector category tagging (`category`) with zero-maintenance dynamic garbage collection (disappears automatically when unused).
 
 3. **Products, Brands & Price Intelligence**:
    - Track products with brands, package sizes, and multi-dimensional tags (e.g. `[Food, Pasta, Organic]`, `[Fruit, Bio]`).
@@ -62,12 +63,13 @@ my-firefly/
 
 ## 📖 Architecture & Design Specifications
 
-All significant architecture decisions, domain models, and RFCs are maintained in [`docs/designs/`](docs/designs/):
+All significant architecture decisions, domain models, and RFCs are maintained in [`docs/designs/`](docs/designs/) and [`docs/decisions/`](docs/decisions/):
 
 - [Design Documents Sitemap](docs/designs/SITEMAP.md)
 - [Receipt Workbench & Price Analytics](docs/designs/receipt_workbench_and_price_analytics.md)
 - [Live Firefly Store Lookup & Optional Companies](docs/designs/live_firefly_stores_and_optional_company.md)
 - [Expense Account Classification & Category Tagging](docs/designs/expense_account_classification_and_category_tagging.md)
+- [ADR-001: Multi-Type Business Modeling and Dynamic Category Tagging](docs/decisions/ADR-001-multi-type-business-modeling-and-dynamic-categories.md)
 
 ---
 

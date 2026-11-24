@@ -1,19 +1,20 @@
 # Accounts & Chains: Expense Account Classification & Category Tagging
 
 *   **Author:** Fabrizio & Antigravity
-*   **Status:** Proposed (Under Review)
-*   **Date:** 2026-11-23
+*   **Status:** Accepted (Implemented)
+*   **Date:** 2026-11-24
 *   **Issue:** [#13](https://github.com/fabriziocacicia/my-firefly/issues/13)
 
 --------------------------------------------------------------------------------
 
 ## 1. Overview
 
-`my-firefly` is a companion application for Firefly III that handles itemized grocery receipts, split transactions, and product price tracking. Today, all 290+ expense accounts fetched from Firefly III are displayed in a flat list on the `Stores` page. While accounts can optionally be linked to a parent `Company` (e.g. `Conad Via Roma` → `Conad`), there is no mechanism to:
-1. Classify the nature of an expense account (Chain Branch, Independent Business, or personal contact such as a Person).
-2. Assign merchant category tags (e.g. `Supermarket`, `Pharmacy`, `Gas Station`, `Utility`) to parent chains or independent businesses for downstream spending analytics.
+`my-firefly` is a companion application for Firefly III that handles itemized grocery receipts, split transactions, and product price tracking. All 290+ expense accounts fetched from Firefly III are managed via the dedicated hub: **`Accounts & Chains`**, featuring two tabs (`Expense Accounts` and `Chains`).
 
-This design introduces a **Lean Account Classification & Category Tagging** system. It unifies account triage and chain management under a single, accurately titled hub: **`Accounts & Chains`**, featuring two dedicated tabs (`Expense Accounts` and `Chains`). Accounts default safely to `Unclassified` with zero upfront configuration required, while categories are created entirely on the fly via a clean-slate type-ahead combobox.
+This specification defines the **Expense Account Classification, Multi-Type Business Modeling & Dynamic Category Tagging** system:
+1. **Six-Role Classification:** Expense accounts are classified as `Local Business`, `Chain Branch`, `E-Commerce`, `Service`, `Person`, or `Unclassified`.
+2. **Multi-Type Business Modeling (`business_types`):** Physical shops and retail chains can hold multiple activity types (e.g. `[Bar/Cafe, Tobacconist]`). Retail chain branches automatically inherit their parent chain's business types and can extend them with branch-specific types.
+3. **Sector Tagging with Dynamic Garbage Collection (`category`):** E-Commerce and Digital Services are tagged with a merchandise or service sector (optional on Local Businesses). Chains rely strictly on `business_types`. If a category tag is unassigned from all accounts, it is automatically removed and never suggested again (zero administrative overhead).
 
 ---
 
@@ -29,17 +30,17 @@ This design introduces a **Lean Account Classification & Category Tagging** syst
 ## 3. Goals & Non-Goals
 
 ### Goals
-*   **G1: Clean Account Nature Classification:** Enable each Firefly expense account to be designated with a role:
+*   **G1: Six-Role Account Classification:** Enable each Firefly expense account to be designated with an accurate role:
     *   `Unclassified` (Default: zero SQLite rows needed, zero breakage).
-    *   `Person`: Personal contact (friend, family, roommate); excluded from merchant category tagging.
-    *   `Chain Branch`: Branch belonging to a parent retail chain; inherits the chain's category tag.
-    *   `Independent Business`: Standalone business; holds its own category tag directly without needing a dummy `Company` record.
-*   **G2: On-the-Fly, Clean-Slate Category Tagging:** Provide a type-ahead combobox for category assignment that starts with zero hardcoded presets and dynamically suggests existing user-created categories as the user types.
-*   **G3: Accurate Page Architecture (`Accounts & Chains`):** Replace the old `Stores` navigation item and page with `Accounts & Chains`, cleanly separated into two tabs:
-    *   **Tab 1 (`Expense Accounts`):** Live Firefly expense accounts with fast inline triage and filtering.
-    *   **Tab 2 (`Chains`):** Parent retail chains table with category management and linked store counts.
-*   **G4: Seamless Category Inheritance:** When a parent chain's category is updated, all linked branches immediately inherit and reflect the new category across all queries.
-*   **G5: Non-Destructive Progressive Migration:** Existing `CompanyAccountLink` records automatically migrate to `AccountMetadata` rows with `role = 'chain'`. Unclassified accounts require zero database rows.
+    *   `Person`: Physical peer or personal contact (friend, family); excluded from commercial tags.
+    *   `Local Business`: Standalone physical venue; supports multiple `business_types` (e.g. `[Bar/Cafe, Tobacconist]`) and an optional sector category tag.
+    *   `Chain Branch`: Branch belonging to a parent retail chain; inherits the chain's `business_types` and can add branch-specific local types.
+    *   `E-Commerce`: Online shopping platform; supports a dedicated sector category tag (e.g. `Electronics`, `Supplements`).
+    *   `Service`: Digital subscription or service provider (e.g. `Streaming`, `Hosting`).
+*   **G2: Multi-Type Business Modeling (`business_types`):** Support array of string tags describing activities of physical shops and chains, with branch inheritance and deduplication.
+*   **G3: Zero-Maintenance Category Tagging with Dynamic Cleanup:** Provide a type-ahead combobox for sector categories (`category`). Unassigned categories are automatically removed from suggestions and database queries (no manual category management needed).
+*   **G4: Accurate Hub Architecture (`Accounts & Chains`):** Two dedicated tabs (`Expense Accounts` and `Chains`) with Quiet Cards (Grid) and High-Density Table views.
+*   **G5: Non-Destructive Progressive Migration:** Existing `CompanyAccountLink` records automatically migrate to `AccountMetadata`. Legacy `default_category` strings on chains are safely migrated to `business_types` via Alembic migration `0007`.
 
 ### Non-Goals
 *   **NG1: Spending Analytics & Charts:** Building aggregation charts, monthly totals, or reporting dashboards by category is deferred to a follow-up feature.
@@ -56,20 +57,20 @@ This design introduces a **Lean Account Classification & Category Tagging** syst
 *   **When:** The user navigates to the `Expense Accounts` tab.
 *   **Then:** All accounts are loaded cleanly. Unclassified accounts show a neutral `[ Unclassified ▾ ]` role badge with zero errors. The user clicks the selector on `Alice`, picks `Person`, and it instantly updates to a subtle gray `[ 👤 Person ]` badge.
 
-### CUJ 2: Tagging an Independent Merchant
-*   **Given:** The user sees a standalone local shop `Panificio Rossi`.
-*   **When:** The user sets the role to `Independent Business`.
-*   **Then:** An inline category combobox appears. The user types `"Bak..."`, sees no existing tag, types `"Bakery"`, and presses Enter to create and assign it. The account now holds `category = "Bakery"` directly in `AccountMetadata` without creating a row in the `Company` table.
+### CUJ 2: Tagging a Local Business with Multiple Types
+*   **Given:** The user sees a local shop `Bar Tabacchi Centrale`.
+*   **When:** The user sets the role to `Local Business` and adds types `Bar/Cafe` and `Tobacconist`.
+*   **Then:** Both tags are saved in `business_types = ["Bar/Cafe", "Tobacconist"]` in `AccountMetadata` directly without needing a dummy `Company` record.
 
-### CUJ 3: Linking a Chain Branch & Category Inheritance
-*   **Given:** The user sees `Conad Via Roma` (currently unclassified).
-*   **When:** The user sets the role to `Chain Branch` and selects `Conad` from the company combobox.
-*   **Then:** The account links to `Conad`. Because `Conad` has category `"Supermarket"` set in the `Chains` tab, `Conad Via Roma` immediately displays the inherited badge `[ Supermarket ]`.
+### CUJ 3: Linking a Chain Branch & Business Type Inheritance
+*   **Given:** The user sees `Burger King Tirana` (currently unclassified).
+*   **When:** The user sets the role to `Chain Branch` and selects parent chain `Burger King`.
+*   **Then:** The account links to `Burger King`. Because `Burger King` has `business_types = ["Fast Food"]`, `Burger King Tirana` automatically displays `[CHAIN: Fast Food]`. If the user adds `Drive-thru`, the effective types become `["Fast Food", "Drive-thru"]`.
 
-### CUJ 4: Managing Chains & Updating Sectors
+### CUJ 4: Managing Chains & Updating Types
 *   **Given:** The user switches to the `Chains` tab.
 *   **When:** The user sees `Conad`, `Lidl`, and `Eni`, along with their branch counts (e.g. `Conad (5 stores)`).
-*   **Then:** The user edits `Eni`'s category to `"Gas Station"`. All accounts linked to `Eni` immediately reflect `"Gas Station"` across all views.
+*   **Then:** The user edits `Eni`'s types to include `Gas Station` and `Carwash`. All branches linked to `Eni` immediately inherit and reflect these types across all views.
 
 ---
 
@@ -84,16 +85,17 @@ flowchart TD
     
     subgraph Backend FastAPI
         SERVICE["FireflyClient (live accounts cache)"]
-        METADATA_REPO["AccountMetadata Table (role, category, company_id)"]
-        COMPANY_REPO["Company Table (name, default_category, notes)"]
-        ROUTER["/api/v1/accounts & /api/v1/companies"]
+        METADATA_REPO["AccountMetadata Table (role, category, business_types, company_id)"]
+        COMPANY_REPO["Company Table (name, business_types, notes)"]
+        ROUTER["/api/v1/accounts & /api/v1/companies & /api/v1/categories"]
     end
 
     subgraph Frontend React
         PAGE["AccountsAndChainsPage"]
-        TAB_EXP["Tab 1: Expense Accounts (Triage Table + Filters)"]
-        TAB_CHAINS["Tab 2: Chains (Parent Chains + Categories)"]
-        CAT_COMBO["CategoryCombobox (live distinct typeahead)"]
+        TAB_EXP["Tab 1: Expense Accounts (Cards & Table + Filters)"]
+        TAB_CHAINS["Tab 2: Chains (Parent Chains + Business Types)"]
+        TAG_INPUT["BusinessTypesTagInput (multi-type chips + suggestions)"]
+        CAT_COMBO["CategoryCombobox (dynamic active categories)"]
     end
 
     FF --> SERVICE
@@ -106,8 +108,9 @@ flowchart TD
     ROUTER --> PAGE
     PAGE --> TAB_EXP
     PAGE --> TAB_CHAINS
+    TAB_EXP --> TAG_INPUT
     TAB_EXP --> CAT_COMBO
-    TAB_CHAINS --> CAT_COMBO
+    TAB_CHAINS --> TAG_INPUT
 ```
 
 ---
@@ -115,23 +118,30 @@ flowchart TD
 ### 5.2 Data Model (`backend/app/models/`)
 
 #### 1. `AccountMetadata` Model (`backend/app/models/account_metadata.py`)
-Replaces and extends `CompanyAccountLink`:
 
 ```python
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
 
 class AccountRole(str, Enum):
     UNCLASSIFIED = "unclassified"
     PERSON = "person"
     CHAIN = "chain"
-    INDEPENDENT = "independent"
+    LOCAL_BUSINESS = "local_business"
+    PHYSICAL_STORE = "physical_store"  # Legacy compatibility alias
+    ECOMMERCE = "ecommerce"
+    SERVICE = "service"
+    INDEPENDENT = "independent"        # Legacy compatibility alias
 
 class AccountMetadataBase(SQLModel):
     role: AccountRole = Field(default=AccountRole.UNCLASSIFIED, index=True)
-    category: Optional[str] = Field(default=None, index=True)  # Set when role == INDEPENDENT
+    category: Optional[str] = Field(default=None, index=True)
+    business_types: List[str] = Field(
+        default_factory=list,
+        sa_column=sa.Column(JSONListType(), nullable=True, server_default="[]"),
+    )
     company_id: Optional[int] = Field(default=None, foreign_key="company.id", index=True)
     notes: Optional[str] = Field(default=None)
 
@@ -147,6 +157,7 @@ class AccountMetadata(AccountMetadataBase, table=True):
 class AccountMetadataUpdate(SQLModel):
     role: AccountRole
     category: Optional[str] = None
+    business_types: Optional[List[str]] = None
     company_id: Optional[int] = None
     notes: Optional[str] = None
 ```
@@ -157,7 +168,11 @@ Retained for multi-location retail chains:
 ```python
 class CompanyBase(SQLModel):
     name: str = Field(index=True, unique=True)
-    default_category: Optional[str] = Field(default=None, index=True)  # The chain's sector
+    business_types: List[str] = Field(
+        default_factory=list,
+        sa_column=sa.Column(JSONListType(), nullable=True, server_default="[]"),
+    )
+    default_category: Optional[str] = Field(default=None)  # Deprecated; migrated to business_types
     notes: Optional[str] = Field(default=None)
 
 class Company(CompanyBase, table=True):
@@ -193,19 +208,25 @@ class Company(CompanyBase, table=True):
         "id": 101,
         "name": "Conad Via Roma",
         "role": "chain",
-        "category": "Supermarket",
-        "is_inherited_category": true,
+        "category": null,
+        "is_inherited_category": false,
         "company_id": 1,
-        "company_name": "Conad"
+        "company_name": "Conad",
+        "business_types": [],
+        "inherited_business_types": ["Supermarket"],
+        "effective_business_types": ["Supermarket"]
       },
       {
         "id": 102,
-        "name": "Panificio Rossi",
-        "role": "independent",
-        "category": "Bakery",
+        "name": "Bar Tabacchi Centrale",
+        "role": "local_business",
+        "category": null,
         "is_inherited_category": false,
         "company_id": null,
-        "company_name": null
+        "company_name": null,
+        "business_types": ["Bar/Cafe", "Tobacconist"],
+        "inherited_business_types": [],
+        "effective_business_types": ["Bar/Cafe", "Tobacconist"]
       },
       {
         "id": 103,
@@ -214,16 +235,22 @@ class Company(CompanyBase, table=True):
         "category": null,
         "is_inherited_category": false,
         "company_id": null,
-        "company_name": null
+        "company_name": null,
+        "business_types": [],
+        "inherited_business_types": [],
+        "effective_business_types": []
       },
       {
         "id": 104,
-        "name": "Enel Energia",
-        "role": "unclassified",
-        "category": null,
+        "name": "Amazon",
+        "role": "ecommerce",
+        "category": "Electronics",
         "is_inherited_category": false,
         "company_id": null,
-        "company_name": null
+        "company_name": null,
+        "business_types": [],
+        "inherited_business_types": [],
+        "effective_business_types": []
       }
     ]
     ```
@@ -233,20 +260,23 @@ class Company(CompanyBase, table=True):
 *   **Request Body:**
     ```json
     {
-      "role": "independent",
-      "category": "Bakery",
+      "role": "local_business",
+      "category": null,
+      "business_types": ["Bar/Cafe", "Tobacconist"],
       "company_id": null
     }
     ```
-*   **Validation Rules:**
-    *   If `role == "chain"`: `company_id` is required; `category` must be null (inherited from company).
-    *   If `role == "person"` or `"unclassified"`: `company_id` and `category` are cleared/null.
-    *   If `role == "independent"`: `company_id` is null; `category` is an optional trimmed string.
+*   **Validation & Invariant Rules:**
+    *   If `role == "chain"`: `company_id` is required; `category` is set to null (chains use `business_types`); any branch types matching inherited types are automatically deduplicated.
+    *   If `role == "person"` or `"unclassified"`: `company_id`, `category`, and `business_types` are cleared.
+    *   If `role == "local_business"`: `company_id` is cleared; supports `business_types` list and optional `category`.
+    *   If `role == "ecommerce"` or `"service"`: `company_id` and `business_types` are cleared; supports sector `category`.
 
 #### 3. Category Typeahead Autocomplete
 `GET /api/v1/categories`
-*   Returns distinct, non-empty, sorted category strings from active non-chain accounts in `AccountMetadata.category` (chains use `business_types`). Disappears dynamically if no accounts are tagged with that category.
-*   **Response:** `["Bakery", "Electronics", "Pharmacy", "Streaming"]`
+*   Returns distinct, non-empty, sorted category strings from active non-chain accounts in `AccountMetadata.category` (chains use `business_types`).
+*   **Dynamic Garbage Collection:** Disappears dynamically if no accounts are tagged with that category. Zero manual database maintenance required.
+*   **Response:** `["Electronics", "Pharmacy", "Streaming"]`
 
 ---
 
@@ -257,68 +287,65 @@ class Company(CompanyBase, table=True):
 *   In `Navbar.tsx`, update link text to **`Accounts & Chains`** with an appropriate icon (`Store` + `Users` or `Building2`).
 
 #### 2. Page Layout: `AccountsAndChainsPage.tsx`
-*   **Header:** "Accounts & Chains" — subtitle: "Classify expense accounts and manage retail chains".
+*   **Header:** "Accounts & Chains" — subtitle: "Classify Firefly III expense accounts by role (Chains, Local Businesses, E-Commerce, Services, Persons)."
 *   **Tabs:**
-    *   `[ Expense Accounts (294) ]`
-    *   `[ Chains (12) ]`
+    *   `[ Expense Accounts ]`
+    *   `[ Chains ]`
 
 #### 3. Tab 1: Expense Accounts View
 *   **Controls Bar:**
-    *   Search input (matches account name, company name, or category tag).
-    *   Filter Chips: `All (294)` | `Chains (48)` | `Independent (32)` | `Persons (18)` | `Unclassified (196)`.
+    *   Search input (matches account name, company name, business type, or category tag).
+    *   Filter Chips: `All` | `Chains` | `Local Businesses` | `E-Commerce` | `Services` | `Persons` | `Unclassified`.
     *   **View Switcher Toggle:** Switchable between **Quiet Cards (Grid)** and **High-Density Table**, with persistence in `localStorage`.
 *   **Quiet Cards Grid View:**
-    *   **Unclassified cards:** Clean and quiet. Displays account icon, name, `#id`, and a single subtle `[Classify]` button. Zero invasive segmented control strips and zero redundant explanatory text.
+    *   **Unclassified cards:** Clean and quiet. Displays account icon, name, `#id`, and a single subtle `[Classify]` button.
     *   **Classified cards:** Compact tile displaying the assigned badge:
-        *   `Chain`: `[Building2] Company Name` + Category pill (e.g. `[Drugstore]`) + `[Edit]` button.
-        *   `Independent`: `[Store] Independent Shop` + Category pill (e.g. `[Bakery]`) + `[Edit]` button.
-        *   `Person`: `[User] Personal Contact` + `[Edit]` button.
+        *   `Chain`: `[Building2] Company Name` + Inherited `[CHAIN: Type]` and branch chips + `[Edit]` button.
+        *   `Local Business`: `[Store] Local Business` + Multi-type chips (`[Bar/Cafe]`, `[Tobacconist]`) + `[Edit]` button.
+        *   `E-Commerce`: `[Globe] E-Commerce` + Sector tag (e.g. `[Electronics]`) + `[Edit]` button.
+        *   `Service`: `[Zap] Service` + Sector tag (e.g. `[Streaming]`) + `[Edit]` button.
+        *   `Person`: `[User] Person` + `[Edit]` button.
 *   **High-Density Table View:**
     *   Fast scanning table for managing 300+ accounts.
-    *   Dynamic contextual columns based on active filter:
-        *   `All`: `Account`, `Role`, `Chain`, `Category Tag`, `Actions`
-        *   `Chains`: `Account`, `Parent Chain`, `Category Tag`, `Actions` (`Role` omitted as redundant)
-        *   `Independent`: `Account`, `Category Tag`, `Actions` (`Role` and `Chain` omitted)
-        *   `Persons`: `Account`, `Actions` (`Role`, `Chain`, and `Category` omitted)
-        *   `Unclassified`: `Account`, `Actions` (`Role`, `Chain`, and `Category` omitted)
+    *   Columns: `Account`, `Role`, `Parent Chain` (on Chains/All), `Business Types` (on Chains/Local Businesses/All), `Category / Sector Tag` (on Local/E-Commerce/Service/All; hidden on Chains filter), `Actions`.
 *   **Unified Classification Modal (`classifyingAccount`):**
     *   Triggered from both Grid and Table views when clicking `[Classify]` or `[Edit]`.
-    *   Role Selector: 4 clean tiles (`Chain Branch`, `Independent Store`, `Personal Contact`, `Unclassified`).
+    *   Role Selector: 6 clean tiles (`Chain Branch`, `Local Business`, `E-Commerce`, `Service`, `Person`, `Unclassified`).
     *   Conditional Form:
-        *   If `Chain`: `CompanyCombobox` to search/create parent retail chain.
-        *   If `Independent`: `CategoryCombobox` to search/create sector tag.
-        *   If `Person`: clear note that personal contacts are excluded from commercial categories.
+        *   If `Chain`: `CompanyCombobox` to search/create parent retail chain + `BusinessTypesTagInput` showing inherited badges and branch extra types.
+        *   If `Local Business`: `BusinessTypesTagInput` for multiple activity types + optional `CategoryCombobox`.
+        *   If `E-Commerce` or `Service`: `CategoryCombobox` for sector tag.
+        *   If `Person`: clear note confirming exclusion from commercial tags.
         *   If `Unclassified`: clear note confirming default standard account state.
     *   Saves via `PUT /api/v1/accounts/{id}/metadata`.
 
 #### 4. Tab 2: Chains View
 *   **Controls Bar:** "New Parent Chain" modal button.
 *   **Chains Table:**
-    *   Columns: Chain Name, Category Tag (editable inline via `CategoryCombobox`), Linked Store Count, Actions (Edit, Delete).
+    *   Columns: Chain Name, Business Types badges, Linked Store Count, Actions (Edit, Delete).
     *   Deleting a chain unlinks member accounts, setting their role to `unclassified`.
 
-#### 5. Component: `CategoryCombobox.tsx`
+#### 5. Component: `BusinessTypesTagInput.tsx`
+*   Chip-based multi-tag input with read-only inherited badges, quick-add suggestions from existing accounts/chains, and keyboard enter-to-add.
+
+#### 6. Component: `CategoryCombobox.tsx`
 *   Accessible type-ahead search with floating dropdown.
-*   Fetches current categories from `GET /api/v1/categories`.
-*   If user types `"Phar"`, highlights `"Pharmacy"`.
-*   If user types a novel term `"Pet Store"`, displays `"+ Create 'Pet Store'"`.
-*   Zero pre-baked presets.
+*   Fetches current categories from `GET /api/v1/categories`. Zero pre-baked presets.
 
 ---
 
 ## 6. Testing Strategy
 
-### Backend Tests
-*   `tests/test_account_metadata.py`:
-    *   Test setting role to `person` clears any lingering `company_id` and `category`.
-    *   Test setting role to `chain` validates that `company_id` exists and propagates category inheritance.
-    *   Test setting role to `independent` persists direct category.
-    *   Test `GET /api/v1/categories` aggregates distinct categories across companies and accounts.
-    *   Test unclassified accounts return correct defaults without database rows.
+### Backend Tests (`backend/tests/test_account_classification.py`)
+*   `test_categories_endpoint_empty_and_aggregated`: confirms categories only reflect active accounts and disappear when accounts are de-tagged.
+*   `test_chain_branch_inherits_and_extends_business_types`: validates chain inheritance and branch-level extensions.
+*   `test_update_chain_account_metadata_strips_duplicate_inherited_types`: verifies duplicate prevention.
+*   `test_update_account_metadata_person_clears_associations`: confirms clearing metadata when role is person.
+*   `test_delete_company_unlinks_account_metadata`: ensures cascading role reset on company deletion.
 
 ### Frontend Verification
 *   Type-check verification via TypeScript (`tsc`).
-*   Component state verification for role switching and category combobox interactions.
+*   Component state verification for role switching, BusinessTypesTagInput, and CategoryCombobox.
 
 ---
 
@@ -327,7 +354,7 @@ class Company(CompanyBase, table=True):
 *   **Always do:**
     *   Keep unclassified accounts functional and non-blocking everywhere.
     *   Keep Receipt Workbench and transaction push logic 100% untouched.
-    *   Trim category strings and treat lookups case-insensitively.
+    *   Trim category and business type strings and treat lookups case-insensitively.
 *   **Ask first:**
     *   Changing database migrations or removing existing columns.
     *   Modifying Firefly III client sync frequency.
@@ -340,9 +367,9 @@ class Company(CompanyBase, table=True):
 
 ## 8. Success Criteria
 
-1. Every expense account can be assigned to `Unclassified`, `Person`, `Chain Branch`, or `Independent Business`.
-2. Chains and Independent Businesses can be tagged with custom categories via a clean-slate type-ahead combobox.
-3. Chain branches automatically inherit and display their parent chain's category tag.
+1. Every expense account can be assigned to one of six roles (`Unclassified`, `Person`, `Chain Branch`, `Local Business`, `E-Commerce`, `Service`).
+2. Local businesses and chains support multiple business types (`business_types`), with automatic branch inheritance.
+3. E-Commerce and Services support sector category tags, with zero-maintenance dynamic garbage collection.
 4. Accounts left unclassified cause zero warnings, errors, or regressions in any part of `my-firefly`.
 5. The navigation and page are clearly titled `Accounts & Chains` with dedicated tabs for `Expense Accounts` and `Chains`.
 6. Receipt entry and transaction push remain 100% backward-compatible and functional.
