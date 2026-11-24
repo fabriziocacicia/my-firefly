@@ -70,7 +70,6 @@ export const AccountsAndChainsPage: React.FC = () => {
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
   const [compFormName, setCompFormName] = useState('');
-  const [compFormCategory, setCompFormCategory] = useState<string | null>(null);
   const [compFormBusinessTypes, setCompFormBusinessTypes] = useState<string[]>([]);
   const [compFormNotes, setCompFormNotes] = useState('');
   const [savingCompany, setSavingCompany] = useState(false);
