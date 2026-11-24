@@ -275,7 +275,12 @@ class Company(CompanyBase, table=True):
         *   `Person`: `[User] Personal Contact` + `[Edit]` button.
 *   **High-Density Table View:**
     *   Fast scanning table for managing 300+ accounts.
-    *   Columns: `Account` (icon, name, `#id`, inactive badge), `Role` (colored badge or dash), `Chain / Entity`, `Category Tag`, `Actions` (`[Classify]` / `[Edit]`).
+    *   Dynamic contextual columns based on active filter:
+        *   `All`: `Account`, `Role`, `Chain`, `Category Tag`, `Actions`
+        *   `Chains`: `Account`, `Parent Chain`, `Category Tag`, `Actions` (`Role` omitted as redundant)
+        *   `Independent`: `Account`, `Category Tag`, `Actions` (`Role` and `Chain` omitted)
+        *   `Persons`: `Account`, `Actions` (`Role`, `Chain`, and `Category` omitted)
+        *   `Unclassified`: `Account`, `Actions` (`Role`, `Chain`, and `Category` omitted)
 *   **Unified Classification Modal (`classifyingAccount`):**
     *   Triggered from both Grid and Table views when clicking `[Classify]` or `[Edit]`.
     *   Role Selector: 4 clean tiles (`Chain Branch`, `Independent Store`, `Personal Contact`, `Unclassified`).

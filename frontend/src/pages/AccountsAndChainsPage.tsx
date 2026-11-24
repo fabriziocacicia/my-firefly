@@ -581,9 +581,13 @@ export const AccountsAndChainsPage: React.FC = () => {
                 <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                   <tr>
                     <th className="py-3 px-4">Account</th>
-                    <th className="py-3 px-4">Role</th>
-                    <th className="py-3 px-4">Chain / Entity</th>
-                    <th className="py-3 px-4">Category Tag</th>
+                    {filter === 'all' && <th className="py-3 px-4">Role</th>}
+                    {(filter === 'all' || filter === 'chains') && (
+                      <th className="py-3 px-4">{filter === 'chains' ? 'Parent Chain' : 'Chain'}</th>
+                    )}
+                    {(filter === 'all' || filter === 'chains' || filter === 'independent') && (
+                      <th className="py-3 px-4">Category Tag</th>
+                    )}
                     <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -632,51 +636,59 @@ export const AccountsAndChainsPage: React.FC = () => {
                             </div>
                           </div>
                         </td>
-                        <td className="py-3 px-4 whitespace-nowrap">
-                          {effectiveRole === 'chain' ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200/60">
-                              Chain Branch
-                            </span>
-                          ) : effectiveRole === 'independent' ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                              Independent
-                            </span>
-                          ) : effectiveRole === 'person' ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
-                              Person
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 text-xs">—</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4">
-                          {effectiveRole === 'chain' && acc.company_name ? (
-                            <span className="font-medium text-slate-800 flex items-center gap-1.5 truncate">
-                              <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                              {acc.company_name}
-                            </span>
-                          ) : effectiveRole === 'person' ? (
-                            <span className="text-xs text-slate-500">Personal Contact</span>
-                          ) : (
-                            <span className="text-slate-400 text-xs">—</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4">
-                          {acc.category ? (
-                            <span
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                effectiveRole === 'chain'
-                                  ? 'bg-indigo-50 text-indigo-700'
-                                  : 'bg-emerald-50 text-emerald-700'
-                              }`}
-                            >
-                              <TagIcon className="w-3 h-3 opacity-70" />
-                              {acc.category}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 text-xs">—</span>
-                          )}
-                        </td>
+
+                        {filter === 'all' && (
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            {effectiveRole === 'chain' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200/60">
+                                Chain Branch
+                              </span>
+                            ) : effectiveRole === 'independent' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                                Independent
+                              </span>
+                            ) : effectiveRole === 'person' ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                                Person
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs">—</span>
+                            )}
+                          </td>
+                        )}
+
+                        {(filter === 'all' || filter === 'chains') && (
+                          <td className="py-3 px-4">
+                            {effectiveRole === 'chain' && acc.company_name ? (
+                              <span className="font-medium text-slate-800 flex items-center gap-1.5 truncate">
+                                <Building2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                {acc.company_name}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs">—</span>
+                            )}
+                          </td>
+                        )}
+
+                        {(filter === 'all' || filter === 'chains' || filter === 'independent') && (
+                          <td className="py-3 px-4">
+                            {acc.category ? (
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                  effectiveRole === 'chain'
+                                    ? 'bg-indigo-50 text-indigo-700'
+                                    : 'bg-emerald-50 text-emerald-700'
+                                }`}
+                              >
+                                <TagIcon className="w-3 h-3 opacity-70" />
+                                {acc.category}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs">—</span>
+                            )}
+                          </td>
+                        )}
+
                         <td className="py-3 px-4 text-right whitespace-nowrap">
                           <button
                             type="button"
