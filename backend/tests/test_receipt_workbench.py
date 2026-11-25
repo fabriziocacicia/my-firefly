@@ -264,13 +264,45 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         self.assertEqual(len(created["items"]), 2)
         self.assertEqual(created["store_name"], "Conad Via Roma")
 
+        hist = self.client.get(f"/api/v1/prices/history/{self.pasta_id}")
+        self.assertEqual(hist.status_code, 200)
+        hist_body = hist.json()
+        self.assertEqual(len(hist_body["records"]), 1)
+        self.assertEqual(hist_body["records"][0]["store_name"], "Conad Via Roma")
+        self.assertEqual(hist_body["analysis"]["normalized_current_price"], 3.7)
+        self.assertEqual(hist_body["analysis"]["normalized_baseline_regular_price"], 4.2)
+
+    def test_create_receipt_computes_total_and_rejects_invalid_totals(self):
         # Reject receipts whose computed total (items - basket_discount) is <= 0
-        non_positive_res = self.client.post(
+        for discount in (2.00, 5.00):
+            non_positive_res = self.client.post(
+                "/api/v1/receipts/",
+                json={
+                    "firefly_account_id": self.active_account_id,
+                    "purchase_date": "2026-11-10",
+                    "basket_discount": discount,
+                    "source_account_id": 1,
+                    "payment_mode": "single",
+                    "items": [
+                        {
+                            "product_id": self.pasta_id,
+                            "quantity": 1,
+                            "unit": "g",
+                            "package_size": 500,
+                            "paid_price": 2.00,
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(non_positive_res.status_code, 422)
+
+        # Client-supplied total_amount is ignored in favor of server-computed total
+        tampered_res = self.client.post(
             "/api/v1/receipts/",
             json={
                 "firefly_account_id": self.active_account_id,
                 "purchase_date": "2026-11-10",
-                "basket_discount": 2.00,
+                "total_amount": 999.99,
                 "source_account_id": 1,
                 "payment_mode": "single",
                 "items": [
@@ -284,15 +316,29 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
                 ],
             },
         )
-        self.assertEqual(non_positive_res.status_code, 422)
+        self.assertEqual(tampered_res.status_code, 200, tampered_res.text)
+        self.assertEqual(tampered_res.json()["total_amount"], 2.00)
 
-        hist = self.client.get(f"/api/v1/prices/history/{self.pasta_id}")
-        self.assertEqual(hist.status_code, 200)
-        hist_body = hist.json()
-        self.assertEqual(len(hist_body["records"]), 1)
-        self.assertEqual(hist_body["records"][0]["store_name"], "Conad Via Roma")
-        self.assertEqual(hist_body["analysis"]["normalized_current_price"], 3.7)
-        self.assertEqual(hist_body["analysis"]["normalized_baseline_regular_price"], 4.2)
+        # Non-finite item float is rejected
+        inf_res = self.client.post(
+            "/api/v1/receipts/",
+            json={
+                "firefly_account_id": self.active_account_id,
+                "purchase_date": "2026-11-10",
+                "source_account_id": 1,
+                "payment_mode": "single",
+                "items": [
+                    {
+                        "product_id": self.pasta_id,
+                        "quantity": 1,
+                        "unit": "g",
+                        "package_size": 500,
+                        "paid_price": "inf",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(inf_res.status_code, 422)
 
     def test_attachment_security_and_heif_to_jpeg(self):
         receipt_res = self.client.post(
