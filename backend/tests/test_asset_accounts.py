@@ -278,8 +278,8 @@ class AssetAccountsApiTests(unittest.TestCase):
             self.assertEqual(recharge_res.status_code, 400)
 
         mock_assets = [
-            {"id": "20", "attributes": {"name": "Amazon", "current_balance": "50.00", "active": True, "currency_code": "EUR"}},
-            {"id": "21", "attributes": {"name": "Checking", "current_balance": "1200.00", "active": True, "currency_code": "EUR"}},
+            {"id": "20", "attributes": {"name": "Amazon", "current_balance": "50.00", "active": True, "currency_code": "EUR", "include_net_worth": False}},
+            {"id": "21", "attributes": {"name": "Checking", "current_balance": "1200.00", "active": True, "currency_code": "EUR", "include_net_worth": True}},
             {"id": "22", "attributes": {"name": "Cash Wallet", "current_balance": "45.00", "active": True, "currency_code": "EUR"}},
         ]
         with patch("app.api.v1.firefly.firefly_client.get_all_asset_accounts", new=AsyncMock(return_value=mock_assets)):
@@ -288,10 +288,13 @@ class AssetAccountsApiTests(unittest.TestCase):
             items = {item["id"]: item for item in list_res.json()}
             self.assertEqual(items[20]["asset_type"], "gift_card")
             self.assertIsNone(items[20]["usable_vouchers"])
+            self.assertFalse(items[20]["include_net_worth"])
             self.assertEqual(items[21]["asset_type"], "bank_account")
             self.assertIsNone(items[21]["usable_vouchers"])
+            self.assertTrue(items[21]["include_net_worth"])
             self.assertEqual(items[22]["asset_type"], "cash")
             self.assertIsNone(items[22]["usable_vouchers"])
+            self.assertTrue(items[22]["include_net_worth"])
 
     def test_list_asset_and_revenue_accounts_hydrated_with_voucher_status(self):
         from unittest.mock import AsyncMock, patch

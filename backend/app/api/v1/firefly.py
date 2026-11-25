@@ -190,6 +190,7 @@ class FireflyAssetAccount(BaseModel):
     name: str
     current_balance: str
     active: bool = True
+    include_net_worth: bool = True
     currency_code: Optional[str] = None
     asset_type: AssetAccountType = AssetAccountType.STANDARD
     voucher_unit_value: Optional[float] = None
@@ -261,12 +262,15 @@ async def list_asset_accounts(session: Session = Depends(get_session)):
             balance_discrepancy = status.balance_discrepancy
 
         rev_id = meta.default_revenue_account_id if meta else None
+        raw_net_worth = attr.get("include_net_worth")
+        include_net_worth = True if raw_net_worth is None else bool(raw_net_worth)
         results.append(
             FireflyAssetAccount(
                 id=acc_id,
                 name=attr.get("name") or f"Asset #{acc_id}",
                 current_balance=balance_str,
                 active=bool(attr.get("active", True)),
+                include_net_worth=include_net_worth,
                 currency_code=attr.get("currency_code"),
                 asset_type=asset_type,
                 voucher_unit_value=unit_val,
