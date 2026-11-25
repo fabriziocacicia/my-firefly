@@ -647,3 +647,11 @@ Following the approval and implementation of `docs/designs/live_firefly_stores_a
 1. **Elimination of Local Store Synchronization:** The local `Store` table and mandatory `POST /api/v1/companies/quick-map` pre-mapping gates have been removed. `Receipt` and `PriceRecord` now persist `firefly_account_id` directly, making Firefly III the single source of truth for all expense accounts.
 2. **Dedicated Live Store Autocomplete:** The static store `<select>` in `WorkbenchHeader.tsx` and `CatalogPage.tsx` was replaced with `<StoreCombobox>`, providing debounced live search (`GET /api/v1/firefly/expense-accounts/search?query=...`) with request aborting, keyboard navigation, and clear actions.
 3. **Optional Parent Company Metadata:** Company grouping is now maintained via the lightweight `CompanyAccountLink` association table (`firefly_account_id -> company_id`). Linking accounts to parent companies is completely optional and non-blocking for receipt itemization and price tracking.
+
+--------------------------------------------------------------------------------
+
+## Amendment (2026-11-25): Computed Receipt Total (#3)
+
+Following Issue #3, the receipt total is no longer manually entered or reconciled against a typed `Target Total`:
+1. **Computed Total in Frontend (`ReceiptWorkbenchContext`, `WorkbenchHeader`, `ReceiptWorkbenchPage`):** Removed the editable `Target Total (€)` input, `targetTotal` draft state, `discrepancyDelta`, and `isBalanced` reconciliation meter. `WorkbenchHeader` displays the read-only computed `Receipt Total (€)` (`calculatedSum = computedItemsSum - basketDiscount`), and save/push guards require `draftItems.length > 0 && calculatedSum > 0`.
+2. **Authoritative Server Computation (`ReceiptCreate`, `POST /api/v1/receipts/`):** Removed `total_amount` from `ReceiptCreate` (and `ReceiptCreatePayload`). `create_receipt` computes `computed_total = round(sum(line_totals) - receipt_in.basket_discount, 2)` directly from submitted items and basket discount, rejects `computed_total <= 0` (`HTTP 422`), and persists `Receipt.total_amount = computed_total`.
