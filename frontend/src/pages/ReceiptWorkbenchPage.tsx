@@ -22,7 +22,7 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     fireflyAccountId,
     purchaseDate,
     purchaseTime,
-    targetTotal,
+    calculatedSum,
     basketDiscount,
     notes,
     sourceAccountId,
@@ -36,7 +36,6 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     activeMode,
     attachedFile,
     setAttachedFile,
-    isBalanced,
     canSaveLocally,
     canPushToFirefly,
     clearDraft,
@@ -79,8 +78,7 @@ export const ReceiptWorkbenchPage: React.FC = () => {
       reasons.push('Select a store / expense account');
     }
     if (draftItems.length === 0) reasons.push('Add at least one item');
-    if (targetTotal <= 0) reasons.push('Set Target Total > 0');
-    else if (!isBalanced) reasons.push('Reconcile item sum with Target Total (|Δ| ≤ €0.01)');
+    else if (calculatedSum <= 0) reasons.push('Computed receipt total must be > €0.00');
     if (requiresSourceAccount && !sourceAccountId) {
       reasons.push('Select Primary Source Account');
     }
@@ -110,7 +108,6 @@ export const ReceiptWorkbenchPage: React.FC = () => {
       firefly_account_id: fireflyAccountId,
       purchase_date: purchaseDate,
       purchase_time: purchaseTime.trim(),
-      total_amount: targetTotal,
       basket_discount: basketDiscount,
       source_account_id:
         !requiresSourceAccount ? null : sourceAccountId,

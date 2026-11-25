@@ -29,7 +29,6 @@ interface PersistedDraft {
   storeId?: number | null;
   purchaseDate: string;
   purchaseTime: string;
-  targetTotal: number;
   basketDiscount: number;
   notes: string;
   sourceAccountId: number | null;
@@ -49,7 +48,6 @@ const loadInitialDraft = (): PersistedDraft => {
     storeId: null,
     purchaseDate: todayIso(),
     purchaseTime: nowTimeIso(),
-    targetTotal: 0,
     basketDiscount: 0,
     notes: '',
     sourceAccountId: null,
@@ -74,7 +72,6 @@ const loadInitialDraft = (): PersistedDraft => {
       storeId: resolvedAccountId,
       purchaseDate: parsed.purchaseDate || todayIso(),
       purchaseTime: parsed.purchaseTime || nowTimeIso(),
-      targetTotal: typeof parsed.targetTotal === 'number' ? parsed.targetTotal : 0,
       basketDiscount: typeof parsed.basketDiscount === 'number' ? parsed.basketDiscount : 0,
       notes: typeof parsed.notes === 'string' ? parsed.notes : '',
       sourceAccountId: parsed.sourceAccountId ?? null,
@@ -104,8 +101,6 @@ interface ReceiptWorkbenchContextValue {
   setPurchaseDate: (date: string) => void;
   purchaseTime: string;
   setPurchaseTime: (time: string) => void;
-  targetTotal: number;
-  setTargetTotal: (total: number) => void;
   basketDiscount: number;
   setBasketDiscount: (discount: number) => void;
   notes: string;
@@ -136,8 +131,6 @@ interface ReceiptWorkbenchContextValue {
 
   computedItemsSum: number;
   calculatedSum: number;
-  discrepancyDelta: number;
-  isBalanced: boolean;
   canSaveLocally: boolean;
   canPushToFirefly: boolean;
 
@@ -165,7 +158,6 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
   const [storeName, setStoreName] = useState<string>(initial.storeName);
   const [purchaseDate, setPurchaseDate] = useState<string>(initial.purchaseDate);
   const [purchaseTime, setPurchaseTime] = useState<string>(initial.purchaseTime);
-  const [targetTotal, setTargetTotal] = useState<number>(initial.targetTotal);
   const [basketDiscount, setBasketDiscount] = useState<number>(initial.basketDiscount);
   const [notes, setNotes] = useState<string>(initial.notes);
   const [sourceAccountId, setSourceAccountId] = useState<number | null>(initial.sourceAccountId);
@@ -237,7 +229,6 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
         storeId: fireflyAccountId,
         purchaseDate,
         purchaseTime,
-        targetTotal,
         basketDiscount,
         notes,
         sourceAccountId,
@@ -262,7 +253,6 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     storeName,
     purchaseDate,
     purchaseTime,
-    targetTotal,
     basketDiscount,
     notes,
     sourceAccountId,
@@ -323,7 +313,6 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     setStoreName('');
     setPurchaseDate(todayIso());
     setPurchaseTime(nowTimeIso());
-    setTargetTotal(0);
     setBasketDiscount(0);
     setNotes('');
     setSourceAccountId(null);
@@ -352,18 +341,11 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     [computedItemsSum, basketDiscount]
   );
 
-  const discrepancyDelta = useMemo(
-    () => round2(calculatedSum - targetTotal),
-    [calculatedSum, targetTotal]
-  );
-
-  const isBalanced =
-    targetTotal > 0 && draftItems.length > 0 && Math.abs(discrepancyDelta) <= 0.01;
-
   const canSaveLocally =
     Boolean(fireflyAccountId) &&
     Boolean(purchaseTime.trim()) &&
-    isBalanced &&
+    draftItems.length > 0 &&
+    calculatedSum > 0 &&
     draftItems.every(
       i => i.product_id > 0 && i.quantity > 0 && i.package_size > 0 && i.paid_price >= 0
     );
@@ -390,50 +372,39 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
         selectedVoucherAccount.voucher_unit_value > 0
     );
 
-  const effectiveTotal = targetTotal > 0 ? targetTotal : Math.max(calculatedSum, 0);
-  const effectiveTotalCents = Math.round(Math.max(effectiveTotal, 0) * 100);
-  const targetTotalCents = Math.round(Math.max(targetTotal, 0) * 100);
+  const totalCents = Math.round(Math.max(calculatedSum, 0) * 100);
   const activeUnitValue =
     isSelectedVoucherFlagged && selectedVoucherAccount?.voucher_unit_value
       ? selectedVoucherAccount.voucher_unit_value
       : voucherUnitValue;
   const unitCents = Math.round(Math.max(activeUnitValue, 0) * 100);
 
-  const maxByTotal = unitCents > 0 ? Math.floor(effectiveTotalCents / unitCents) : 0;
-  const maxByTargetTotal = unitCents > 0 ? Math.floor(targetTotalCents / unitCents) : 0;
+  const maxByTotal = unitCents > 0 ? Math.floor(totalCents / unitCents) : 0;
   const usableVouchers = isSelectedVoucherFlagged
     ? selectedVoucherAccount?.usable_vouchers ?? 0
     : null;
   const maxVouchers =
     usableVouchers !== null ? Math.min(usableVouchers, maxByTotal) : maxByTotal;
-  const maxPushVouchers =
-    usableVouchers !== null ? Math.min(usableVouchers, maxByTargetTotal) : maxByTargetTotal;
 
   const voucherCents =
     paymentMode === 'split_vouchers' ? Math.max(0, voucherCount) * unitCents : 0;
   const voucherCovered = Math.round(voucherCents) / 100;
   const cardRemainderCents =
     paymentMode === 'split_vouchers'
-      ? Math.max(0, effectiveTotalCents - voucherCents)
-      : effectiveTotalCents;
+      ? Math.max(0, totalCents - voucherCents)
+      : totalCents;
   const cardRemainder = Math.round(cardRemainderCents) / 100;
 
-  const pushCardRemainderCents =
-    paymentMode === 'split_vouchers'
-      ? Math.max(0, targetTotalCents - voucherCents)
-      : targetTotalCents;
   const requiresSourceAccount =
-    paymentMode !== 'split_vouchers' || pushCardRemainderCents > 0;
+    paymentMode !== 'split_vouchers' || cardRemainderCents > 0;
   const voucherLimitExceeded =
     paymentMode === 'split_vouchers' && voucherCount > maxVouchers;
-  const pushVoucherLimitExceeded =
-    paymentMode === 'split_vouchers' && voucherCount > maxPushVouchers;
 
   const canPushToFirefly =
     canSaveLocally &&
     (!requiresSourceAccount || Boolean(sourceAccountId)) &&
     (paymentMode !== 'split_vouchers' ||
-      (Boolean(voucherAccountId) && voucherCount > 0 && !pushVoucherLimitExceeded));
+      (Boolean(voucherAccountId) && voucherCount > 0 && !voucherLimitExceeded));
 
   const value: ReceiptWorkbenchContextValue = {
     fireflyAccountId,
@@ -444,8 +415,6 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     setPurchaseDate,
     purchaseTime,
     setPurchaseTime,
-    targetTotal,
-    setTargetTotal,
     basketDiscount,
     setBasketDiscount,
     notes,
@@ -474,8 +443,6 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     clearDraft,
     computedItemsSum,
     calculatedSum,
-    discrepancyDelta,
-    isBalanced,
     canSaveLocally,
     canPushToFirefly,
     assetAccounts,

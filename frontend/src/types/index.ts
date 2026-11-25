@@ -229,7 +229,6 @@ export interface ReceiptCreatePayload {
   firefly_account_id: number;
   purchase_date: string;
   purchase_time: string;
-  total_amount: number;
   basket_discount: number;
   source_account_id?: number | null;
   payment_mode: PaymentMode;
