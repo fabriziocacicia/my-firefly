@@ -74,6 +74,13 @@ class ReceiptItemCreate(SQLModel):
     regular_price: Optional[float] = Field(default=None, ge=0)
     is_discount: bool = False
 
+    @field_validator("quantity", "package_size", "paid_price", "regular_price")
+    @classmethod
+    def _validate_finite_item_float(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and not math.isfinite(v):
+            raise ValueError("Item numeric values must be finite numbers")
+        return v
+
 
 class ReceiptCreate(SQLModel):
     firefly_account_id: int
