@@ -25,7 +25,7 @@ interface AssetAccountsTabProps {
 const FILTER_TYPE_ORDER: AssetAccountType[] = [
   'bank_account',
   'cash',
-  'gift_card',
+  'digital_credit',
   'meal_voucher',
   'standard',
 ];
@@ -44,7 +44,7 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
       standard: 0,
       bank_account: 0,
       cash: 0,
-      gift_card: 0,
+      digital_credit: 0,
       meal_voucher: 0,
     };
     let mismatches = 0;

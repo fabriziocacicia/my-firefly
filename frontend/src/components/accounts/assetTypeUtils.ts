@@ -1,4 +1,4 @@
-import { Banknote, Gift, Landmark, LucideIcon, Ticket, Wallet } from 'lucide-react';
+import { Banknote, Coins, Landmark, LucideIcon, Ticket, Wallet } from 'lucide-react';
 import { AssetAccountType, FireflyAssetAccount } from '../../types';
 
 export type CategorizedAssetAccountType = Exclude<AssetAccountType, 'standard'>;
@@ -20,7 +20,7 @@ export interface AssetTypeMeta {
 export const CATEGORIZED_ASSET_TYPES: CategorizedAssetAccountType[] = [
   'bank_account',
   'cash',
-  'gift_card',
+  'digital_credit',
   'meal_voucher',
 ];
 
@@ -28,7 +28,7 @@ export const ASSET_TYPE_ORDER: AssetAccountType[] = [
   'standard',
   'bank_account',
   'cash',
-  'gift_card',
+  'digital_credit',
   'meal_voucher',
 ];
 
@@ -59,11 +59,11 @@ export const ASSET_TYPE_META: Record<AssetAccountType, AssetTypeMeta> = {
     modalActiveClass: 'border-emerald-600 bg-emerald-50/40 text-emerald-950 ring-2 ring-emerald-500/20',
     modalIconClass: 'text-emerald-600',
   },
-  gift_card: {
-    label: 'Gift Card',
-    filterLabel: 'Gift Card',
-    subtitle: 'Store credit or voucher',
-    icon: Gift,
+  digital_credit: {
+    label: 'Digital Credit',
+    filterLabel: 'Digital Credits',
+    subtitle: 'Store, app, or prepaid credit',
+    icon: Coins,
     badgeClass: 'bg-violet-100 text-violet-800',
     iconWrapperClass: 'bg-violet-50 text-violet-600',
     cardBorderClass: 'border-violet-200/80 hover:border-violet-300',
@@ -183,7 +183,7 @@ export function formatAssetMoney(
  * - `grandTotals` and `totalActiveCount` include only active accounts flagged
  *   `include_net_worth !== false` on Firefly III (across all types, including `standard`).
  * - `categorized` covers strictly the 4 categorized types (`bank_account`, `cash`,
- *   `gift_card`, `meal_voucher`), summing all active accounts of each type regardless
+ *   `digital_credit`, `meal_voucher`), summing all active accounts of each type regardless
  *   of `include_net_worth` and preserving zero-count entries at `€0.00`.
  */
 export function computeAssetBalanceSummary(

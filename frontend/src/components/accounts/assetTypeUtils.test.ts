@@ -46,8 +46,8 @@ describe('computeAssetBalanceSummary', () => {
     expect(byType.cash.activeCount).toBe(1);
     expect(byType.cash.totals).toEqual([{ currency: 'EUR', cents: 11986 }]);
 
-    expect(byType.gift_card.activeCount).toBe(0);
-    expect(byType.gift_card.totals).toEqual([{ currency: 'EUR', cents: 0 }]);
+    expect(byType.digital_credit.activeCount).toBe(0);
+    expect(byType.digital_credit.totals).toEqual([{ currency: 'EUR', cents: 0 }]);
 
     expect(byType.meal_voucher.activeCount).toBe(0);
     expect(byType.meal_voucher.totals).toEqual([{ currency: 'EUR', cents: 0 }]);
@@ -72,9 +72,9 @@ describe('computeAssetBalanceSummary', () => {
 
   it('avoids floating-point drift and groups multi-currency accounts separately', () => {
     const accounts: FireflyAssetAccount[] = [
-      makeAccount({ id: 1, name: 'EUR Gift A', asset_type: 'gift_card', current_balance: '0.10', currency_code: 'EUR' }),
-      makeAccount({ id: 2, name: 'EUR Gift B', asset_type: 'gift_card', current_balance: '0.20', currency_code: 'EUR' }),
-      makeAccount({ id: 3, name: 'USD Card', asset_type: 'gift_card', current_balance: '25.50', currency_code: 'USD' }),
+      makeAccount({ id: 1, name: 'EUR Credit A', asset_type: 'digital_credit', current_balance: '0.10', currency_code: 'EUR' }),
+      makeAccount({ id: 2, name: 'EUR Credit B', asset_type: 'digital_credit', current_balance: '0.20', currency_code: 'EUR' }),
+      makeAccount({ id: 3, name: 'USD Credit', asset_type: 'digital_credit', current_balance: '25.50', currency_code: 'USD' }),
       makeAccount({ id: 4, name: 'Vouchers', asset_type: 'meal_voucher', current_balance: '51.60', currency_code: null }),
     ];
 
@@ -85,9 +85,9 @@ describe('computeAssetBalanceSummary', () => {
       { currency: 'USD', cents: 2550 },
     ]);
 
-    const giftCard = summary.categorized.find((c) => c.type === 'gift_card');
-    expect(giftCard?.activeCount).toBe(3);
-    expect(giftCard?.totals).toEqual([
+    const digitalCredit = summary.categorized.find((c) => c.type === 'digital_credit');
+    expect(digitalCredit?.activeCount).toBe(3);
+    expect(digitalCredit?.totals).toEqual([
       { currency: 'EUR', cents: 30 },
       { currency: 'USD', cents: 2550 },
     ]);
@@ -111,7 +111,7 @@ describe('computeAssetBalanceSummary', () => {
     const edgeAccounts: FireflyAssetAccount[] = [
       makeAccount({ id: 1, name: 'Active Undefined', active: undefined, asset_type: 'cash', current_balance: '1.005', currency_code: ' eur ' }),
       makeAccount({ id: 2, name: 'Negative Bank', asset_type: 'bank_account', current_balance: '-5.16' }),
-      makeAccount({ id: 3, name: 'Invalid Balance', asset_type: 'gift_card', current_balance: 'not-a-number' }),
+      makeAccount({ id: 3, name: 'Invalid Balance', asset_type: 'digital_credit', current_balance: 'not-a-number' }),
       makeAccount({ id: 4, name: 'Inactive Standard', active: false, asset_type: 'standard', current_balance: '100.00' }),
     ];
 
@@ -124,14 +124,14 @@ describe('computeAssetBalanceSummary', () => {
     expect(formatAssetMoney('-5.16', 'EUR')).toBe('-€5.16');
     expect(formatAssetMoney('bad', 'USD')).toBe('USD 0.00');
     expect(normalizeAssetType('future_type')).toBe('standard');
-    expect(normalizeAssetType('gift_card')).toBe('gift_card');
+    expect(normalizeAssetType('digital_credit')).toBe('digital_credit');
   });
 
   it('excludes include_net_worth=false from grandTotals while keeping them in per-type categorized cards', () => {
     const accounts: FireflyAssetAccount[] = [
       makeAccount({ id: 1, name: 'Included Bank', asset_type: 'bank_account', current_balance: '1000.00', include_net_worth: true }),
       makeAccount({ id: 2, name: 'Excluded Bank', asset_type: 'bank_account', current_balance: '500.00', include_net_worth: false }),
-      makeAccount({ id: 3, name: 'Excluded Gift Card', asset_type: 'gift_card', current_balance: '40.00', include_net_worth: false }),
+      makeAccount({ id: 3, name: 'Excluded Digital Credit', asset_type: 'digital_credit', current_balance: '40.00', include_net_worth: false }),
       makeAccount({ id: 4, name: 'Included Standard', asset_type: 'standard', current_balance: '25.00', include_net_worth: true }),
       makeAccount({ id: 5, name: 'Excluded Standard', asset_type: 'standard', current_balance: '75.00', include_net_worth: false }),
       makeAccount({ id: 6, name: 'Inactive Net Worth Bank', active: false, asset_type: 'bank_account', current_balance: '999.00', include_net_worth: true }),
@@ -148,8 +148,8 @@ describe('computeAssetBalanceSummary', () => {
     expect(bank?.activeCount).toBe(2);
     expect(bank?.totals).toEqual([{ currency: 'EUR', cents: 150000 }]);
 
-    const giftCard = summary.categorized.find((c) => c.type === 'gift_card');
-    expect(giftCard?.activeCount).toBe(1);
-    expect(giftCard?.totals).toEqual([{ currency: 'EUR', cents: 4000 }]);
+    const digitalCredit = summary.categorized.find((c) => c.type === 'digital_credit');
+    expect(digitalCredit?.activeCount).toBe(1);
+    expect(digitalCredit?.totals).toEqual([{ currency: 'EUR', cents: 4000 }]);
   });
 });

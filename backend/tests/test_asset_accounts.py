@@ -102,7 +102,7 @@ class AssetAccountModelTests(unittest.TestCase):
                         (4, 'future_type', NULL, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
                         (5, 'bank_account', NULL, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
                         (6, 'CASH', NULL, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
-                        (7, 'gift_card', NULL, '2026-01-01 00:00:00', '2026-01-01 00:00:00')
+                        (7, 'digital_credit', NULL, '2026-01-01 00:00:00', '2026-01-01 00:00:00')
                     """
                 )
             )
@@ -118,7 +118,7 @@ class AssetAccountModelTests(unittest.TestCase):
             self.assertEqual(row_map[4].asset_type, AssetAccountType.STANDARD)
             self.assertEqual(row_map[5].asset_type, AssetAccountType.BANK_ACCOUNT)
             self.assertEqual(row_map[6].asset_type, AssetAccountType.CASH)
-            self.assertEqual(row_map[7].asset_type, AssetAccountType.GIFT_CARD)
+            self.assertEqual(row_map[7].asset_type, AssetAccountType.DIGITAL_CREDIT)
 
     def test_alembic_upgrade_0008_creates_asset_account_metadata(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
@@ -240,10 +240,10 @@ class AssetAccountsApiTests(unittest.TestCase):
         self.assertIsNone(std_res.json()["voucher_unit_value"])
         self.assertIsNone(std_res.json()["default_revenue_account_id"])
 
-    def test_configure_bank_cash_and_gift_card_types_and_guards(self):
+    def test_configure_bank_cash_and_digital_credit_types_and_guards(self):
         from unittest.mock import AsyncMock, patch
 
-        # Seed as meal_voucher first, then switch to gift_card and verify voucher fields clear
+        # Seed as meal_voucher first, then switch to digital_credit and verify voucher fields clear
         self.client.put(
             "/api/v1/asset-accounts/20/metadata",
             json={
@@ -255,7 +255,7 @@ class AssetAccountsApiTests(unittest.TestCase):
         )
 
         for account_id, asset_type, note in [
-            (20, "gift_card", "Amazon balance"),
+            (20, "digital_credit", "Amazon balance"),
             (21, "bank_account", "Main checking"),
             (22, "cash", "Physical wallet"),
         ]:
@@ -286,7 +286,7 @@ class AssetAccountsApiTests(unittest.TestCase):
             list_res = self.client.get("/api/v1/firefly/asset-accounts")
             self.assertEqual(list_res.status_code, 200)
             items = {item["id"]: item for item in list_res.json()}
-            self.assertEqual(items[20]["asset_type"], "gift_card")
+            self.assertEqual(items[20]["asset_type"], "digital_credit")
             self.assertIsNone(items[20]["usable_vouchers"])
             self.assertFalse(items[20]["include_net_worth"])
             self.assertEqual(items[21]["asset_type"], "bank_account")

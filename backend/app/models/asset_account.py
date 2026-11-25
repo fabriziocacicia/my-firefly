@@ -13,7 +13,7 @@ class AssetAccountType(str, Enum):
     STANDARD = "standard"
     BANK_ACCOUNT = "bank_account"
     CASH = "cash"
-    GIFT_CARD = "gift_card"
+    DIGITAL_CREDIT = "digital_credit"
     MEAL_VOUCHER = "meal_voucher"
 
 
