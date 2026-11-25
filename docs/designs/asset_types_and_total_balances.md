@@ -1,6 +1,6 @@
 # Spec Delta: Asset Account Types & Categorized Balance Totals
 
-- **Status:** approved
+- **Status:** implemented
 - **Issue:** [#18 — feat: new assets type and total balance](https://github.com/fabriziocacicia/my-firefly/issues/18)
 - **Base Spec:** [Meal Voucher Asset Accounts & Recharge — V1](meal_voucher_asset_accounts.md)
 - **Date:** 2026-11-25
@@ -99,13 +99,13 @@ Inherits from [base spec](meal_voucher_asset_accounts.md#2-tech-stack):
 
 ## 7. Success Criteria
 
-- [ ] Asset accounts can be configured as `bank_account`, `cash`, `gift_card`, `meal_voucher`, or `standard` via API and `AssetAccountConfigModal`.
-- [ ] Asset account cards and filter pills display distinct icons, labels, and badges for all 5 types.
-- [ ] A collapsible summary banner at the top of the **Asset Accounts** tab displays total active balance and a per-type breakdown for categorized types only (`Bank Account`, `Cash`, `Gift Card`, `Meal Voucher`), excluding `Standard` and inactive accounts.
-- [ ] Multi-currency active accounts are summed cleanly per currency without mixing currencies.
-- [ ] Clicking a type in the breakdown filters the account cards below (and syncs with the filter pill bar).
-- [ ] Existing `meal_voucher` recharge and Receipt Workbench flows remain unchanged and passing.
-- [ ] Backend `pytest` and frontend build/tests pass.
+- [x] Asset accounts can be configured as `bank_account`, `cash`, `gift_card`, `meal_voucher`, or `standard` via API and `AssetAccountConfigModal`.
+- [x] Asset account cards and filter pills display distinct icons, labels, and badges for all 5 types.
+- [x] A collapsible summary banner at the top of the **Asset Accounts** tab displays total active balance and a per-type breakdown for categorized types only (`Bank Account`, `Cash`, `Gift Card`, `Meal Voucher`), excluding `Standard` and inactive accounts.
+- [x] Multi-currency active accounts are summed cleanly per currency without mixing currencies.
+- [x] Clicking a type in the breakdown filters the account cards below (and syncs with the filter pill bar).
+- [x] Existing `meal_voucher` recharge and Receipt Workbench flows remain unchanged and passing.
+- [x] Backend `pytest` and frontend build/tests pass.
 
 ---
 
