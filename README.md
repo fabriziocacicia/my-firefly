@@ -6,8 +6,8 @@ A companion web application for **Firefly III** to track SKU-level product price
 
 ## 🚀 Key Capabilities
 
-1. **Receipt Workbench & Split Balancing**:
-   - Dual-mode (spreadsheet-style tabular grid or card stream) receipt entry with real-time target sum balancing.
+1. **Receipt Workbench & Computed Totals**:
+   - Dual-mode (spreadsheet-style tabular grid or card stream) receipt entry with real-time computed receipt total from line items and basket discount.
    - Integrated type-ahead product lookup with inline quick-creation.
    - Built-in receipt image attachment preview and local draft autosave in browser storage.
    - 1-click push to Firefly III split transactions with optional meal voucher splits.

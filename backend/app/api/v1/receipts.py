@@ -326,24 +326,23 @@ async def create_receipt(
                 status_code=404, detail=f"Product {pid} not found"
             )
 
-    # 3. Validate math & whole-voucher rules
+    # 3. Compute receipt total & validate whole-voucher rules
     line_totals = [
         round(item.quantity * item.paid_price, 2) for item in receipt_in.items
     ]
     computed_total = round(sum(line_totals) - receipt_in.basket_discount, 2)
-    if abs(computed_total - receipt_in.total_amount) > 0.01:
+    if computed_total <= 0:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"Receipt total mismatch: computed {computed_total:.2f} "
-                f"vs target {receipt_in.total_amount:.2f}"
+                f"Computed receipt total (€{computed_total:.2f}) must be greater than €0.00"
             ),
         )
 
     effective_unit_value, _, _, _ = _resolve_and_validate_voucher_terms(
         session=session,
         payment_mode=receipt_in.payment_mode,
-        total_amount=receipt_in.total_amount,
+        total_amount=computed_total,
         voucher_account_id=receipt_in.voucher_account_id,
         voucher_count=receipt_in.voucher_count,
         voucher_unit_value=receipt_in.voucher_unit_value,
@@ -354,7 +353,7 @@ async def create_receipt(
         firefly_account_id=receipt_in.firefly_account_id,
         purchase_date=receipt_in.purchase_date,
         purchase_time=receipt_in.purchase_time,
-        total_amount=round(receipt_in.total_amount, 2),
+        total_amount=computed_total,
         basket_discount=round(receipt_in.basket_discount, 2),
         source_account_id=receipt_in.source_account_id,
         payment_mode=receipt_in.payment_mode,
