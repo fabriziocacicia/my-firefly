@@ -11,7 +11,7 @@
 
 1. **Backwards-compatible enum extension (no DB migration required):** `asset_account_metadata.asset_type` is already stored as `VARCHAR(32)` via `AssetAccountTypeDecorator` without a SQL `CHECK` constraint (`0008_asset_account_metadata.py`). Extending `AssetAccountType` with `bank_account`, `cash`, and `gift_card` works seamlessly with existing rows and unconfigured accounts (defaulting to `standard`).
 2. **Pure classification types:** `bank_account`, `cash`, and `gift_card` are pure classification types using the existing `notes` field—they do not introduce extra metadata fields or special Firefly recharge/voucher workflows.
-3. **Active accounts & multi-currency grouping:** Balance totals sum **active** accounts only (`active !== false`) using integer-cent arithmetic (`to_cents`) to prevent floating-point drift, grouped by `currency_code` (defaulting null currency to `EUR`) whenever accounts span multiple currencies.
+3. **Active accounts, net-worth flag & multi-currency grouping:** Balance totals sum **active** accounts only (`active !== false`) using integer-cent arithmetic (`to_cents`) to prevent floating-point drift, grouped by `currency_code` (defaulting null currency to `EUR`) whenever accounts span multiple currencies. Specifically, the headline **Total Active Assets** banner sums only active accounts flagged `include_net_worth = true` on Firefly III, whereas the per-type breakdown cards sum all active accounts of each categorized type regardless of `include_net_worth`.
 4. **Categorized-only breakdown:** The collapsible breakdown inside the summary banner shows only the four categorized types (`Bank Account`, `Cash`, `Gift Card`, `Meal Voucher`) and excludes `Standard` (unclassified/default).
 5. **Client-side aggregation vs. API:** Because `GET /api/v1/firefly/asset-accounts` already returns all asset accounts with `asset_type`, `current_balance`, `currency_code`, and `active`, totals can be computed deterministically in the frontend (with shared integer-cent logic) or exposed via helper functions without extra Firefly API calls.
 
@@ -50,8 +50,8 @@ From [Meal Voucher Asset Accounts & Recharge — V1](meal_voucher_asset_accounts
   - Define a single shared UI config mapping each `AssetAccountType` to its label, short filter label, icon (`Landmark`/`Building2`, `Banknote`, `Gift`, `Ticket`, `Wallet`), and badge/accent colors (`sky` for Bank Account, `emerald` for Cash, `violet` for Gift Card, `amber` for Meal Voucher, `slate` for Standard).
 - **Summary Banner + Collapsible Breakdown (`AssetAccountsTab` / extracted summary component):**
   - Rendered at the top of the **Asset Accounts** tab above the search/filter bar.
-  - **Banner header:** Displays the headline **Total Active Assets** summing **all active asset accounts across every type** (including `Standard`), grouped per currency if multiple currencies exist, and a toggle button (`Hide breakdown` / `Show breakdown`).
-  - **Collapsible breakdown:** Shows the 4 categorized types (`Bank Account`, `Cash`, `Gift Card`, `Meal Voucher`) — omitting `Standard` — with each type's active account count and summed active balance (per currency if mixed). Categorized types with `0` active accounts still appear as `€0.00 (0)`. Clicking a breakdown item sets/toggles the active type filter below.
+  - **Banner header:** Displays the headline **Total Active Assets** summing **active asset accounts across every type (including `Standard`) that have `include_net_worth = true` in Firefly III**, grouped per currency if multiple currencies exist, along with a toggle button (`Hide breakdown` / `Show breakdown`).
+  - **Collapsible breakdown:** Shows the 4 categorized types (`Bank Account`, `Cash`, `Gift Card`, `Meal Voucher`) — omitting `Standard` — with each type's active account count and summed active balance across **all** active accounts of that type (regardless of `include_net_worth`, per currency if mixed). Categorized types with `0` active accounts still appear as `€0.00 (0)`. Clicking a breakdown item sets/toggles the active type filter below.
 - **Filter Pills & Cards (`AssetAccountsTab`):**
   - Filter pill bar includes `All`, `Bank`, `Cash`, `Gift Card`, `Meal Vouchers`, and `Standard` with account counts.
   - Each account card renders its type-specific icon container and colored badge (`Bank Account`, `Cash`, `Gift Card`, `Meal Voucher`, or `Standard`).
@@ -119,5 +119,5 @@ Inherits from [base spec](meal_voucher_asset_accounts.md#2-tech-stack):
 
 ## 9. Resolved Decisions (Ex Open Questions)
 
-1. **Banner Headline Total:** Sums **all active asset accounts across all types** (including `Standard`), while the collapsible breakdown beneath it lists only the 4 categorized types (`Bank Account`, `Cash`, `Gift Card`, `Meal Voucher`).
+1. **Banner Headline Total:** Sums **active asset accounts across all types (including `Standard`) flagged `include_net_worth = true` on Firefly III**, while the collapsible breakdown beneath it lists the 4 categorized types (`Bank Account`, `Cash`, `Gift Card`, `Meal Voucher`) summing all active accounts of each type regardless of `include_net_worth`.
 2. **Zero-Count Categorized Types:** All 4 categorized types always appear in the collapsible breakdown, displaying `€0.00 (0)` when no active accounts are assigned to that type.
