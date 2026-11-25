@@ -6,7 +6,7 @@ import {
   FireflyAssetAccount,
   FireflyRevenueAccount,
 } from '../../types';
-import { ASSET_TYPE_META, ASSET_TYPE_ORDER } from './assetTypeUtils';
+import { ASSET_TYPE_META, ASSET_TYPE_ORDER, formatAssetMoney } from './assetTypeUtils';
 
 interface AssetAccountConfigModalProps {
   account: FireflyAssetAccount;
@@ -55,6 +55,10 @@ export const AssetAccountConfigModal: React.FC<AssetAccountConfigModalProps> = (
         return;
       }
       unitValue = Math.round(parsed * 100) / 100;
+      if (unitValue <= 0) {
+        setError('Voucher unit value must be at least €0.01.');
+        return;
+      }
     }
 
     setSaving(true);
@@ -93,7 +97,7 @@ export const AssetAccountConfigModal: React.FC<AssetAccountConfigModalProps> = (
               Configure: {account.name}
             </h2>
             <span className="text-xs text-slate-400 font-mono">
-              Asset Account #{account.id} · Balance €{Number(account.current_balance || 0).toFixed(2)}
+              Asset Account #{account.id} · Balance {formatAssetMoney(account.current_balance, account.currency_code)}
             </span>
           </div>
           <button

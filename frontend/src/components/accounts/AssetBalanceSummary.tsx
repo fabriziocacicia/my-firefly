@@ -51,6 +51,7 @@ export const AssetBalanceSummary: React.FC<AssetBalanceSummaryProps> = ({
           type="button"
           onClick={() => setExpanded((prev) => !prev)}
           aria-expanded={expanded}
+          aria-controls="asset-balance-breakdown"
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition cursor-pointer"
         >
           <span>{expanded ? 'Hide breakdown' : 'Show breakdown'}</span>
@@ -63,7 +64,10 @@ export const AssetBalanceSummary: React.FC<AssetBalanceSummaryProps> = ({
       </div>
 
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+        <div
+          id="asset-balance-breakdown"
+          className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2"
+        >
           {summary.categorized.map((item) => {
             const meta = ASSET_TYPE_META[item.type];
             const Icon = meta.icon;

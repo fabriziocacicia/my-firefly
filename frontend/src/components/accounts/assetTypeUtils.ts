@@ -118,9 +118,36 @@ export interface AssetBalanceSummary {
 }
 
 function toCents(val: string | number | null | undefined): number {
-  const num = Number(val ?? 0);
-  if (!Number.isFinite(num)) return 0;
-  return Math.round(num * 100);
+  if (val === null || val === undefined) return 0;
+  const raw = typeof val === 'number' ? (Number.isFinite(val) ? String(val) : '') : String(val).trim();
+  if (!raw) return 0;
+
+  const match = /^([+-])?(?:(\d+)(?:\.(\d*))?|\.(\d+))$/.exec(raw);
+  if (!match) {
+    const num = Number(raw);
+    return Number.isFinite(num) ? Math.round(num * 100) : 0;
+  }
+
+  const sign = match[1] === '-' ? -1 : 1;
+  const intPart = match[2] || '0';
+  const fracPart = match[3] ?? match[4] ?? '';
+  const padded = (fracPart + '000').slice(0, 3);
+  const baseCents = Number(intPart) * 100 + Number(padded.slice(0, 2));
+  const roundUp = Number(padded[2]) >= 5 ? 1 : 0;
+  const total = sign * (baseCents + roundUp);
+  return Object.is(total, -0) ? 0 : total;
+}
+
+function normalizeCurrency(currency?: string | null): string {
+  const trimmed = (currency || '').trim().toUpperCase();
+  return trimmed || 'EUR';
+}
+
+export function normalizeAssetType(assetType?: string | null): AssetAccountType {
+  if (assetType && assetType in ASSET_TYPE_META) {
+    return assetType as AssetAccountType;
+  }
+  return 'standard';
 }
 
 function sortCurrencyTotals(map: Map<string, number>): CurrencyTotal[] {
@@ -139,7 +166,8 @@ function sortCurrencyTotals(map: Map<string, number>): CurrencyTotal[] {
 export function formatCents(cents: number, currency?: string | null): string {
   const sign = cents < 0 ? '-' : '';
   const absAmount = (Math.abs(cents) / 100).toFixed(2);
-  const symbol = !currency || currency === 'EUR' ? '€' : `${currency} `;
+  const code = normalizeCurrency(currency);
+  const symbol = code === 'EUR' ? '€' : `${code} `;
   return `${sign}${symbol}${absAmount}`;
 }
 
@@ -174,16 +202,17 @@ export function computeAssetBalanceSummary(
     if (acc.active === false) continue;
 
     totalActiveCount += 1;
-    const currency = (acc.currency_code || 'EUR').toUpperCase();
+    const currency = normalizeCurrency(acc.currency_code);
     const cents = toCents(acc.current_balance);
+    const normalizedType = normalizeAssetType(acc.asset_type);
 
     grandMap.set(currency, (grandMap.get(currency) ?? 0) + cents);
 
-    if (acc.asset_type !== 'standard') {
-      const tMap = typeMaps.get(acc.asset_type);
+    if (normalizedType !== 'standard') {
+      const tMap = typeMaps.get(normalizedType);
       if (tMap) {
         tMap.set(currency, (tMap.get(currency) ?? 0) + cents);
-        typeCounts.set(acc.asset_type, (typeCounts.get(acc.asset_type) ?? 0) + 1);
+        typeCounts.set(normalizedType, (typeCounts.get(normalizedType) ?? 0) + 1);
       }
     }
   }

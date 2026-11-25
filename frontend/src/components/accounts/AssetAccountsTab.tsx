@@ -12,6 +12,7 @@ import {
   ASSET_TYPE_META,
   computeAssetBalanceSummary,
   formatAssetMoney,
+  normalizeAssetType,
 } from './assetTypeUtils';
 
 interface AssetAccountsTabProps {
@@ -48,7 +49,7 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
     };
     let mismatches = 0;
     for (const acc of assetAccounts) {
-      const typeKey: AssetAccountType = acc.asset_type in byType ? acc.asset_type : 'standard';
+      const typeKey = normalizeAssetType(acc.asset_type);
       byType[typeKey] += 1;
       if (typeKey === 'meal_voucher' && !acc.is_exact_multiple) {
         mismatches += 1;
@@ -65,7 +66,7 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return assetAccounts.filter((acc) => {
-      if (filter !== 'all' && acc.asset_type !== filter) return false;
+      if (filter !== 'all' && normalizeAssetType(acc.asset_type) !== filter) return false;
       if (!q) return true;
       return (
         acc.name.toLowerCase().includes(q) ||
@@ -103,6 +104,7 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
             <button
               type="button"
               onClick={() => setFilter('all')}
+              aria-pressed={filter === 'all'}
               className={`px-2.5 py-1.5 rounded-md transition cursor-pointer ${
                 filter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
@@ -116,6 +118,7 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
                   key={typeKey}
                   type="button"
                   onClick={() => setFilter(typeKey)}
+                  aria-pressed={filter === typeKey}
                   className={`px-2.5 py-1.5 rounded-md transition cursor-pointer ${
                     filter === typeKey
                       ? meta.filterActiveClass
@@ -151,9 +154,10 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
       ) : (
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((acc) => {
-            const typeMeta = ASSET_TYPE_META[acc.asset_type] ?? ASSET_TYPE_META.standard;
+            const normalizedType = normalizeAssetType(acc.asset_type);
+            const typeMeta = ASSET_TYPE_META[normalizedType];
             const TypeIcon = typeMeta.icon;
-            const isVoucher = acc.asset_type === 'meal_voucher';
+            const isVoucher = normalizedType === 'meal_voucher';
             const hasMismatch = isVoucher && !acc.is_exact_multiple;
 
             return (
