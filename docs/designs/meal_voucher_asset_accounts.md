@@ -1,6 +1,6 @@
 # Spec: Meal Voucher Asset Accounts & Recharge — V1
 
-- **Status:** proposed
+- **Status:** implemented
 - **Issue:** [#6 — feat: new account type meal voucher](https://github.com/fabriziocacicia/my-firefly/issues/6)
 - **Intent:** [meal-voucher-accounts.md](../intent/meal-voucher-accounts.md)
 - **Date:** 2026-11-25
