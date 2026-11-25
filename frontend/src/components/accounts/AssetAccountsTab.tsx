@@ -26,6 +26,7 @@ const FILTER_TYPE_ORDER: AssetAccountType[] = [
   'bank_account',
   'cash',
   'digital_credit',
+  'investment_account',
   'meal_voucher',
   'standard',
 ];
@@ -45,6 +46,7 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
       bank_account: 0,
       cash: 0,
       digital_credit: 0,
+      investment_account: 0,
       meal_voucher: 0,
     };
     let mismatches = 0;

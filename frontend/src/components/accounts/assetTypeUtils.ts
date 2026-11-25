@@ -1,4 +1,4 @@
-import { Banknote, Coins, Landmark, LucideIcon, Ticket, Wallet } from 'lucide-react';
+import { Banknote, Coins, Landmark, LucideIcon, Ticket, TrendingUp, Wallet } from 'lucide-react';
 import { AssetAccountType, FireflyAssetAccount } from '../../types';
 
 export type CategorizedAssetAccountType = Exclude<AssetAccountType, 'standard'>;
@@ -21,6 +21,7 @@ export const CATEGORIZED_ASSET_TYPES: CategorizedAssetAccountType[] = [
   'bank_account',
   'cash',
   'digital_credit',
+  'investment_account',
   'meal_voucher',
 ];
 
@@ -29,6 +30,7 @@ export const ASSET_TYPE_ORDER: AssetAccountType[] = [
   'bank_account',
   'cash',
   'digital_credit',
+  'investment_account',
   'meal_voucher',
 ];
 
@@ -72,6 +74,19 @@ export const ASSET_TYPE_META: Record<AssetAccountType, AssetTypeMeta> = {
     modalActiveClass: 'border-violet-600 bg-violet-50/40 text-violet-950 ring-2 ring-violet-500/20',
     modalIconClass: 'text-violet-600',
   },
+  investment_account: {
+    label: 'Investment Account',
+    filterLabel: 'Investments',
+    subtitle: 'Brokerage, ETFs, or stocks',
+    icon: TrendingUp,
+    badgeClass: 'bg-indigo-100 text-indigo-800',
+    iconWrapperClass: 'bg-indigo-50 text-indigo-600',
+    cardBorderClass: 'border-indigo-200/80 hover:border-indigo-300',
+    summaryRingClass: 'border-indigo-500 bg-indigo-50/40 ring-1 ring-indigo-500/25',
+    filterActiveClass: 'bg-white text-indigo-800 shadow-xs',
+    modalActiveClass: 'border-indigo-600 bg-indigo-50/40 text-indigo-950 ring-2 ring-indigo-500/20',
+    modalIconClass: 'text-indigo-600',
+  },
   meal_voucher: {
     label: 'Meal Voucher',
     filterLabel: 'Meal Vouchers',
@@ -95,8 +110,8 @@ export const ASSET_TYPE_META: Record<AssetAccountType, AssetTypeMeta> = {
     cardBorderClass: 'border-slate-200 hover:border-slate-300',
     summaryRingClass: 'border-slate-500 bg-slate-50 ring-1 ring-slate-400/25',
     filterActiveClass: 'bg-white text-slate-800 shadow-xs',
-    modalActiveClass: 'border-indigo-600 bg-indigo-50/40 text-indigo-900 ring-2 ring-indigo-500/20',
-    modalIconClass: 'text-indigo-600',
+    modalActiveClass: 'border-slate-600 bg-slate-100/70 text-slate-900 ring-2 ring-slate-400/25',
+    modalIconClass: 'text-slate-700',
   },
 };
 
@@ -182,8 +197,8 @@ export function formatAssetMoney(
  * Computes active-only asset balance totals in integer cents, grouped per currency.
  * - `grandTotals` and `totalActiveCount` include only active accounts flagged
  *   `include_net_worth !== false` on Firefly III (across all types, including `standard`).
- * - `categorized` covers strictly the 4 categorized types (`bank_account`, `cash`,
- *   `digital_credit`, `meal_voucher`), summing all active accounts of each type regardless
+ * - `categorized` covers strictly the 5 categorized types (`bank_account`, `cash`,
+ *   `digital_credit`, `investment_account`, `meal_voucher`), summing all active accounts of each type regardless
  *   of `include_net_worth` and preserving zero-count entries at `€0.00`.
  */
 export function computeAssetBalanceSummary(

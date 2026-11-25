@@ -66,7 +66,7 @@ export const AssetBalanceSummary: React.FC<AssetBalanceSummaryProps> = ({
       {expanded && (
         <div
           id="asset-balance-breakdown"
-          className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2"
+          className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2"
         >
           {summary.categorized.map((item) => {
             const meta = ASSET_TYPE_META[item.type];

@@ -148,6 +148,7 @@ export type AssetAccountType =
   | 'bank_account'
   | 'cash'
   | 'digital_credit'
+  | 'investment_account'
   | 'meal_voucher';
 
 export interface FireflyAssetAccount {

@@ -131,7 +131,7 @@ export const AssetAccountConfigModal: React.FC<AssetAccountConfigModalProps> = (
                     type="button"
                     onClick={() => setAssetType(typeKey)}
                     className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition cursor-pointer ${
-                      typeKey === 'standard' ? 'col-span-2' : ''
+                      typeKey === 'standard' || typeKey === 'meal_voucher' ? 'col-span-2' : ''
                     } ${
                       isSelected
                         ? meta.modalActiveClass

@@ -49,6 +49,9 @@ describe('computeAssetBalanceSummary', () => {
     expect(byType.digital_credit.activeCount).toBe(0);
     expect(byType.digital_credit.totals).toEqual([{ currency: 'EUR', cents: 0 }]);
 
+    expect(byType.investment_account.activeCount).toBe(0);
+    expect(byType.investment_account.totals).toEqual([{ currency: 'EUR', cents: 0 }]);
+
     expect(byType.meal_voucher.activeCount).toBe(0);
     expect(byType.meal_voucher.totals).toEqual([{ currency: 'EUR', cents: 0 }]);
   });
@@ -105,7 +108,7 @@ describe('computeAssetBalanceSummary', () => {
     const emptySummary = computeAssetBalanceSummary([]);
     expect(emptySummary.totalActiveCount).toBe(0);
     expect(emptySummary.grandTotals).toEqual([{ currency: 'EUR', cents: 0 }]);
-    expect(emptySummary.categorized).toHaveLength(4);
+    expect(emptySummary.categorized).toHaveLength(5);
     expect(emptySummary.categorized.every((c) => c.activeCount === 0 && c.totals[0].cents === 0)).toBe(true);
 
     const edgeAccounts: FireflyAssetAccount[] = [
@@ -125,6 +128,7 @@ describe('computeAssetBalanceSummary', () => {
     expect(formatAssetMoney('bad', 'USD')).toBe('USD 0.00');
     expect(normalizeAssetType('future_type')).toBe('standard');
     expect(normalizeAssetType('digital_credit')).toBe('digital_credit');
+    expect(normalizeAssetType('investment_account')).toBe('investment_account');
   });
 
   it('excludes include_net_worth=false from grandTotals while keeping them in per-type categorized cards', () => {
@@ -135,13 +139,14 @@ describe('computeAssetBalanceSummary', () => {
       makeAccount({ id: 4, name: 'Included Standard', asset_type: 'standard', current_balance: '25.00', include_net_worth: true }),
       makeAccount({ id: 5, name: 'Excluded Standard', asset_type: 'standard', current_balance: '75.00', include_net_worth: false }),
       makeAccount({ id: 6, name: 'Inactive Net Worth Bank', active: false, asset_type: 'bank_account', current_balance: '999.00', include_net_worth: true }),
+      makeAccount({ id: 7, name: 'Brokerage ETF', asset_type: 'investment_account', current_balance: '2416.15', include_net_worth: true }),
     ];
 
     const summary = computeAssetBalanceSummary(accounts);
 
-    // Grand total includes only active accounts with include_net_worth !== false (1000 + 25 = 1025 EUR)
-    expect(summary.totalActiveCount).toBe(2);
-    expect(summary.grandTotals).toEqual([{ currency: 'EUR', cents: 102500 }]);
+    // Grand total includes only active accounts with include_net_worth !== false (1000 + 25 + 2416.15 = 3441.15 EUR)
+    expect(summary.totalActiveCount).toBe(3);
+    expect(summary.grandTotals).toEqual([{ currency: 'EUR', cents: 344115 }]);
 
     // Per-type breakdown cards still sum ALL active accounts of each categorized type
     const bank = summary.categorized.find((c) => c.type === 'bank_account');
@@ -151,5 +156,9 @@ describe('computeAssetBalanceSummary', () => {
     const digitalCredit = summary.categorized.find((c) => c.type === 'digital_credit');
     expect(digitalCredit?.activeCount).toBe(1);
     expect(digitalCredit?.totals).toEqual([{ currency: 'EUR', cents: 4000 }]);
+
+    const investment = summary.categorized.find((c) => c.type === 'investment_account');
+    expect(investment?.activeCount).toBe(1);
+    expect(investment?.totals).toEqual([{ currency: 'EUR', cents: 241615 }]);
   });
 });
