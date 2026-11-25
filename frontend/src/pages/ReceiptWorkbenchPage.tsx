@@ -69,6 +69,15 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     loadRecentReceipts();
   }, [loadRecentReceipts]);
 
+  const totalCents = Math.round(Math.max(targetTotal, 0) * 100);
+  const unitCents = Math.round(Math.max(voucherUnitValue, 0) * 100);
+  const voucherCents =
+    paymentMode === 'split_vouchers' ? Math.max(0, voucherCount) * unitCents : 0;
+  const cardRemainderCents =
+    paymentMode === 'split_vouchers'
+      ? Math.max(0, totalCents - voucherCents)
+      : totalCents;
+
   const getPushDisabledReasons = (): string[] => {
     const reasons: string[] = [];
     if (!fireflyAccountId) {
@@ -77,10 +86,13 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     if (draftItems.length === 0) reasons.push('Add at least one item');
     if (targetTotal <= 0) reasons.push('Set Target Total > 0');
     else if (!isBalanced) reasons.push('Reconcile item sum with Target Total (|Δ| ≤ €0.01)');
-    if (!sourceAccountId) reasons.push('Select Primary Source Account');
+    if ((paymentMode !== 'split_vouchers' || cardRemainderCents > 0) && !sourceAccountId) {
+      reasons.push('Select Primary Source Account');
+    }
     if (paymentMode === 'split_vouchers') {
       if (!voucherAccountId) reasons.push('Select Voucher Asset Account');
       if (voucherCount <= 0) reasons.push('Set Voucher Count ≥ 1');
+      if (voucherCents > totalCents) reasons.push('Voucher total cannot exceed Target Total');
     }
     return reasons;
   };
@@ -103,7 +115,10 @@ export const ReceiptWorkbenchPage: React.FC = () => {
       purchase_time: purchaseTime.trim(),
       total_amount: targetTotal,
       basket_discount: basketDiscount,
-      source_account_id: sourceAccountId,
+      source_account_id:
+        paymentMode === 'split_vouchers' && cardRemainderCents <= 0
+          ? null
+          : sourceAccountId,
       payment_mode: paymentMode,
       voucher_account_id: paymentMode === 'split_vouchers' ? voucherAccountId : null,
       voucher_count: paymentMode === 'split_vouchers' ? voucherCount : 0,

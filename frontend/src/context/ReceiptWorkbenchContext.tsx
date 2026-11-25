@@ -333,10 +333,24 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
       i => i.product_id > 0 && i.quantity > 0 && i.package_size > 0 && i.paid_price >= 0
     );
 
+  const totalCents = Math.round(Math.max(targetTotal, 0) * 100);
+  const unitCents = Math.round(Math.max(voucherUnitValue, 0) * 100);
+  const voucherCents =
+    paymentMode === 'split_vouchers' ? Math.max(0, voucherCount) * unitCents : 0;
+  const vouchersExceedTotal =
+    paymentMode === 'split_vouchers' && voucherCents > totalCents;
+  const cardRemainderCents =
+    paymentMode === 'split_vouchers'
+      ? Math.max(0, totalCents - voucherCents)
+      : totalCents;
+  const requiresSourceAccount =
+    paymentMode !== 'split_vouchers' || cardRemainderCents > 0;
+
   const canPushToFirefly =
     canSaveLocally &&
-    Boolean(sourceAccountId) &&
-    (paymentMode !== 'split_vouchers' || (Boolean(voucherAccountId) && voucherCount > 0));
+    (!requiresSourceAccount || Boolean(sourceAccountId)) &&
+    (paymentMode !== 'split_vouchers' ||
+      (Boolean(voucherAccountId) && voucherCount > 0 && !vouchersExceedTotal));
 
   const value: ReceiptWorkbenchContextValue = {
     fireflyAccountId,

@@ -147,20 +147,68 @@ export const WorkbenchHeader: React.FC = () => {
     setAttachedFile(file);
   };
 
+  const mealVoucherAccounts = assetAccounts.filter(
+    a => a.asset_type === 'meal_voucher'
+  );
+  const hasMealVoucherAccounts = mealVoucherAccounts.length > 0;
+  const showVoucherToggle =
+    hasMealVoucherAccounts || paymentMode === 'split_vouchers';
+
   const selectedSourceAccount = assetAccounts.find(a => a.id === sourceAccountId);
   const selectedVoucherAccount = assetAccounts.find(a => a.id === voucherAccountId);
+  const isSelectedVoucherFlagged =
+    selectedVoucherAccount?.asset_type === 'meal_voucher' &&
+    Boolean(selectedVoucherAccount.voucher_unit_value && selectedVoucherAccount.voucher_unit_value > 0);
+
+  // Auto-select single flagged meal-voucher account & lock unit value from metadata
+  useEffect(() => {
+    if (paymentMode !== 'split_vouchers') return;
+    if (voucherAccountId === null && mealVoucherAccounts.length === 1) {
+      setVoucherAccountId(mealVoucherAccounts[0].id);
+    }
+  }, [paymentMode, voucherAccountId, mealVoucherAccounts, setVoucherAccountId]);
+
+  useEffect(() => {
+    if (
+      paymentMode === 'split_vouchers' &&
+      isSelectedVoucherFlagged &&
+      selectedVoucherAccount?.voucher_unit_value
+    ) {
+      const configured = selectedVoucherAccount.voucher_unit_value;
+      if (Math.abs(configured - voucherUnitValue) > 0.001) {
+        setVoucherUnitValue(configured);
+      }
+    }
+  }, [
+    paymentMode,
+    isSelectedVoucherFlagged,
+    selectedVoucherAccount?.voucher_unit_value,
+    voucherUnitValue,
+    setVoucherUnitValue,
+  ]);
 
   const effectiveTotal = targetTotal > 0 ? targetTotal : Math.max(calculatedSum, 0);
-  const voucherCovered =
-    paymentMode === 'split_vouchers'
-      ? Math.round(
-          Math.min(Math.max(effectiveTotal, 0), voucherCount * voucherUnitValue) * 100
-        ) / 100
-      : 0;
+  const totalCents = Math.round(Math.max(effectiveTotal, 0) * 100);
+  const activeUnitValue =
+    isSelectedVoucherFlagged && selectedVoucherAccount?.voucher_unit_value
+      ? selectedVoucherAccount.voucher_unit_value
+      : voucherUnitValue;
+  const unitCents = Math.round(Math.max(activeUnitValue, 0) * 100);
+  const maxByTotal = unitCents > 0 ? Math.floor(totalCents / unitCents) : 0;
+  const usableVouchers =
+    isSelectedVoucherFlagged ? (selectedVoucherAccount?.usable_vouchers ?? 0) : null;
+  const maxVouchers =
+    usableVouchers !== null ? Math.min(usableVouchers, maxByTotal) : maxByTotal;
+
+  const voucherCents =
+    paymentMode === 'split_vouchers' ? Math.max(0, voucherCount) * unitCents : 0;
+  const voucherCovered = Math.round(voucherCents) / 100;
   const cardRemainder =
     paymentMode === 'split_vouchers'
-      ? Math.round(Math.max(0, effectiveTotal - voucherCovered) * 100) / 100
-      : Math.round(Math.max(effectiveTotal, 0) * 100) / 100;
+      ? Math.round(Math.max(0, totalCents - voucherCents)) / 100
+      : Math.round(totalCents) / 100;
+  const voucherLimitExceeded =
+    paymentMode === 'split_vouchers' && voucherCount > maxVouchers;
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5 space-y-4">
@@ -337,6 +385,11 @@ export const WorkbenchHeader: React.FC = () => {
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
                 Primary Source Account (Card / Cash)
+                {paymentMode === 'split_vouchers' && cardRemainder <= 0 && (
+                  <span className="ml-1 text-[11px] font-normal text-emerald-700">
+                    (Optional — €0.00 remainder)
+                  </span>
+                )}
               </label>
               <select
                 value={sourceAccountId ?? ''}
@@ -345,7 +398,11 @@ export const WorkbenchHeader: React.FC = () => {
                 }
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
               >
-                <option value="">Select source account...</option>
+                <option value="">
+                  {paymentMode === 'split_vouchers' && cardRemainder <= 0
+                    ? 'Not needed (€0.00 remainder)'
+                    : 'Select source account...'}
+                </option>
                 {assetAccounts.map(acc => (
                   <option key={acc.id} value={acc.id}>
                     {acc.name} (€{acc.current_balance})
@@ -354,79 +411,123 @@ export const WorkbenchHeader: React.FC = () => {
               </select>
             </div>
 
-            <label className="flex items-center space-x-2.5 py-2 px-3 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-blue-300">
-              <input
-                type="checkbox"
-                checked={paymentMode === 'split_vouchers'}
-                onChange={e =>
-                  setPaymentMode(e.target.checked ? 'split_vouchers' : 'single')
-                }
-                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-              />
-              <Ticket className="w-4 h-4 text-amber-600" />
-              <span className="text-xs font-semibold text-slate-800">
-                Split with Vouchers (Buoni Pasto)
-              </span>
-            </label>
+            {showVoucherToggle && (
+              <label className="flex items-center space-x-2.5 py-2 px-3 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-blue-300">
+                <input
+                  type="checkbox"
+                  checked={paymentMode === 'split_vouchers'}
+                  onChange={e =>
+                    setPaymentMode(e.target.checked ? 'split_vouchers' : 'single')
+                  }
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                <Ticket className="w-4 h-4 text-amber-600" />
+                <span className="text-xs font-semibold text-slate-800">
+                  Pay / Split with Meal Vouchers
+                </span>
+              </label>
+            )}
           </div>
 
           {paymentMode === 'split_vouchers' && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200/80">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Voucher Asset Account
-                </label>
-                <select
-                  value={voucherAccountId ?? ''}
-                  onChange={e =>
-                    setVoucherAccountId(e.target.value ? Number(e.target.value) : null)
-                  }
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
-                >
-                  <option value="">Select voucher account...</option>
-                  {assetAccounts.map(acc => (
-                    <option key={acc.id} value={acc.id}>
-                      {acc.name} (€{acc.current_balance})
-                    </option>
-                  ))}
-                </select>
+            <div className="space-y-2.5 pt-2 border-t border-slate-200/80">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Voucher Asset Account
+                  </label>
+                  <select
+                    value={voucherAccountId ?? ''}
+                    onChange={e =>
+                      setVoucherAccountId(e.target.value ? Number(e.target.value) : null)
+                    }
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                  >
+                    <option value="">Select voucher account...</option>
+                    {(hasMealVoucherAccounts ? mealVoucherAccounts : assetAccounts).map(acc => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.name} (
+                        {acc.asset_type === 'meal_voucher'
+                          ? `${acc.usable_vouchers ?? 0} × €${(acc.voucher_unit_value ?? 0).toFixed(2)}`
+                          : `€${acc.current_balance}`}
+                        )
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Voucher Count (0–{maxVouchers})
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={maxVouchers}
+                    value={voucherCount}
+                    onChange={e => {
+                      const raw = parseInt(e.target.value, 10);
+                      setVoucherCount(
+                        isNaN(raw) ? 0 : Math.max(0, Math.min(maxVouchers, raw))
+                      );
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                  />
+                  {selectedVoucherAccount && (
+                    <span className="block mt-1 text-[10px] text-slate-500">
+                      {usableVouchers !== null
+                        ? `${usableVouchers} in Firefly · ${maxByTotal} fit receipt`
+                        : `${maxByTotal} fit receipt`}
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Voucher Unit Value (€)
+                  </label>
+                  {isSelectedVoucherFlagged ? (
+                    <div className="w-full px-3 py-2 border border-amber-200 rounded-lg text-xs bg-amber-50/70 text-amber-900 font-semibold flex items-center justify-between">
+                      <span>€{activeUnitValue.toFixed(2)}</span>
+                      <span className="text-[10px] font-medium text-amber-700">Locked</span>
+                    </div>
+                  ) : (
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={voucherUnitText}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        setVoucherUnitText(raw);
+                        const n = parseFloat(raw);
+                        if (!isNaN(n) && n > 0) setVoucherUnitValue(n);
+                      }}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                    />
+                  )}
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Voucher Count (0–8)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  max={8}
-                  value={voucherCount}
-                  onChange={e => {
-                    const raw = parseInt(e.target.value, 10);
-                    setVoucherCount(
-                      isNaN(raw) ? 0 : Math.max(0, Math.min(8, raw))
-                    );
-                  }}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Voucher Unit Value (€)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={voucherUnitText}
-                  onChange={e => {
-                    const raw = e.target.value;
-                    setVoucherUnitText(raw);
-                    const n = parseFloat(raw);
-                    if (!isNaN(n) && n > 0) setVoucherUnitValue(n);
-                  }}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
-                />
-              </div>
+
+              {isSelectedVoucherFlagged &&
+                selectedVoucherAccount &&
+                !selectedVoucherAccount.is_exact_multiple && (
+                  <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <span>
+                      Firefly balance (€{Number(selectedVoucherAccount.current_balance || 0).toFixed(2)}) is off by €
+                      {Math.abs(selectedVoucherAccount.balance_discrepancy).toFixed(2)} from an exact multiple of €
+                      {activeUnitValue.toFixed(2)}.
+                    </span>
+                  </div>
+                )}
+
+              {voucherLimitExceeded && (
+                <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-[11px] text-rose-800 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                  <span>
+                    Selected {voucherCount} vouchers exceeds the allowed maximum ({maxVouchers}). Lower voucher count before pushing.
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -549,6 +650,11 @@ export const WorkbenchHeader: React.FC = () => {
           {paymentMode === 'single' ? (
             <span>
               Payment: <strong>100% on {selectedSourceAccount?.name || 'Select Source Account'}</strong>
+            </span>
+          ) : cardRemainder <= 0 ? (
+            <span>
+              Payment: <strong>100% Vouchers ({selectedVoucherAccount?.name || 'Unselected'})</strong>:{' '}
+              <strong className="text-amber-700">€{voucherCovered.toFixed(2)}</strong>
             </span>
           ) : (
             <span>
