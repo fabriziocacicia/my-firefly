@@ -143,10 +143,58 @@ export const COMMON_BUSINESS_TYPES = [
   'Hotel',
 ] as const;
 
+export type AssetAccountType = 'standard' | 'meal_voucher';
+
 export interface FireflyAssetAccount {
   id: number;
   name: string;
   current_balance: string;
+  active?: boolean;
+  currency_code?: string | null;
+  asset_type: AssetAccountType;
+  voucher_unit_value?: number | null;
+  default_revenue_account_id?: number | null;
+  default_revenue_account_name?: string | null;
+  default_recharge_description?: string | null;
+  notes?: string | null;
+  usable_vouchers?: number | null;
+  is_exact_multiple: boolean;
+  balance_discrepancy: number;
+}
+
+export interface FireflyRevenueAccount {
+  id: number;
+  name: string;
+}
+
+export interface AssetAccountMetadataUpdate {
+  asset_type: AssetAccountType;
+  voucher_unit_value?: number | null;
+  default_revenue_account_id?: number | null;
+  default_recharge_description?: string | null;
+  notes?: string | null;
+}
+
+export interface VoucherRechargeRequest {
+  count: number;
+  recharge_date: string;
+  recharge_time: string;
+  revenue_account_id?: number | null;
+  description?: string | null;
+  notes?: string | null;
+}
+
+export interface VoucherRechargeResponse {
+  firefly_transaction_id: number;
+  account_id: number;
+  revenue_account_id: number;
+  count: number;
+  unit_value: number;
+  amount: number;
+  current_balance: string;
+  usable_vouchers: number;
+  is_exact_multiple: boolean;
+  balance_discrepancy: number;
 }
 
 export type MeasureUnit = 'g' | 'kg' | 'ml' | 'l' | 'pcs';
