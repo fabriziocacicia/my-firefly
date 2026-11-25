@@ -17,7 +17,7 @@ A companion web application for **Firefly III** to track SKU-level product price
    - Classify accounts by role (`Local Business`, `Chain Branch`, `E-Commerce`, `Service`, `Person`, `Unclassified`).
    - Multi-type business modeling (`business_types` array, e.g. `[Bar/Cafe, Tobacconist]`) with automatic retail chain branch inheritance.
    - Sector category tagging (`category`) with zero-maintenance dynamic garbage collection (disappears automatically when unused).
-   - **Asset Accounts & Meal Vouchers**: View live Firefly III balances, classify asset accounts (`Bank Account`, `Cash`, `Digital Credit`, `Meal Voucher`, `Standard`), inspect total active balances with a collapsible categorized breakdown, detect voucher balance-multiple discrepancies, and create exact Firefly deposit recharges.
+   - **Asset Accounts & Meal Vouchers**: View live Firefly III balances, classify asset accounts (`Bank Account`, `Cash`, `Digital Credit`, `Investment Account`, `Meal Voucher`, `Standard`), inspect total active balances with a collapsible categorized breakdown, detect voucher balance-multiple discrepancies, and create exact Firefly deposit recharges.
 
 3. **Products, Brands & Price Intelligence**:
    - Track products with brands, package sizes, and multi-dimensional tags (e.g. `[Food, Pasta, Organic]`, `[Fruit, Bio]`).
