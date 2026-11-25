@@ -126,4 +126,30 @@ describe('computeAssetBalanceSummary', () => {
     expect(normalizeAssetType('future_type')).toBe('standard');
     expect(normalizeAssetType('gift_card')).toBe('gift_card');
   });
+
+  it('excludes include_net_worth=false from grandTotals while keeping them in per-type categorized cards', () => {
+    const accounts: FireflyAssetAccount[] = [
+      makeAccount({ id: 1, name: 'Included Bank', asset_type: 'bank_account', current_balance: '1000.00', include_net_worth: true }),
+      makeAccount({ id: 2, name: 'Excluded Bank', asset_type: 'bank_account', current_balance: '500.00', include_net_worth: false }),
+      makeAccount({ id: 3, name: 'Excluded Gift Card', asset_type: 'gift_card', current_balance: '40.00', include_net_worth: false }),
+      makeAccount({ id: 4, name: 'Included Standard', asset_type: 'standard', current_balance: '25.00', include_net_worth: true }),
+      makeAccount({ id: 5, name: 'Excluded Standard', asset_type: 'standard', current_balance: '75.00', include_net_worth: false }),
+      makeAccount({ id: 6, name: 'Inactive Net Worth Bank', active: false, asset_type: 'bank_account', current_balance: '999.00', include_net_worth: true }),
+    ];
+
+    const summary = computeAssetBalanceSummary(accounts);
+
+    // Grand total includes only active accounts with include_net_worth !== false (1000 + 25 = 1025 EUR)
+    expect(summary.totalActiveCount).toBe(2);
+    expect(summary.grandTotals).toEqual([{ currency: 'EUR', cents: 102500 }]);
+
+    // Per-type breakdown cards still sum ALL active accounts of each categorized type
+    const bank = summary.categorized.find((c) => c.type === 'bank_account');
+    expect(bank?.activeCount).toBe(2);
+    expect(bank?.totals).toEqual([{ currency: 'EUR', cents: 150000 }]);
+
+    const giftCard = summary.categorized.find((c) => c.type === 'gift_card');
+    expect(giftCard?.activeCount).toBe(1);
+    expect(giftCard?.totals).toEqual([{ currency: 'EUR', cents: 4000 }]);
+  });
 });

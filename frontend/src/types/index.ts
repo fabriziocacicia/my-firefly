@@ -155,6 +155,7 @@ export interface FireflyAssetAccount {
   name: string;
   current_balance: string;
   active?: boolean;
+  include_net_worth?: boolean;
   currency_code?: string | null;
   asset_type: AssetAccountType;
   voucher_unit_value?: number | null;

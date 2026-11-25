@@ -180,9 +180,11 @@ export function formatAssetMoney(
 
 /**
  * Computes active-only asset balance totals in integer cents, grouped per currency.
- * - `grandTotals` sums all active asset accounts across every type (including `standard`).
+ * - `grandTotals` and `totalActiveCount` include only active accounts flagged
+ *   `include_net_worth !== false` on Firefly III (across all types, including `standard`).
  * - `categorized` covers strictly the 4 categorized types (`bank_account`, `cash`,
- *   `gift_card`, `meal_voucher`), preserving zero-count entries at `€0.00`.
+ *   `gift_card`, `meal_voucher`), summing all active accounts of each type regardless
+ *   of `include_net_worth` and preserving zero-count entries at `€0.00`.
  */
 export function computeAssetBalanceSummary(
   accounts: FireflyAssetAccount[]
@@ -201,12 +203,14 @@ export function computeAssetBalanceSummary(
   for (const acc of accounts) {
     if (acc.active === false) continue;
 
-    totalActiveCount += 1;
     const currency = normalizeCurrency(acc.currency_code);
     const cents = toCents(acc.current_balance);
     const normalizedType = normalizeAssetType(acc.asset_type);
 
-    grandMap.set(currency, (grandMap.get(currency) ?? 0) + cents);
+    if (acc.include_net_worth !== false) {
+      totalActiveCount += 1;
+      grandMap.set(currency, (grandMap.get(currency) ?? 0) + cents);
+    }
 
     if (normalizedType !== 'standard') {
       const tMap = typeMaps.get(normalizedType);

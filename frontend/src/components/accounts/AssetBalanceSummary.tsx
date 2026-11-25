@@ -32,7 +32,7 @@ export const AssetBalanceSummary: React.FC<AssetBalanceSummaryProps> = ({
               Total Active Assets
             </span>
             <span className="text-xs text-slate-400 tabular-nums">
-              ({summary.totalActiveCount} active)
+              ({summary.totalActiveCount} in net worth)
             </span>
           </div>
           <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
