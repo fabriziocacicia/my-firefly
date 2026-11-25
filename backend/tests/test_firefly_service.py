@@ -290,6 +290,8 @@ class FireflyServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(tx["source_id"], "40")
             self.assertEqual(tx["destination_id"], "10")
             self.assertEqual(tx["description"], "Monthly Buoni Pasto")
+            self.assertEqual(tx["category_name"], "Income: Benefits")
+            self.assertEqual(tx["tags"], ["Meal Voucher"])
         finally:
             await client.aclose()
 

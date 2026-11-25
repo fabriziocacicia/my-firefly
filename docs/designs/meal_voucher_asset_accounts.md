@@ -24,7 +24,7 @@ Provide first-class management of Firefly III **asset accounts** inside Firefly 
 Specifically, V1 delivers:
 1. **Asset Accounts Management View** (new `Asset Accounts` tab on `AccountsAndChainsPage`): lists all Firefly III asset accounts with their live Firefly balance, type badge (`Standard` / `Meal Voucher`), configured voucher unit value, computed whole-voucher count, and an immediate mismatch warning whenever `current_balance` is not an exact multiple of `voucher_unit_value`.
 2. **Meal Voucher Configuration & Employer Association:** Flag/unflag an asset account as `meal_voucher`, configure its `voucher_unit_value` (in EUR, `> 0`), and set an editable default employer **revenue account** (fetched live from Firefly III) plus an optional voucher name (`default_recharge_description`, formatted as `<N> x <name> Meal Vouchers` on recharges).
-3. **Recharge Action (`count`, `date`, `time`):** Trigger a Firefly III `deposit` transaction from the employer revenue account into the meal-voucher asset account for exact amount `count × voucher_unit_value` at the specified date and time.
+3. **Recharge Action (`count`, `date`, `time`):** Trigger a Firefly III `deposit` transaction from the employer revenue account into the meal-voucher asset account for exact amount `count × voucher_unit_value` at the specified date and time, automatically tagged with category `Income: Benefits` and tag `Meal Voucher`.
 4. **Receipt Workbench Whole-Voucher Enforcement:**
    - Lock/auto-fill `voucher_unit_value` from the selected meal-voucher account's metadata (preventing manual price typos).
    - Remove the hardcoded `0–8` voucher cap; enforce `0 <= voucher_count <= min(usable_vouchers_from_firefly, floor(receipt_total / voucher_unit_value))`.
@@ -80,7 +80,7 @@ npm run dev
 - `backend/migrations/versions/0008_asset_account_metadata.py` *(new)*: Alembic migration creating `asset_account_metadata` (plus `auto_migrate_sqlite_columns` / `SQLModel.metadata.create_all` safety).
 - `backend/app/services/firefly.py`:
   - Add `get_all_revenue_accounts()` (`_get_all_accounts_by_type("revenue")`) and `get_account_by_id(account_id, expected_type)` helper.
-  - Add `create_voucher_recharge_deposit(...)` posting a Firefly III `deposit` transaction (`type: "deposit"`, `source_id: revenue_account_id`, `destination_id: voucher_account_id`, `amount`, `date`, `description`, `notes`).
+  - Add `create_voucher_recharge_deposit(...)` posting a Firefly III `deposit` transaction (`type: "deposit"`, `source_id: revenue_account_id`, `destination_id: voucher_account_id`, `amount`, `date`, `description`, `category_name: "Income: Benefits"`, `tags: ["Meal Voucher"]`, `notes`).
 - `backend/app/services/vouchers.py` *(new)*:
   - Pure integer-cent calculation helpers (`compute_voucher_balance_status(balance, unit_value)`) returning:
     - `usable_vouchers: int`

@@ -308,6 +308,8 @@ class FireflyClient:
         recharge_date: date,
         recharge_time: dt_time,
         description: str,
+        category_name: str = "Income: Benefits",
+        tags: Optional[list[str]] = None,
         notes: Optional[str] = None,
     ) -> dict[str, Any]:
         """
@@ -326,6 +328,8 @@ class FireflyClient:
                     "description": description,
                     "source_id": str(revenue_account_id),
                     "destination_id": str(voucher_account_id),
+                    "category_name": category_name,
+                    "tags": tags if tags is not None else ["Meal Voucher"],
                     "notes": notes or "",
                 }
             ],

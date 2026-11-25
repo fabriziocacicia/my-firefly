@@ -230,6 +230,9 @@ export const VoucherRechargeModal: React.FC<VoucherRechargeModalProps> = ({
                 €{projectedBalance.toFixed(2)} ({(account.usable_vouchers ?? 0) + validCount} vouchers)
               </span>
             </div>
+            <div className="pt-1 border-t border-amber-200/70 text-[11px] text-amber-800/90">
+              Category: <strong>Income: Benefits</strong> · Tag: <strong>Meal Voucher</strong>
+            </div>
           </div>
 
           <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">

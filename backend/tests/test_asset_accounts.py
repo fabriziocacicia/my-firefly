@@ -315,6 +315,8 @@ class AssetAccountsApiTests(unittest.TestCase):
             kwargs = mock_deposit.call_args.kwargs
             self.assertEqual(kwargs["revenue_account_id"], 40)
             self.assertEqual(kwargs["description"], "10 x Ticket Restaurant Meal Vouchers")
+            self.assertEqual(kwargs["category_name"], "Income: Benefits")
+            self.assertEqual(kwargs["tags"], ["Meal Voucher"])
 
 
 if __name__ == "__main__":

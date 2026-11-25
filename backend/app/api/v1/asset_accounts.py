@@ -222,6 +222,8 @@ async def recharge_meal_vouchers(
             recharge_date=payload.recharge_date,
             recharge_time=payload.recharge_time,
             description=description,
+            category_name="Income: Benefits",
+            tags=["Meal Voucher"],
             notes=payload.notes,
         )
     except httpx.HTTPError as exc:
