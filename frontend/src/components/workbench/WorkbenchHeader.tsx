@@ -16,6 +16,8 @@ import { StoreCombobox } from '../common/StoreCombobox';
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
 const ACCEPT_ATTR =
   'image/heic,image/heif,image/jpeg,image/png,image/webp,application/pdf,.heic,.heif';
+const formatEuro = (v: number): string =>
+  `${v < 0 ? '-' : ''}€${Math.abs(v).toFixed(2)}`;
 
 export const WorkbenchHeader: React.FC = () => {
   const {
@@ -290,7 +292,7 @@ export const WorkbenchHeader: React.FC = () => {
             aria-label="Computed receipt total"
             className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-semibold bg-slate-50 text-slate-900 select-all"
           >
-            €{calculatedSum.toFixed(2)}
+            {formatEuro(calculatedSum)}
           </div>
         </div>
 
@@ -585,7 +587,7 @@ export const WorkbenchHeader: React.FC = () => {
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <div className="px-3 py-1.5 rounded-lg bg-slate-100">
             <span className="text-slate-500 mr-1.5">Receipt Total:</span>
-            <strong className="text-slate-900">€{calculatedSum.toFixed(2)}</strong>
+            <strong className="text-slate-900">{formatEuro(calculatedSum)}</strong>
             <span className="text-slate-400 ml-1">
               (Items €{computedItemsSum.toFixed(2)}
               {basketDiscount > 0 ? ` - €${basketDiscount.toFixed(2)}` : ''})

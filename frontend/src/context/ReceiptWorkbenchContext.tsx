@@ -341,15 +341,6 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     [computedItemsSum, basketDiscount]
   );
 
-  const canSaveLocally =
-    Boolean(fireflyAccountId) &&
-    Boolean(purchaseTime.trim()) &&
-    draftItems.length > 0 &&
-    calculatedSum > 0 &&
-    draftItems.every(
-      i => i.product_id > 0 && i.quantity > 0 && i.package_size > 0 && i.paid_price >= 0
-    );
-
   const mealVoucherAccounts = useMemo(
     () => assetAccounts.filter(a => a.asset_type === 'meal_voucher'),
     [assetAccounts]
@@ -399,6 +390,16 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     paymentMode !== 'split_vouchers' || cardRemainderCents > 0;
   const voucherLimitExceeded =
     paymentMode === 'split_vouchers' && voucherCount > maxVouchers;
+
+  const canSaveLocally =
+    Boolean(fireflyAccountId) &&
+    Boolean(purchaseTime.trim()) &&
+    draftItems.length > 0 &&
+    calculatedSum > 0 &&
+    (paymentMode !== 'split_vouchers' || voucherCount <= maxByTotal) &&
+    draftItems.every(
+      i => i.product_id > 0 && i.quantity > 0 && i.package_size > 0 && i.paid_price >= 0
+    );
 
   const canPushToFirefly =
     canSaveLocally &&
