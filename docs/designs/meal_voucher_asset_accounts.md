@@ -91,8 +91,9 @@ npm run dev
   - Enhance `GET /api/v1/firefly/asset-accounts` to hydrate `asset_type`, `voucher_unit_value`, `default_revenue_account_id`, `default_revenue_account_name` (if resolved), `default_recharge_description`, `usable_vouchers`, `is_exact_multiple`, `balance_discrepancy`.
   - Add `GET /api/v1/firefly/revenue-accounts` returning active Firefly III revenue accounts (`id`, `name`).
 - `backend/app/api/v1/asset_accounts.py` *(new, registered in `router.py`)*:
-  - `PUT /api/v1/asset-accounts/{account_id}/metadata`: validate `meal_voucher` invariants (`voucher_unit_value > 0`, optional `default_revenue_account_id` validated against Firefly if provided) and persist config.
-  - `POST /api/v1/asset-accounts/{account_id}/recharge`: accepts `{ count: int (> 0), recharge_date: date, recharge_time: time, revenue_account_id?: int, description?: str, notes?: str }`, verifies account is `meal_voucher` with `voucher_unit_value > 0`, resolves `revenue_account_id` (payload override or `default_revenue_account_id`, 400 if neither set), computes exact `amount = count * voucher_unit_value`, creates Firefly deposit, and returns transaction summary + refreshed live balance/voucher count.
+  - `GET /api/v1/asset-accounts/{account_id}/metadata`: returns persisted configuration or default `standard` fallback.
+  - `PUT /api/v1/asset-accounts/{account_id}/metadata`: offline-capable local metadata upsert; validates `meal_voucher` invariants (`voucher_unit_value > 0`, optional positive `default_revenue_account_id`) and persists config.
+  - `POST /api/v1/asset-accounts/{account_id}/recharge`: accepts `{ count: int (> 0), recharge_date: date, recharge_time: time, revenue_account_id?: int, description?: str, notes?: str }`, verifies account is `meal_voucher` with `voucher_unit_value > 0`, resolves `revenue_account_id` (payload override or `default_revenue_account_id`, 400 if neither set), validates both asset and revenue accounts against Firefly III, computes exact `amount = count * voucher_unit_value`, creates Firefly deposit (`Income: Benefits` + `Meal Voucher`), and returns transaction summary + refreshed live balance/voucher count.
 - `backend/app/api/v1/receipts.py`:
   - Update `_validate_firefly_accounts(receipt)` and `create_receipt` / `update_receipt` / `push_receipt_to_firefly`:
     - When `payment_mode == "split_vouchers"`:

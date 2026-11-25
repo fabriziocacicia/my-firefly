@@ -37,17 +37,17 @@ A companion web application for **Firefly III** to track SKU-level product price
 my-firefly/
 ├── backend/                  # Python 3.11 + FastAPI + SQLModel
 │   ├── app/
-│   │   ├── api/v1/           # REST endpoints (companies, products, prices, firefly, workflows, receipts, accounts, categories)
+│   │   ├── api/v1/           # REST endpoints (companies, products, prices, firefly, workflows, receipts, accounts, asset_accounts, categories)
 │   │   ├── core/             # Configuration & SQLite connection
-│   │   ├── models/           # SQLModel domain models (Company, AccountMetadata, Product, Price, Tag, Receipt)
-│   │   ├── services/         # Firefly III client & price normalization
+│   │   ├── models/           # SQLModel domain models (Company, AccountMetadata, AssetAccountMetadata, Product, Price, Tag, Receipt)
+│   │   ├── services/         # Firefly III client, voucher math & price normalization
 │   │   └── main.py           # FastAPI entrypoint
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/                 # TypeScript + React + Vite + Tailwind CSS
 │   ├── src/
 │   │   ├── api/client.ts     # Typed API client
-│   │   ├── components/       # UI components (Workbench, Common, Navigation)
+│   │   ├── components/       # UI components (Workbench, Accounts, Common, Navigation)
 │   │   ├── pages/            # ReceiptWorkbenchPage, AccountsAndChainsPage, CatalogPage, WorkflowsPage
 │   │   └── types/            # TypeScript interfaces
 │   ├── package.json
