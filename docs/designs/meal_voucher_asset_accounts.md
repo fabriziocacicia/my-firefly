@@ -23,7 +23,7 @@ Provide first-class management of Firefly III **asset accounts** inside Firefly 
 
 Specifically, V1 delivers:
 1. **Asset Accounts Management View** (new `Asset Accounts` tab on `AccountsAndChainsPage`): lists all Firefly III asset accounts with their live Firefly balance, type badge (`Standard` / `Meal Voucher`), configured voucher unit value, computed whole-voucher count, and an immediate mismatch warning whenever `current_balance` is not an exact multiple of `voucher_unit_value`.
-2. **Meal Voucher Configuration & Employer Association:** Flag/unflag an asset account as `meal_voucher`, configure its `voucher_unit_value` (in EUR, `> 0`), and set an editable default employer **revenue account** (fetched live from Firefly III) plus an optional default recharge description.
+2. **Meal Voucher Configuration & Employer Association:** Flag/unflag an asset account as `meal_voucher`, configure its `voucher_unit_value` (in EUR, `> 0`), and set an editable default employer **revenue account** (fetched live from Firefly III) plus an optional voucher name (`default_recharge_description`, formatted as `<N> x <name> Meal Vouchers` on recharges).
 3. **Recharge Action (`count`, `date`, `time`):** Trigger a Firefly III `deposit` transaction from the employer revenue account into the meal-voucher asset account for exact amount `count × voucher_unit_value` at the specified date and time.
 4. **Receipt Workbench Whole-Voucher Enforcement:**
    - Lock/auto-fill `voucher_unit_value` from the selected meal-voucher account's metadata (preventing manual price typos).

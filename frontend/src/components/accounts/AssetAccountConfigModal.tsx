@@ -192,16 +192,24 @@ export const AssetAccountConfigModal: React.FC<AssetAccountConfigModalProps> = (
 
               <div>
                 <label htmlFor="default-recharge-desc" className="block text-xs font-semibold text-slate-700 mb-1">
-                  Default Recharge Description (Optional)
+                  Voucher Name (Optional)
                 </label>
                 <input
                   id="default-recharge-desc"
                   type="text"
                   value={defaultDescription}
                   onChange={(e) => setDefaultDescription(e.target.value)}
-                  placeholder="e.g. Monthly Buoni Pasto"
+                  placeholder="e.g. Ticket Restaurant, Edenred"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Used for recharge descriptions:{' '}
+                  <span className="font-medium text-slate-600">
+                    {defaultDescription.trim()
+                      ? `22 x ${defaultDescription.trim()} Meal Vouchers`
+                      : '22 x Meal Vouchers'}
+                  </span>
+                </p>
               </div>
             </>
           )}

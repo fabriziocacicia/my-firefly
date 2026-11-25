@@ -285,7 +285,7 @@ class AssetAccountsApiTests(unittest.TestCase):
                 "asset_type": "meal_voucher",
                 "voucher_unit_value": 5.16,
                 "default_revenue_account_id": 40,
-                "default_recharge_description": "Monthly Buoni",
+                "default_recharge_description": "Ticket Restaurant",
             },
         )
 
@@ -314,7 +314,7 @@ class AssetAccountsApiTests(unittest.TestCase):
             mock_deposit.assert_awaited_once()
             kwargs = mock_deposit.call_args.kwargs
             self.assertEqual(kwargs["revenue_account_id"], 40)
-            self.assertEqual(kwargs["description"], "Monthly Buoni")
+            self.assertEqual(kwargs["description"], "10 x Ticket Restaurant Meal Vouchers")
 
 
 if __name__ == "__main__":

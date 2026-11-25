@@ -206,11 +206,13 @@ async def recharge_meal_vouchers(
     amount_cents = payload.count * unit_cents
     amount = amount_cents / 100
 
-    description = (
-        (payload.description or "").strip()
-        or (meta.default_recharge_description or "").strip()
-        or f"Meal vouchers recharge ({payload.count} x €{unit_value:.2f})"
+    voucher_name = (meta.default_recharge_description or "").strip()
+    default_formatted_desc = (
+        f"{payload.count} x {voucher_name} Meal Vouchers"
+        if voucher_name
+        else f"{payload.count} x Meal Vouchers"
     )
+    description = (payload.description or "").strip() or default_formatted_desc
 
     try:
         tx_resp = await firefly_client.create_voucher_recharge_deposit(

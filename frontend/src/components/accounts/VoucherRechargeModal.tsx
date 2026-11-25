@@ -24,15 +24,18 @@ export const VoucherRechargeModal: React.FC<VoucherRechargeModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  const voucherName = (account.default_recharge_description || '').trim();
+  const buildDefaultDescription = (cnt: number) =>
+    voucherName ? `${cnt} x ${voucherName} Meal Vouchers` : `${cnt} x Meal Vouchers`;
+
   const [countStr, setCountStr] = useState('20');
   const [rechargeDate, setRechargeDate] = useState(getTodayDate);
   const [rechargeTime, setRechargeTime] = useState(getCurrentTimeHHMM);
   const [revenueAccountId, setRevenueAccountId] = useState(
     account.default_revenue_account_id ? String(account.default_revenue_account_id) : ''
   );
-  const [description, setDescription] = useState(
-    account.default_recharge_description || ''
-  );
+  const [description, setDescription] = useState(() => buildDefaultDescription(20));
+  const [descriptionEdited, setDescriptionEdited] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -136,7 +139,16 @@ export const VoucherRechargeModal: React.FC<VoucherRechargeModalProps> = ({
                 step={1}
                 required
                 value={countStr}
-                onChange={(e) => setCountStr(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setCountStr(val);
+                  if (!descriptionEdited) {
+                    const n = parseInt(val, 10);
+                    setDescription(
+                      Number.isFinite(n) && n > 0 ? buildDefaultDescription(n) : ''
+                    );
+                  }
+                }}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
               />
             </div>
@@ -198,8 +210,11 @@ export const VoucherRechargeModal: React.FC<VoucherRechargeModalProps> = ({
               id="recharge-description"
               type="text"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder={`Meal vouchers recharge (${validCount} x €${unitValue.toFixed(2)})`}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                setDescriptionEdited(true);
+              }}
+              placeholder={buildDefaultDescription(validCount || 1)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
             />
           </div>
