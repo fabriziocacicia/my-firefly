@@ -3,7 +3,9 @@ import { FireflyAssetAccount } from '../../types';
 import {
   CATEGORIZED_ASSET_TYPES,
   computeAssetBalanceSummary,
+  formatAssetMoney,
   formatCents,
+  normalizeAssetType,
 } from './assetTypeUtils';
 
 function makeAccount(
@@ -96,5 +98,32 @@ describe('computeAssetBalanceSummary', () => {
     expect(formatCents(241615, 'EUR')).toBe('€2416.15');
     expect(formatCents(-516, 'EUR')).toBe('-€5.16');
     expect(formatCents(2550, 'USD')).toBe('USD 25.50');
+    expect(formatCents(1000, ' eur ')).toBe('€10.00');
+  });
+
+  it('handles empty lists, all-inactive accounts, negative balances, undefined active, and decimal-safe rounding', () => {
+    const emptySummary = computeAssetBalanceSummary([]);
+    expect(emptySummary.totalActiveCount).toBe(0);
+    expect(emptySummary.grandTotals).toEqual([{ currency: 'EUR', cents: 0 }]);
+    expect(emptySummary.categorized).toHaveLength(4);
+    expect(emptySummary.categorized.every((c) => c.activeCount === 0 && c.totals[0].cents === 0)).toBe(true);
+
+    const edgeAccounts: FireflyAssetAccount[] = [
+      makeAccount({ id: 1, name: 'Active Undefined', active: undefined, asset_type: 'cash', current_balance: '1.005', currency_code: ' eur ' }),
+      makeAccount({ id: 2, name: 'Negative Bank', asset_type: 'bank_account', current_balance: '-5.16' }),
+      makeAccount({ id: 3, name: 'Invalid Balance', asset_type: 'gift_card', current_balance: 'not-a-number' }),
+      makeAccount({ id: 4, name: 'Inactive Standard', active: false, asset_type: 'standard', current_balance: '100.00' }),
+    ];
+
+    const summary = computeAssetBalanceSummary(edgeAccounts);
+    expect(summary.totalActiveCount).toBe(3);
+    expect(summary.grandTotals).toEqual([{ currency: 'EUR', cents: 101 - 516 }]);
+
+    const cash = summary.categorized.find((c) => c.type === 'cash');
+    expect(cash?.totals).toEqual([{ currency: 'EUR', cents: 101 }]);
+    expect(formatAssetMoney('-5.16', 'EUR')).toBe('-€5.16');
+    expect(formatAssetMoney('bad', 'USD')).toBe('USD 0.00');
+    expect(normalizeAssetType('future_type')).toBe('standard');
+    expect(normalizeAssetType('gift_card')).toBe('gift_card');
   });
 });

@@ -254,13 +254,11 @@ class AssetAccountsApiTests(unittest.TestCase):
             },
         )
 
-        for idx, (account_id, asset_type, note) in enumerate(
-            [
-                (20, "gift_card", "Amazon balance"),
-                (21, "bank_account", "Main checking"),
-                (22, "cash", "Physical wallet"),
-            ]
-        ):
+        for account_id, asset_type, note in [
+            (20, "gift_card", "Amazon balance"),
+            (21, "bank_account", "Main checking"),
+            (22, "cash", "Physical wallet"),
+        ]:
             res = self.client.put(
                 f"/api/v1/asset-accounts/{account_id}/metadata",
                 json={"asset_type": asset_type, "notes": note},
