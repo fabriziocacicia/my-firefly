@@ -72,13 +72,14 @@ export const AssetBalanceSummary: React.FC<AssetBalanceSummaryProps> = ({
       {expanded && (
         <div
           id="asset-balance-breakdown"
-          className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2.5"
+          className="mt-3.5 pt-3.5 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2.5"
         >
           {summary.categorized.map((item) => {
             const meta = ASSET_TYPE_META[item.type];
             const Icon = meta.icon;
             const isSelected = activeFilter === item.type;
             const isEmpty = item.activeCount === 0;
+            const [primaryAmount, ...secondaryAmounts] = item.totals;
 
             return (
               <button
@@ -86,43 +87,53 @@ export const AssetBalanceSummary: React.FC<AssetBalanceSummaryProps> = ({
                 type="button"
                 onClick={() => onFilterSelect(isSelected ? 'all' : item.type)}
                 aria-pressed={isSelected}
-                className={`flex flex-col justify-between gap-2 p-3 rounded-lg border text-left focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer ${
+                className={`flex flex-col justify-start p-3 rounded-xl border text-left focus:outline-none focus:ring-2 focus:ring-indigo-500 transition cursor-pointer ${
                   isSelected
                     ? meta.summaryRingClass
-                    : 'border-slate-200/80 bg-slate-50/50 hover:bg-slate-50 hover:border-slate-300'
+                    : 'border-slate-200/90 bg-slate-50/40 hover:bg-white hover:border-slate-300'
                 }`}
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className={`p-1.5 rounded-md shrink-0 ${meta.iconWrapperClass}`}>
-                    <Icon className="w-3.5 h-3.5" />
+                <div className="flex items-center justify-between gap-1.5 w-full">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div className={`p-1 rounded-md shrink-0 ${meta.iconWrapperClass}`}>
+                      <Icon className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-xs font-semibold text-slate-700 leading-tight">
+                      {meta.label}
+                    </span>
                   </div>
-                  <span className="text-xs font-semibold text-slate-700 leading-snug">
-                    {meta.label}
+                  <span
+                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-slate-200/70 text-slate-600 tabular-nums shrink-0"
+                    title={`${item.activeCount} active ${
+                      item.activeCount === 1 ? 'account' : 'accounts'
+                    }`}
+                  >
+                    {item.activeCount}
+                    <span className="sr-only">
+                      {' '}
+                      active {item.activeCount === 1 ? 'account' : 'accounts'}
+                    </span>
                   </span>
                 </div>
 
-                <div className="flex items-end justify-between gap-2 pt-0.5">
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    {item.totals.map((t, idx) => (
-                      <span
-                        key={t.currency}
-                        className={`tabular-nums ${
-                          idx === 0 ? 'text-sm font-bold' : 'text-[11px] font-semibold'
-                        } ${
-                          isEmpty
-                            ? 'text-slate-400'
-                            : idx === 0
-                            ? 'text-slate-900'
-                            : 'text-slate-500'
-                        }`}
-                      >
-                        {formatCents(t.cents, t.currency)}
-                      </span>
-                    ))}
-                  </div>
-                  <span className="text-[11px] text-slate-400 tabular-nums shrink-0">
-                    {item.activeCount} {item.activeCount === 1 ? 'account' : 'accounts'}
-                  </span>
+                <div className="mt-2.5 flex flex-col gap-0.5">
+                  {primaryAmount && (
+                    <span
+                      className={`text-[15px] font-bold tabular-nums leading-tight ${
+                        isEmpty ? 'text-slate-400' : 'text-slate-900'
+                      }`}
+                    >
+                      {formatCents(primaryAmount.cents, primaryAmount.currency)}
+                    </span>
+                  )}
+                  {secondaryAmounts.map((t) => (
+                    <span
+                      key={t.currency}
+                      className="text-[11px] font-medium text-slate-500 tabular-nums leading-tight"
+                    >
+                      + {formatCents(t.cents, t.currency)}
+                    </span>
+                  ))}
                 </div>
               </button>
             );
