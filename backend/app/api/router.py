@@ -8,6 +8,7 @@ from app.api.v1 import (
     workflows,
     receipts,
     accounts,
+    asset_accounts,
     categories,
 )
 
@@ -21,4 +22,5 @@ api_router.include_router(tags.router)
 api_router.include_router(workflows.router)
 api_router.include_router(receipts.router)
 api_router.include_router(accounts.router)
+api_router.include_router(asset_accounts.router)
 api_router.include_router(categories.router)
