@@ -65,8 +65,8 @@ From [Meal Voucher Asset Accounts & Recharge — V1](meal_voucher_asset_accounts
 
 Inherits from [base spec](meal_voucher_asset_accounts.md#2-tech-stack):
 - **Backend tests (from `backend/`):** `pytest` (focused: `pytest tests/test_asset_accounts.py -v`)
-- **Frontend type-check & build (from `frontend/`):** `npm run build`
-- **Frontend tests (from `frontend/`):** `npm test` (if Vitest/test suite exists; verify)
+- **Frontend type-check & build (from `frontend/`):** `npm run build` (or `bun run build`)
+- **Frontend unit tests (from `frontend/`):** `bun test src/components/accounts/assetTypeUtils.test.ts`
 
 ---
 
@@ -78,8 +78,8 @@ Inherits from [base spec](meal_voucher_asset_accounts.md#2-tech-stack):
   - API `GET /api/v1/firefly/asset-accounts` hydration test returning `bank_account`, `cash`, `gift_card` accounts cleanly with `usable_vouchers = None`.
   - Guard check: `POST /api/v1/asset-accounts/{id}/recharge` continues rejecting `bank_account` / `cash` / `gift_card` with HTTP 400.
 - **Frontend:**
-  - `npm run build` (`tsc && vite build`) passes cleanly with zero errors.
-  - Unit tests (Vitest) for the pure balance-summing / currency-grouping helper (active vs. inactive exclusion, multi-currency grouping, categorized-only total, integer-cent accuracy).
+  - `npm run build` / `bun run build` (`tsc && vite build`) passes cleanly with zero errors.
+  - Unit tests (`bun test`) for the pure balance-summing / currency-grouping helper (active vs. inactive exclusion, multi-currency grouping, categorized-only total, decimal-safe integer-cent accuracy).
 
 ---
 
