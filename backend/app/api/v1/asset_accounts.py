@@ -33,7 +33,7 @@ class VoucherRechargeRequest(BaseModel):
     count: int = Field(gt=0, description="Number of whole vouchers to deposit")
     recharge_date: date
     recharge_time: time
-    revenue_account_id: Optional[int] = None
+    revenue_account_id: Optional[int] = Field(default=None, gt=0)
     description: Optional[str] = None
     notes: Optional[str] = None
 
@@ -131,14 +131,21 @@ def update_asset_account_metadata(
         meta.voucher_unit_value = voucher_unit_value
         meta.default_revenue_account_id = default_revenue_account_id
         meta.default_recharge_description = default_recharge_description
-        if payload.notes is not None:
-            meta.notes = notes
+        meta.notes = notes
         meta.updated_at = now
 
     session.add(meta)
     session.commit()
     session.refresh(meta)
     return _build_metadata_response(account_id, meta)
+
+
+def _format_firefly_http_error(prefix: str, exc: httpx.HTTPError) -> str:
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        snippet = exc.response.text.strip().replace("\n", " ")[:300]
+        if snippet:
+            return f"{prefix}: HTTP {exc.response.status_code} ({snippet})"
+    return f"{prefix}: {exc}"
 
 
 @router.post("/{account_id}/recharge", response_model=VoucherRechargeResponse)
@@ -160,7 +167,11 @@ async def recharge_meal_vouchers(
             detail="Account is not configured as a meal voucher account",
         )
 
-    revenue_account_id = payload.revenue_account_id or meta.default_revenue_account_id
+    revenue_account_id = (
+        payload.revenue_account_id
+        if payload.revenue_account_id is not None
+        else meta.default_revenue_account_id
+    )
     if not revenue_account_id:
         raise HTTPException(
             status_code=400,
@@ -177,7 +188,9 @@ async def recharge_meal_vouchers(
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"Unable to reach Firefly III to validate accounts: {exc}",
+            detail=_format_firefly_http_error(
+                "Unable to reach Firefly III to validate accounts", exc
+            ),
         ) from exc
 
     if not asset_acc:
@@ -229,7 +242,9 @@ async def recharge_meal_vouchers(
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"Failed to post recharge deposit to Firefly III: {exc}",
+            detail=_format_firefly_http_error(
+                "Failed to post recharge deposit to Firefly III", exc
+            ),
         ) from exc
 
     tx_id = int(tx_resp["data"]["id"])

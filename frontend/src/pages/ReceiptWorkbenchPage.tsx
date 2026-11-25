@@ -40,6 +40,10 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     canSaveLocally,
     canPushToFirefly,
     clearDraft,
+    requiresSourceAccount,
+    voucherLimitExceeded,
+    maxVouchers,
+    refreshAssetAccounts,
   } = useReceiptWorkbench();
 
   const [submitting, setSubmitting] = useState(false);
@@ -69,15 +73,6 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     loadRecentReceipts();
   }, [loadRecentReceipts]);
 
-  const totalCents = Math.round(Math.max(targetTotal, 0) * 100);
-  const unitCents = Math.round(Math.max(voucherUnitValue, 0) * 100);
-  const voucherCents =
-    paymentMode === 'split_vouchers' ? Math.max(0, voucherCount) * unitCents : 0;
-  const cardRemainderCents =
-    paymentMode === 'split_vouchers'
-      ? Math.max(0, totalCents - voucherCents)
-      : totalCents;
-
   const getPushDisabledReasons = (): string[] => {
     const reasons: string[] = [];
     if (!fireflyAccountId) {
@@ -86,13 +81,15 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     if (draftItems.length === 0) reasons.push('Add at least one item');
     if (targetTotal <= 0) reasons.push('Set Target Total > 0');
     else if (!isBalanced) reasons.push('Reconcile item sum with Target Total (|Δ| ≤ €0.01)');
-    if ((paymentMode !== 'split_vouchers' || cardRemainderCents > 0) && !sourceAccountId) {
+    if (requiresSourceAccount && !sourceAccountId) {
       reasons.push('Select Primary Source Account');
     }
     if (paymentMode === 'split_vouchers') {
       if (!voucherAccountId) reasons.push('Select Voucher Asset Account');
       if (voucherCount <= 0) reasons.push('Set Voucher Count ≥ 1');
-      if (voucherCents > totalCents) reasons.push('Voucher total cannot exceed Target Total');
+      if (voucherLimitExceeded) {
+        reasons.push(`Lower Voucher Count to ≤ ${maxVouchers}`);
+      }
     }
     return reasons;
   };
@@ -116,9 +113,7 @@ export const ReceiptWorkbenchPage: React.FC = () => {
       total_amount: targetTotal,
       basket_discount: basketDiscount,
       source_account_id:
-        paymentMode === 'split_vouchers' && cardRemainderCents <= 0
-          ? null
-          : sourceAccountId,
+        !requiresSourceAccount ? null : sourceAccountId,
       payment_mode: paymentMode,
       voucher_account_id: paymentMode === 'split_vouchers' ? voucherAccountId : null,
       voucher_count: paymentMode === 'split_vouchers' ? voucherCount : 0,
@@ -151,7 +146,7 @@ export const ReceiptWorkbenchPage: React.FC = () => {
       if (shouldPush) {
         const pushed = await api.receipts.pushToFirefly(receiptId, false);
         clearDraft();
-        await loadRecentReceipts();
+        await Promise.all([loadRecentReceipts(), refreshAssetAccounts()]);
         setStatusMessage({
           type: 'success',
           text: `Receipt #${pushed.id} saved and synced to Firefly III!`,
@@ -181,6 +176,7 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     try {
       const updated = await api.receipts.pushToFirefly(receipt.id, force);
       setRecentReceipts(prev => prev.map(r => (r.id === updated.id ? updated : r)));
+      await refreshAssetAccounts();
       setStatusMessage({
         type: 'success',
         text: `Receipt #${updated.id} synced to Firefly III.`,

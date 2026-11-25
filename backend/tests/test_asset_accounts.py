@@ -45,6 +45,13 @@ class VoucherMathTests(unittest.TestCase):
         self.assertFalse(status.is_exact_multiple)
         self.assertAlmostEqual(status.balance_discrepancy, -5.16, places=2)
 
+    def test_decimal_precision_avoids_binary_float_rounding_trap(self):
+        from app.services.vouchers import to_cents
+
+        self.assertEqual(to_cents(1.005), 101)
+        with self.assertRaises(ValueError):
+            to_cents(float("nan"))
+
     def test_max_vouchers_for_total_has_no_hardcoded_eight_cap(self):
         self.assertEqual(max_vouchers_for_total(100.00, 5.16, 12), 12)
         self.assertEqual(max_vouchers_for_total(25.80, 5.16, 10), 5)
@@ -162,6 +169,11 @@ class AssetAccountsApiTests(unittest.TestCase):
         SQLModel.metadata.drop_all(self.engine)
 
     def test_put_asset_account_metadata_validation_and_persistence(self):
+        # Default GET returns standard fallback
+        get_default = self.client.get("/api/v1/asset-accounts/10/metadata")
+        self.assertEqual(get_default.status_code, 200)
+        self.assertEqual(get_default.json()["asset_type"], "standard")
+
         # Reject meal_voucher without positive unit value
         bad_res = self.client.put(
             "/api/v1/asset-accounts/10/metadata",
@@ -169,7 +181,7 @@ class AssetAccountsApiTests(unittest.TestCase):
         )
         self.assertEqual(bad_res.status_code, 422)
 
-        # Configure valid meal voucher account
+        # Configure valid meal voucher account with notes
         ok_res = self.client.put(
             "/api/v1/asset-accounts/10/metadata",
             json={
@@ -177,6 +189,7 @@ class AssetAccountsApiTests(unittest.TestCase):
                 "voucher_unit_value": 5.16,
                 "default_revenue_account_id": 40,
                 "default_recharge_description": "Employer Top-up",
+                "notes": "Initial note",
             },
         )
         self.assertEqual(ok_res.status_code, 200)
@@ -184,6 +197,20 @@ class AssetAccountsApiTests(unittest.TestCase):
         self.assertEqual(body["asset_type"], "meal_voucher")
         self.assertAlmostEqual(body["voucher_unit_value"], 5.16, places=2)
         self.assertEqual(body["default_revenue_account_id"], 40)
+        self.assertEqual(body["notes"], "Initial note")
+
+        # Clearing notes with null must erase persisted notes
+        clear_notes_res = self.client.put(
+            "/api/v1/asset-accounts/10/metadata",
+            json={
+                "asset_type": "meal_voucher",
+                "voucher_unit_value": 5.16,
+                "default_revenue_account_id": 40,
+                "notes": None,
+            },
+        )
+        self.assertEqual(clear_notes_res.status_code, 200)
+        self.assertIsNone(clear_notes_res.json()["notes"])
 
         # Updating employer revenue account later works cleanly
         upd_res = self.client.put(
@@ -317,6 +344,118 @@ class AssetAccountsApiTests(unittest.TestCase):
             self.assertEqual(kwargs["description"], "10 x Ticket Restaurant Meal Vouchers")
             self.assertEqual(kwargs["category_name"], "Income: Benefits")
             self.assertEqual(kwargs["tags"], ["Meal Voucher"])
+
+    def test_recharge_error_paths_override_and_fallback_balance(self):
+        from unittest.mock import AsyncMock, patch
+        import httpx
+
+        self.client.put(
+            "/api/v1/asset-accounts/10/metadata",
+            json={
+                "asset_type": "meal_voucher",
+                "voucher_unit_value": 5.16,
+                "default_revenue_account_id": 40,
+            },
+        )
+
+        # Non-positive revenue_account_id rejected with 422 (no silent fallback)
+        bad_rev = self.client.post(
+            "/api/v1/asset-accounts/10/recharge",
+            json={
+                "count": 5,
+                "recharge_date": "2026-11-25",
+                "recharge_time": "09:30:00",
+                "revenue_account_id": 0,
+            },
+        )
+        self.assertEqual(bad_rev.status_code, 422)
+
+        # 404 when asset account missing in Firefly
+        with patch(
+            "app.api.v1.asset_accounts.firefly_client.get_account_by_id",
+            new=AsyncMock(side_effect=[None, {"id": "40", "attributes": {"active": True}}]),
+        ):
+            r404 = self.client.post(
+                "/api/v1/asset-accounts/10/recharge",
+                json={"count": 5, "recharge_date": "2026-11-25", "recharge_time": "09:30:00"},
+            )
+            self.assertEqual(r404.status_code, 404)
+
+        # 400 when revenue account is inactive
+        with patch(
+            "app.api.v1.asset_accounts.firefly_client.get_account_by_id",
+            new=AsyncMock(
+                side_effect=[
+                    {"id": "10", "attributes": {"active": True, "current_balance": "0"}},
+                    {"id": "99", "attributes": {"active": False}},
+                ]
+            ),
+        ):
+            r400 = self.client.post(
+                "/api/v1/asset-accounts/10/recharge",
+                json={
+                    "count": 5,
+                    "recharge_date": "2026-11-25",
+                    "recharge_time": "09:30:00",
+                    "revenue_account_id": 99,
+                },
+            )
+            self.assertEqual(r400.status_code, 400)
+
+        # 502 when Firefly deposit call fails
+        with (
+            patch(
+                "app.api.v1.asset_accounts.firefly_client.get_account_by_id",
+                new=AsyncMock(
+                    side_effect=[
+                        {"id": "10", "attributes": {"active": True, "current_balance": "10.32"}},
+                        {"id": "40", "attributes": {"active": True}},
+                    ]
+                ),
+            ),
+            patch(
+                "app.api.v1.asset_accounts.firefly_client.create_voucher_recharge_deposit",
+                new=AsyncMock(side_effect=httpx.ConnectError("Connection refused")),
+            ),
+        ):
+            r502 = self.client.post(
+                "/api/v1/asset-accounts/10/recharge",
+                json={"count": 5, "recharge_date": "2026-11-25", "recharge_time": "09:30:00"},
+            )
+            self.assertEqual(r502.status_code, 502)
+
+        # Override revenue account + fallback balance when post-deposit refresh fails
+        with (
+            patch(
+                "app.api.v1.asset_accounts.firefly_client.get_account_by_id",
+                new=AsyncMock(
+                    side_effect=[
+                        {"id": "10", "attributes": {"active": True, "current_balance": "10.32"}},
+                        {"id": "55", "attributes": {"active": True}},
+                        httpx.ConnectError("Timeout on post-refresh"),
+                    ]
+                ),
+            ),
+            patch(
+                "app.api.v1.asset_accounts.firefly_client.create_voucher_recharge_deposit",
+                new=AsyncMock(return_value={"data": {"id": "999"}}),
+            ) as mock_dep,
+        ):
+            ok_fallback = self.client.post(
+                "/api/v1/asset-accounts/10/recharge",
+                json={
+                    "count": 2,
+                    "recharge_date": "2026-11-25",
+                    "recharge_time": "10:00:00",
+                    "revenue_account_id": 55,
+                },
+            )
+            self.assertEqual(ok_fallback.status_code, 200)
+            body = ok_fallback.json()
+            self.assertEqual(body["revenue_account_id"], 55)
+            self.assertEqual(body["current_balance"], "20.64")
+            self.assertEqual(body["usable_vouchers"], 4)
+            self.assertEqual(mock_dep.call_args.kwargs["description"], "2 x Meal Vouchers")
 
 
 if __name__ == "__main__":

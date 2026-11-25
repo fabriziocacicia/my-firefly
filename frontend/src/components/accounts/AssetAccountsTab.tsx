@@ -199,7 +199,7 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
                             Unit Value
                           </span>
                           <span className="font-semibold text-slate-800">
-                            €{(acc.voucher_unit_value ?? 0).toFixed(2)}
+                            {formatMoney(acc.voucher_unit_value ?? 0, acc.currency_code)}
                           </span>
                         </div>
                         <div>
@@ -228,8 +228,8 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
                           <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
                           <span>
                             Balance is off by{' '}
-                            <strong>€{Math.abs(acc.balance_discrepancy).toFixed(2)}</strong> from an exact
-                            multiple of €{(acc.voucher_unit_value ?? 0).toFixed(2)}. Check Firefly transactions.
+                            <strong>{formatMoney(Math.abs(acc.balance_discrepancy), acc.currency_code)}</strong> from an exact
+                            multiple of {formatMoney(acc.voucher_unit_value ?? 0, acc.currency_code)}. Check Firefly transactions.
                           </span>
                         </div>
                       )}

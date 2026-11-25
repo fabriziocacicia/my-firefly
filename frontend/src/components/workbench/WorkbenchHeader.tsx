@@ -11,9 +11,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { api } from '../../api/client';
 import { useReceiptWorkbench } from '../../context/ReceiptWorkbenchContext';
-import { FireflyAssetAccount } from '../../types';
 import { StoreCombobox } from '../common/StoreCombobox';
 
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
@@ -56,10 +54,19 @@ export const WorkbenchHeader: React.FC = () => {
     calculatedSum,
     discrepancyDelta,
     isBalanced,
+    assetAccounts,
+    assetAccountsError,
+    mealVoucherAccounts,
+    selectedSourceAccount,
+    selectedVoucherAccount,
+    usableVouchers,
+    maxByTotal,
+    maxVouchers,
+    voucherCovered,
+    cardRemainder,
+    voucherLimitExceeded,
   } = useReceiptWorkbench();
 
-  const [assetAccounts, setAssetAccounts] = useState<FireflyAssetAccount[]>([]);
-  const [fireflyOffline, setFireflyOffline] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -73,22 +80,6 @@ export const WorkbenchHeader: React.FC = () => {
   const [voucherUnitText, setVoucherUnitText] = useState(String(voucherUnitValue));
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    api.firefly
-      .getAssetAccounts()
-      .then(accounts => {
-        setAssetAccounts(accounts);
-        setFireflyOffline(null);
-      })
-      .catch(err => {
-        setFireflyOffline(
-          err instanceof Error
-            ? err.message
-            : 'Unable to fetch Firefly III asset accounts'
-        );
-      });
-  }, []);
 
   // Sync local text fields on clearDraft or external updates
   useEffect(() => {
@@ -147,18 +138,17 @@ export const WorkbenchHeader: React.FC = () => {
     setAttachedFile(file);
   };
 
-  const mealVoucherAccounts = assetAccounts.filter(
-    a => a.asset_type === 'meal_voucher'
-  );
   const hasMealVoucherAccounts = mealVoucherAccounts.length > 0;
   const showVoucherToggle =
     hasMealVoucherAccounts || paymentMode === 'split_vouchers';
 
-  const selectedSourceAccount = assetAccounts.find(a => a.id === sourceAccountId);
-  const selectedVoucherAccount = assetAccounts.find(a => a.id === voucherAccountId);
   const isSelectedVoucherFlagged =
     selectedVoucherAccount?.asset_type === 'meal_voucher' &&
     Boolean(selectedVoucherAccount.voucher_unit_value && selectedVoucherAccount.voucher_unit_value > 0);
+  const voucherOptions = hasMealVoucherAccounts ? mealVoucherAccounts : assetAccounts;
+  const hasStaleVoucherSelection =
+    voucherAccountId !== null &&
+    !voucherOptions.some(acc => acc.id === voucherAccountId);
 
   // Auto-select single flagged meal-voucher account & lock unit value from metadata
   useEffect(() => {
@@ -188,27 +178,10 @@ export const WorkbenchHeader: React.FC = () => {
   ]);
 
   const effectiveTotal = targetTotal > 0 ? targetTotal : Math.max(calculatedSum, 0);
-  const totalCents = Math.round(Math.max(effectiveTotal, 0) * 100);
   const activeUnitValue =
     isSelectedVoucherFlagged && selectedVoucherAccount?.voucher_unit_value
       ? selectedVoucherAccount.voucher_unit_value
       : voucherUnitValue;
-  const unitCents = Math.round(Math.max(activeUnitValue, 0) * 100);
-  const maxByTotal = unitCents > 0 ? Math.floor(totalCents / unitCents) : 0;
-  const usableVouchers =
-    isSelectedVoucherFlagged ? (selectedVoucherAccount?.usable_vouchers ?? 0) : null;
-  const maxVouchers =
-    usableVouchers !== null ? Math.min(usableVouchers, maxByTotal) : maxByTotal;
-
-  const voucherCents =
-    paymentMode === 'split_vouchers' ? Math.max(0, voucherCount) * unitCents : 0;
-  const voucherCovered = Math.round(voucherCents) / 100;
-  const cardRemainder =
-    paymentMode === 'split_vouchers'
-      ? Math.round(Math.max(0, totalCents - voucherCents)) / 100
-      : Math.round(totalCents) / 100;
-  const voucherLimitExceeded =
-    paymentMode === 'split_vouchers' && voucherCount > maxVouchers;
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-5 space-y-4">
@@ -271,11 +244,11 @@ export const WorkbenchHeader: React.FC = () => {
       </div>
 
       {/* Firefly Non-Blocking Warning */}
-      {fireflyOffline && (
+      {assetAccountsError && (
         <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
           <span>
-            Firefly III asset accounts unavailable ({fireflyOffline}). You can still itemize and
+            Firefly III asset accounts unavailable ({assetAccountsError}). You can still itemize and
             click <strong>Save Receipt Locally</strong>.
           </span>
         </div>
@@ -444,7 +417,12 @@ export const WorkbenchHeader: React.FC = () => {
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
                   >
                     <option value="">Select voucher account...</option>
-                    {(hasMealVoucherAccounts ? mealVoucherAccounts : assetAccounts).map(acc => (
+                    {hasStaleVoucherSelection && voucherAccountId !== null && (
+                      <option value={voucherAccountId}>
+                        {selectedVoucherAccount?.name || `Account #${voucherAccountId}`} (Unflagged / Missing)
+                      </option>
+                    )}
+                    {voucherOptions.map(acc => (
                       <option key={acc.id} value={acc.id}>
                         {acc.name} (
                         {acc.asset_type === 'meal_voucher'
@@ -506,6 +484,15 @@ export const WorkbenchHeader: React.FC = () => {
                   )}
                 </div>
               </div>
+
+              {hasStaleVoucherSelection && (
+                <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>
+                    Saved draft references Account #{voucherAccountId}, which is no longer flagged as a meal-voucher account. Select a valid meal-voucher account or configure it in Accounts & Chains.
+                  </span>
+                </div>
+              )}
 
               {isSelectedVoucherFlagged &&
                 selectedVoucherAccount &&

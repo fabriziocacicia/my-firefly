@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { del, get, set } from 'idb-keyval';
-import { DraftReceiptItem, EntryMode, PaymentMode } from '../types';
+import { api } from '../api/client';
+import { DraftReceiptItem, EntryMode, FireflyAssetAccount, PaymentMode } from '../types';
 
 const DRAFT_STORAGE_KEY = 'firefly_receipt_draft';
 const FILE_STORAGE_KEY = 'draft_receipt_file';
@@ -139,6 +140,20 @@ interface ReceiptWorkbenchContextValue {
   isBalanced: boolean;
   canSaveLocally: boolean;
   canPushToFirefly: boolean;
+
+  assetAccounts: FireflyAssetAccount[];
+  assetAccountsError: string | null;
+  refreshAssetAccounts: () => Promise<void>;
+  mealVoucherAccounts: FireflyAssetAccount[];
+  selectedSourceAccount: FireflyAssetAccount | undefined;
+  selectedVoucherAccount: FireflyAssetAccount | undefined;
+  usableVouchers: number | null;
+  maxByTotal: number;
+  maxVouchers: number;
+  voucherCovered: number;
+  cardRemainder: number;
+  requiresSourceAccount: boolean;
+  voucherLimitExceeded: boolean;
 }
 
 const ReceiptWorkbenchContext = createContext<ReceiptWorkbenchContextValue | undefined>(undefined);
@@ -163,6 +178,26 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
   const [activeMode, setActiveMode] = useState<EntryMode>(initial.activeMode);
   const [attachedFile, setAttachedFileState] = useState<File | null>(null);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
+  const [assetAccounts, setAssetAccounts] = useState<FireflyAssetAccount[]>([]);
+  const [assetAccountsError, setAssetAccountsError] = useState<string | null>(null);
+
+  const refreshAssetAccounts = useCallback(async () => {
+    try {
+      const accounts = await api.firefly.getAssetAccounts();
+      setAssetAccounts(accounts);
+      setAssetAccountsError(null);
+    } catch (err) {
+      setAssetAccountsError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to fetch Firefly III asset accounts'
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshAssetAccounts();
+  }, [refreshAssetAccounts]);
 
   // Hydrate binary attachment from IndexedDB before allowing writes/deletions
   useEffect(() => {
@@ -333,24 +368,72 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
       i => i.product_id > 0 && i.quantity > 0 && i.package_size > 0 && i.paid_price >= 0
     );
 
-  const totalCents = Math.round(Math.max(targetTotal, 0) * 100);
-  const unitCents = Math.round(Math.max(voucherUnitValue, 0) * 100);
+  const mealVoucherAccounts = useMemo(
+    () => assetAccounts.filter(a => a.asset_type === 'meal_voucher'),
+    [assetAccounts]
+  );
+
+  const selectedSourceAccount = useMemo(
+    () => assetAccounts.find(a => a.id === sourceAccountId),
+    [assetAccounts, sourceAccountId]
+  );
+
+  const selectedVoucherAccount = useMemo(
+    () => assetAccounts.find(a => a.id === voucherAccountId),
+    [assetAccounts, voucherAccountId]
+  );
+
+  const isSelectedVoucherFlagged =
+    selectedVoucherAccount?.asset_type === 'meal_voucher' &&
+    Boolean(
+      selectedVoucherAccount.voucher_unit_value &&
+        selectedVoucherAccount.voucher_unit_value > 0
+    );
+
+  const effectiveTotal = targetTotal > 0 ? targetTotal : Math.max(calculatedSum, 0);
+  const effectiveTotalCents = Math.round(Math.max(effectiveTotal, 0) * 100);
+  const targetTotalCents = Math.round(Math.max(targetTotal, 0) * 100);
+  const activeUnitValue =
+    isSelectedVoucherFlagged && selectedVoucherAccount?.voucher_unit_value
+      ? selectedVoucherAccount.voucher_unit_value
+      : voucherUnitValue;
+  const unitCents = Math.round(Math.max(activeUnitValue, 0) * 100);
+
+  const maxByTotal = unitCents > 0 ? Math.floor(effectiveTotalCents / unitCents) : 0;
+  const maxByTargetTotal = unitCents > 0 ? Math.floor(targetTotalCents / unitCents) : 0;
+  const usableVouchers = isSelectedVoucherFlagged
+    ? selectedVoucherAccount?.usable_vouchers ?? 0
+    : null;
+  const maxVouchers =
+    usableVouchers !== null ? Math.min(usableVouchers, maxByTotal) : maxByTotal;
+  const maxPushVouchers =
+    usableVouchers !== null ? Math.min(usableVouchers, maxByTargetTotal) : maxByTargetTotal;
+
   const voucherCents =
     paymentMode === 'split_vouchers' ? Math.max(0, voucherCount) * unitCents : 0;
-  const vouchersExceedTotal =
-    paymentMode === 'split_vouchers' && voucherCents > totalCents;
+  const voucherCovered = Math.round(voucherCents) / 100;
   const cardRemainderCents =
     paymentMode === 'split_vouchers'
-      ? Math.max(0, totalCents - voucherCents)
-      : totalCents;
+      ? Math.max(0, effectiveTotalCents - voucherCents)
+      : effectiveTotalCents;
+  const cardRemainder = Math.round(cardRemainderCents) / 100;
+
+  const pushCardRemainderCents =
+    paymentMode === 'split_vouchers'
+      ? Math.max(0, targetTotalCents - voucherCents)
+      : targetTotalCents;
   const requiresSourceAccount =
-    paymentMode !== 'split_vouchers' || cardRemainderCents > 0;
+    paymentMode !== 'split_vouchers' || pushCardRemainderCents > 0;
+  const voucherLimitExceeded =
+    paymentMode === 'split_vouchers' && voucherCount > maxVouchers;
+  const pushVoucherLimitExceeded =
+    paymentMode === 'split_vouchers' && voucherCount > maxPushVouchers;
 
   const canPushToFirefly =
     canSaveLocally &&
     (!requiresSourceAccount || Boolean(sourceAccountId)) &&
     (paymentMode !== 'split_vouchers' ||
-      (Boolean(voucherAccountId) && voucherCount > 0 && !vouchersExceedTotal));
+      (Boolean(voucherAccountId) && voucherCount > 0 && !pushVoucherLimitExceeded));
 
   const value: ReceiptWorkbenchContextValue = {
     fireflyAccountId,
@@ -395,6 +478,19 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     isBalanced,
     canSaveLocally,
     canPushToFirefly,
+    assetAccounts,
+    assetAccountsError,
+    refreshAssetAccounts,
+    mealVoucherAccounts,
+    selectedSourceAccount,
+    selectedVoucherAccount,
+    usableVouchers,
+    maxByTotal,
+    maxVouchers,
+    voucherCovered,
+    cardRemainder,
+    requiresSourceAccount,
+    voucherLimitExceeded,
   };
 
   return (

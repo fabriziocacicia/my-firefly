@@ -231,10 +231,12 @@ def _resolve_and_validate_voucher_terms(
     voucher_account_id: Optional[int],
     voucher_count: int,
     voucher_unit_value: float,
+    apply_account_config: bool = True,
 ) -> tuple[float, int, int, Optional[AssetAccountMetadata]]:
     """
-    Validates whole-voucher limits against receipt total and applies configured
-    unit value when the voucher account is flagged as meal_voucher.
+    Validates whole-voucher limits against receipt total. When `apply_account_config`
+    is True (on receipt creation), enforces the unit value configured on a flagged
+    meal_voucher account; during push/recovery, preserves the receipt's stored snapshot.
     Returns (effective_unit_value, voucher_cents, card_remainder_cents, meal_voucher_meta).
     """
     total_cents = to_cents(total_amount)
@@ -258,7 +260,9 @@ def _resolve_and_validate_voucher_terms(
         and to_cents(meta.voucher_unit_value) > 0
     )
     effective_unit_value = (
-        float(meta.voucher_unit_value) if is_meal_voucher and meta else voucher_unit_value
+        float(meta.voucher_unit_value)
+        if apply_account_config and is_meal_voucher and meta
+        else voucher_unit_value
     )
     unit_cents = to_cents(effective_unit_value)
     if voucher_count > 0 and unit_cents <= 0:
@@ -607,7 +611,7 @@ async def _validate_firefly_accounts(
                 .get("current_balance", "0")
             )
             status = compute_voucher_balance_status(
-                live_balance, voucher_meta.voucher_unit_value
+                live_balance, receipt.voucher_unit_value
             )
             if receipt.voucher_count > status.usable_vouchers:
                 raise HTTPException(
@@ -629,7 +633,7 @@ async def push_receipt_to_firefly(
 ):
     receipt = _get_receipt_or_404(session, receipt_id)
 
-    effective_unit_value, voucher_cents, card_remainder_cents, voucher_meta = (
+    _, voucher_cents, card_remainder_cents, voucher_meta = (
         _resolve_and_validate_voucher_terms(
             session=session,
             payment_mode=receipt.payment_mode,
@@ -637,10 +641,9 @@ async def push_receipt_to_firefly(
             voucher_account_id=receipt.voucher_account_id,
             voucher_count=receipt.voucher_count,
             voucher_unit_value=receipt.voucher_unit_value,
+            apply_account_config=False,
         )
     )
-    if effective_unit_value != receipt.voucher_unit_value:
-        receipt.voucher_unit_value = effective_unit_value
 
     partial_voucher_only = (
         receipt.firefly_voucher_transaction_id is not None

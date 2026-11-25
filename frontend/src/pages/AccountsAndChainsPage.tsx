@@ -141,6 +141,8 @@ export const AccountsAndChainsPage: React.FC = () => {
         setLoadError(`Categories error: ${catsRes.reason?.message || 'Failed to fetch'}`);
       } else if (assetsRes.status === 'rejected') {
         setLoadError(`Asset accounts error: ${assetsRes.reason?.message || 'Failed to fetch'}`);
+      } else if (revsRes.status === 'rejected') {
+        setLoadError(`Revenue accounts error: ${revsRes.reason?.message || 'Failed to fetch'}`);
       }
     } catch (err: any) {
       console.error('Failed to load accounts, companies, and categories:', err);
@@ -148,6 +150,15 @@ export const AccountsAndChainsPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const refreshAssets = async () => {
+    const [assetsRes, revsRes] = await Promise.allSettled([
+      api.firefly.getAssetAccounts(),
+      api.firefly.getRevenueAccounts(),
+    ]);
+    if (assetsRes.status === 'fulfilled') setAssetAccounts(assetsRes.value);
+    if (revsRes.status === 'fulfilled') setRevenueAccounts(revsRes.value);
   };
 
   useEffect(() => {
@@ -419,7 +430,7 @@ export const AccountsAndChainsPage: React.FC = () => {
             Accounts & Chains
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Classify Firefly III expense accounts by role (Chains, Local Businesses, E-Commerce, Services, Persons).
+            Manage Firefly III expense accounts (Chains, Local Businesses, E-Commerce, Services, Persons) and asset accounts / meal vouchers.
           </p>
         </div>
 
@@ -1535,7 +1546,7 @@ export const AccountsAndChainsPage: React.FC = () => {
           account={configuringAsset}
           revenueAccounts={revenueAccounts}
           onClose={() => setConfiguringAsset(null)}
-          onSaved={loadData}
+          onSaved={refreshAssets}
         />
       )}
 
@@ -1544,7 +1555,7 @@ export const AccountsAndChainsPage: React.FC = () => {
           account={rechargingAsset}
           revenueAccounts={revenueAccounts}
           onClose={() => setRechargingAsset(null)}
-          onSuccess={loadData}
+          onSuccess={refreshAssets}
         />
       )}
     </div>

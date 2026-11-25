@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -228,8 +229,10 @@ async def list_asset_accounts(session: Session = Depends(get_session)):
                     )
                 except (ValueError, TypeError):
                     continue
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Failed to resolve default revenue account names from Firefly: %s", exc
+            )
 
     results: List[FireflyAssetAccount] = []
     for acc in accounts:

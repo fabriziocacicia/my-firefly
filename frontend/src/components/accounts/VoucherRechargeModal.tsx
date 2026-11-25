@@ -10,7 +10,13 @@ interface VoucherRechargeModalProps {
   onSuccess: () => Promise<void>;
 }
 
-const getTodayDate = () => new Date().toISOString().slice(0, 10);
+const getTodayDate = () => {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
 const getCurrentTimeHHMM = () => {
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, '0');
@@ -48,10 +54,18 @@ export const VoucherRechargeModal: React.FC<VoucherRechargeModalProps> = ({
   }, [onClose]);
 
   const unitValue = account.voucher_unit_value ?? 0;
+  const unitCents = Math.round(unitValue * 100);
   const parsedCount = parseInt(countStr, 10);
   const validCount = Number.isFinite(parsedCount) && parsedCount > 0 ? parsedCount : 0;
-  const depositAmount = Math.round(validCount * Math.round(unitValue * 100)) / 100;
-  const projectedBalance = Number(account.current_balance || 0) + depositAmount;
+  const depositCents = validCount * unitCents;
+  const depositAmount = depositCents / 100;
+  const currentBalanceCents = Math.round(Number(account.current_balance || 0) * 100);
+  const projectedBalanceCents = currentBalanceCents + depositCents;
+  const projectedBalance = projectedBalanceCents / 100;
+  const projectedUsableVouchers =
+    unitCents > 0 && projectedBalanceCents > 0
+      ? Math.floor(projectedBalanceCents / unitCents)
+      : 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -227,7 +241,7 @@ export const VoucherRechargeModal: React.FC<VoucherRechargeModalProps> = ({
             <div className="flex justify-between text-amber-800">
               <span>Projected New Balance:</span>
               <span>
-                €{projectedBalance.toFixed(2)} ({(account.usable_vouchers ?? 0) + validCount} vouchers)
+                €{projectedBalance.toFixed(2)} ({projectedUsableVouchers} vouchers)
               </span>
             </div>
             <div className="pt-1 border-t border-amber-200/70 text-[11px] text-amber-800/90">

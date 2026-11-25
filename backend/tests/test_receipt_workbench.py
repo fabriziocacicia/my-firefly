@@ -583,6 +583,76 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             push_res = self.client.post(f"/api/v1/receipts/{receipt_id}/push-to-firefly")
             self.assertEqual(push_res.status_code, 422)
 
+    def test_meal_voucher_more_than_eight_vouchers_and_snapshot_immutability(self):
+        self.client.put(
+            "/api/v1/asset-accounts/2/metadata",
+            json={"asset_type": "meal_voucher", "voucher_unit_value": 5.16},
+        )
+        # 1. Create and push receipt with 9 vouchers (46.44 vouchers + 3.56 card = 50.00)
+        res = self.client.post(
+            "/api/v1/receipts/",
+            json={
+                "firefly_account_id": self.active_account_id,
+                "purchase_date": "2026-11-25",
+                "total_amount": 50.00,
+                "source_account_id": 1,
+                "payment_mode": "split_vouchers",
+                "voucher_account_id": 2,
+                "voucher_count": 9,
+                "voucher_unit_value": 5.16,
+                "items": [{"product_id": self.pasta_id, "paid_price": 50.00}],
+            },
+        )
+        self.assertEqual(res.status_code, 200, res.text)
+        receipt_id = res.json()["id"]
+
+        # Simulate employer raising unit value to 8.00 AFTER receipt was created,
+        # and Tx1 succeeding then Tx2 failing so partial recovery must preserve 5.16 snapshot!
+        self.client.put(
+            "/api/v1/asset-accounts/2/metadata",
+            json={"asset_type": "meal_voucher", "voucher_unit_value": 8.00},
+        )
+        asset_mock = AsyncMock(
+            return_value=[
+                {"id": "1", "attributes": {"current_balance": "100.00"}},
+                {"id": "2", "attributes": {"current_balance": "51.60"}},
+            ]
+        )
+        with (
+            patch("app.api.v1.receipts.firefly_client.get_all_asset_accounts", asset_mock),
+            patch(
+                "app.api.v1.receipts.firefly_client.create_transaction",
+                AsyncMock(
+                    side_effect=[
+                        {"data": {"id": "3001"}},
+                        httpx.ConnectError("Tx2 timeout"),
+                    ]
+                ),
+            ),
+            patch(
+                "app.api.v1.receipts.firefly_client.delete_transaction",
+                AsyncMock(side_effect=httpx.ConnectError("Delete failed")),
+            ),
+        ):
+            partial = self.client.post(f"/api/v1/receipts/{receipt_id}/push-to-firefly")
+            self.assertEqual(partial.status_code, 502)
+
+        # Resume with force=True: Tx2 must still use 50.00 - (9 * 5.16) = 3.56, NOT 8.00!
+        resume_create = AsyncMock(return_value={"data": {"id": "3002"}})
+        with (
+            patch("app.api.v1.receipts.firefly_client.get_all_asset_accounts", asset_mock),
+            patch("app.api.v1.receipts.firefly_client.create_transaction", resume_create),
+        ):
+            resumed = self.client.post(
+                f"/api/v1/receipts/{receipt_id}/push-to-firefly",
+                json={"force": True},
+            )
+            self.assertEqual(resumed.status_code, 200, resumed.text)
+            body = resumed.json()
+            self.assertAlmostEqual(body["voucher_unit_value"], 5.16, places=2)
+            sent_tx2 = resume_create.await_args.args[0]["transactions"][0]
+            self.assertEqual(sent_tx2["amount"], "3.56")
+
     def test_company_crud_and_account_linking(self):
         # 1. Create company
         res = self.client.post("/api/v1/companies/", json={"name": "Esselunga"})

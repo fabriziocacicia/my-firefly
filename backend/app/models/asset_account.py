@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from enum import Enum
+import math
 from typing import Optional
+from pydantic import field_validator
 import sqlalchemy as sa
 from sqlmodel import SQLModel, Field
 
@@ -68,6 +70,13 @@ class AssetAccountMetadataUpdate(SQLModel):
     default_revenue_account_id: Optional[int] = None
     default_recharge_description: Optional[str] = None
     notes: Optional[str] = None
+
+    @field_validator("voucher_unit_value")
+    @classmethod
+    def _validate_finite_unit_value(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and not math.isfinite(v):
+            raise ValueError("voucher_unit_value must be a finite number")
+        return v
 
 
 class AssetAccountMetadataRead(AssetAccountMetadataBase):

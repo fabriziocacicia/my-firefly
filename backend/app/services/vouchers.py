@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Union
 
 
@@ -13,10 +14,16 @@ class VoucherBalanceStatus:
 
 
 def to_cents(amount: Union[float, int, str, None]) -> int:
-    """Converts a monetary amount to rounded integer cents without float drift."""
+    """Converts a monetary amount to rounded integer cents using Decimal precision."""
     if amount is None or amount == "":
         return 0
-    return round(float(amount) * 100)
+    try:
+        dec = Decimal(str(amount).strip())
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"Invalid monetary amount: {amount!r}") from exc
+    if not dec.is_finite():
+        raise ValueError(f"Non-finite monetary amount: {amount!r}")
+    return int((dec * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def compute_voucher_balance_status(
