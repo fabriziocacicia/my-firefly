@@ -5,14 +5,13 @@ import {
   FireflyAssetAccount,
   FireflyRevenueAccount,
   Company,
-  AccountRole,
 } from '../types';
-import { CompanyCombobox, CompanySelection } from '../components/common/CompanyCombobox';
-import { CategoryCombobox } from '../components/common/CategoryCombobox';
-import { BusinessTypesTagInput } from '../components/common/BusinessTypesTagInput';
 import { AssetAccountsTab } from '../components/accounts/AssetAccountsTab';
 import { AssetAccountConfigModal } from '../components/accounts/AssetAccountConfigModal';
 import { VoucherRechargeModal } from '../components/accounts/VoucherRechargeModal';
+import { AccountClassificationModal } from '../components/accounts/AccountClassificationModal';
+import { ChainFormModal } from '../components/accounts/ChainFormModal';
+import { AccountFilter, normalizeRole } from '../components/accounts/roleUtils';
 import {
   Building2,
   Store,
@@ -21,7 +20,6 @@ import {
   Plus,
   Trash2,
   Edit2,
-  X,
   AlertCircle,
   Tag as TagIcon,
   User,
@@ -41,9 +39,7 @@ export const AccountsAndChainsPage: React.FC = () => {
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<
-    'all' | 'chains' | 'local_business' | 'ecommerce' | 'service' | 'person' | 'unclassified'
-  >('all');
+  const [filter, setFilter] = useState<AccountFilter>('all');
   const [activeTab, setActiveTab] = useState<'accounts' | 'chains' | 'assets'>('accounts');
   const [configuringAsset, setConfiguringAsset] = useState<FireflyAssetAccount | null>(null);
   const [rechargingAsset, setRechargingAsset] = useState<FireflyAssetAccount | null>(null);
@@ -73,21 +69,10 @@ export const AccountsAndChainsPage: React.FC = () => {
 
   // Unified Classification Modal State
   const [classifyingAccount, setClassifyingAccount] = useState<FireflyExpenseAccount | null>(null);
-  const [modalRole, setModalRole] = useState<AccountRole>('unclassified');
-  const [modalCompanySelection, setModalCompanySelection] = useState<CompanySelection | null>(null);
-  const [modalCategory, setModalCategory] = useState<string | null>(null);
-  const [modalBusinessTypes, setModalBusinessTypes] = useState<string[]>([]);
-  const [savingClassification, setSavingClassification] = useState(false);
-  const [classificationError, setClassificationError] = useState<string | null>(null);
 
   // Manage Companies Modal State
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
-  const [compFormName, setCompFormName] = useState('');
-  const [compFormBusinessTypes, setCompFormBusinessTypes] = useState<string[]>([]);
-  const [compFormNotes, setCompFormNotes] = useState('');
-  const [savingCompany, setSavingCompany] = useState(false);
-  const [companyError, setCompanyError] = useState<string | null>(null);
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -165,13 +150,6 @@ export const AccountsAndChainsPage: React.FC = () => {
     loadData();
   }, []);
 
-  // Normalize legacy roles (physical_store, independent) to local_business
-  const normalizeRole = (role?: AccountRole, companyId?: number | null): AccountRole => {
-    if (role === 'physical_store' || role === 'independent') return 'local_business';
-    if (role) return role;
-    return companyId ? 'chain' : 'unclassified';
-  };
-
   // Collect all existing business types across accounts and companies for quick suggestion
   const allExistingBusinessTypes = useMemo(() => {
     const set = new Set<string>();
@@ -182,144 +160,13 @@ export const AccountsAndChainsPage: React.FC = () => {
     return Array.from(set);
   }, [companies, accounts]);
 
-  // Open Unified Classification Modal
   const openClassifyModal = (acc: FireflyExpenseAccount) => {
     setClassifyingAccount(acc);
-    const effectiveRole = normalizeRole(acc.role, acc.company_id);
-    setModalRole(effectiveRole);
-    setModalCompanySelection({
-      companyId: acc.company_id ?? null,
-      companyName: acc.company_name ?? '',
-      isNew: false,
-    });
-    const supportsCategory = ['local_business', 'ecommerce', 'service'].includes(effectiveRole);
-    setModalCategory(supportsCategory ? acc.category || null : null);
-
-    // Strip any business types already inherited from parent chain
-    const rawBusinessTypes = acc.business_types || [];
-    if (effectiveRole === 'chain') {
-      const comp = companies.find((c) => c.id === acc.company_id);
-      const inherited = comp?.business_types?.length
-        ? comp.business_types
-        : (acc.inherited_business_types || []);
-      const inheritedLower = new Set(inherited.map((t) => t.trim().toLowerCase()));
-      setModalBusinessTypes(rawBusinessTypes.filter((t) => !inheritedLower.has(t.trim().toLowerCase())));
-    } else {
-      setModalBusinessTypes(rawBusinessTypes);
-    }
-    setClassificationError(null);
   };
 
-  // Save Classification
-  const handleSaveClassification = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!classifyingAccount) return;
-
-    setSavingClassification(true);
-    setClassificationError(null);
-    try {
-      let companyId: number | null = null;
-      let category: string | null = null;
-      let businessTypes: string[] = [];
-
-      if (modalRole === 'chain') {
-        if (!modalCompanySelection?.companyId && !modalCompanySelection?.companyName?.trim()) {
-          setClassificationError('Please select or enter a parent retail chain name.');
-          setSavingClassification(false);
-          return;
-        }
-
-        if (modalCompanySelection.isNew && modalCompanySelection.companyName.trim()) {
-          const created = await api.companies.create({
-            name: modalCompanySelection.companyName.trim(),
-            business_types: modalBusinessTypes.length > 0 ? modalBusinessTypes : undefined,
-          });
-          companyId = created.id;
-          // The new chain owns these business_types, branch inherits them and does not duplicate
-          businessTypes = [];
-        } else {
-          companyId = modalCompanySelection.companyId ?? null;
-          // Purge any types already inherited from the selected chain
-          const inheritedLower = new Set(chainInheritedTypes.map((t) => t.trim().toLowerCase()));
-          businessTypes = modalBusinessTypes.filter((t) => !inheritedLower.has(t.trim().toLowerCase()));
-        }
-
-        if (!companyId) {
-          setClassificationError('Please select a valid parent chain.');
-          setSavingClassification(false);
-          return;
-        }
-      } else if (modalRole === 'local_business') {
-        category = modalCategory?.trim() || null;
-        businessTypes = modalBusinessTypes;
-      } else if (modalRole === 'ecommerce' || modalRole === 'service') {
-        category = modalCategory?.trim() || null;
-        businessTypes = [];
-      } else {
-        category = null;
-        businessTypes = [];
-      }
-
-      await api.accounts.updateMetadata(classifyingAccount.id, {
-        role: modalRole,
-        company_id: companyId,
-        category: category,
-        business_types: businessTypes,
-      });
-
-      setClassifyingAccount(null);
-      await loadData();
-    } catch (err: any) {
-      setClassificationError(err.message || 'Failed to save classification');
-    } finally {
-      setSavingClassification(false);
-    }
-  };
-
-  // Manage Company Modal Handlers
   const openCompanyModal = (comp?: Company) => {
-    if (comp) {
-      setEditingCompany(comp);
-      setCompFormName(comp.name);
-      setCompFormBusinessTypes(comp.business_types || []);
-      setCompFormNotes(comp.notes || '');
-    } else {
-      setEditingCompany(null);
-      setCompFormName('');
-      setCompFormBusinessTypes([]);
-      setCompFormNotes('');
-    }
-    setCompanyError(null);
+    setEditingCompany(comp ?? null);
     setCompanyModalOpen(true);
-  };
-
-  const handleSaveCompany = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!compFormName.trim()) return;
-
-    setSavingCompany(true);
-    setCompanyError(null);
-    try {
-      if (editingCompany) {
-        await api.companies.update(editingCompany.id, {
-          name: compFormName.trim(),
-          business_types: compFormBusinessTypes,
-          notes: compFormNotes.trim() || undefined,
-        });
-      } else {
-        await api.companies.create({
-          name: compFormName.trim(),
-          business_types: compFormBusinessTypes,
-          notes: compFormNotes.trim() || undefined,
-        });
-      }
-      setCompanyModalOpen(false);
-      await loadData();
-    } catch (err: any) {
-      setCompanyError(err.message || 'Failed to save chain');
-    } finally {
-      setSavingCompany(false);
-    }
   };
 
   const handleDeleteCompany = async (comp: Company) => {
@@ -399,27 +246,6 @@ export const AccountsAndChainsPage: React.FC = () => {
     const start = (page - 1) * ITEMS_PER_PAGE;
     return filteredAccounts.slice(start, start + ITEMS_PER_PAGE);
   }, [filteredAccounts, page]);
-
-  // Look up selected chain company to show inherited business types in classification modal
-  const selectedChainCompany = useMemo(() => {
-    if (modalRole !== 'chain' || !modalCompanySelection?.companyId) return null;
-    return companies.find((c) => c.id === modalCompanySelection.companyId) || null;
-  }, [modalRole, modalCompanySelection, companies]);
-
-  const chainInheritedTypes = useMemo(() => {
-    if (!selectedChainCompany) return [];
-    return selectedChainCompany.business_types || [];
-  }, [selectedChainCompany]);
-
-  // Ensure modalBusinessTypes never duplicates types inherited from the selected chain
-  useEffect(() => {
-    if (modalRole === 'chain' && chainInheritedTypes.length > 0) {
-      const inheritedLower = new Set(chainInheritedTypes.map((t) => t.trim().toLowerCase()));
-      setModalBusinessTypes((prev) =>
-        prev.filter((t) => !inheritedLower.has(t.trim().toLowerCase()))
-      );
-    }
-  }, [modalRole, chainInheritedTypes]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -1156,389 +982,24 @@ export const AccountsAndChainsPage: React.FC = () => {
 
       {/* Unified Account Classification Modal */}
       {classifyingAccount && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-100">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600">
-                  {modalRole === 'chain' ? (
-                    <Building2 className="w-5 h-5" />
-                  ) : modalRole === 'local_business' ? (
-                    <Store className="w-5 h-5" />
-                  ) : modalRole === 'ecommerce' ? (
-                    <Globe className="w-5 h-5" />
-                  ) : modalRole === 'service' ? (
-                    <Zap className="w-5 h-5" />
-                  ) : modalRole === 'person' ? (
-                    <User className="w-5 h-5" />
-                  ) : (
-                    <HelpCircle className="w-5 h-5" />
-                  )}
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 leading-tight">
-                    Classify: {classifyingAccount.name}
-                  </h2>
-                  <span className="text-xs text-slate-400 font-mono">Firefly Account #{classifyingAccount.id}</span>
-                </div>
-              </div>
-              <button
-                onClick={() => setClassifyingAccount(null)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {classificationError && (
-              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-1.5">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{classificationError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveClassification} className="mt-5 space-y-4">
-              {/* Role Selection Grid */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-2">Account Role</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setModalRole('chain')}
-                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition cursor-pointer ${
-                      modalRole === 'chain'
-                        ? 'border-indigo-600 bg-indigo-50/40 text-indigo-900 ring-2 ring-indigo-500/20'
-                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
-                    }`}
-                  >
-                    <Building2
-                      className={`w-4 h-4 mt-0.5 shrink-0 ${
-                        modalRole === 'chain' ? 'text-indigo-600' : 'text-slate-400'
-                      }`}
-                    />
-                    <div>
-                      <span className="font-semibold text-xs block">Chain Branch</span>
-                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
-                        Inherits chain&apos;s types
-                      </span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setModalRole('local_business')}
-                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition cursor-pointer ${
-                      modalRole === 'local_business'
-                        ? 'border-emerald-600 bg-emerald-50/40 text-emerald-900 ring-2 ring-emerald-500/20'
-                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
-                    }`}
-                  >
-                    <Store
-                      className={`w-4 h-4 mt-0.5 shrink-0 ${
-                        modalRole === 'local_business' ? 'text-emerald-600' : 'text-slate-400'
-                      }`}
-                    />
-                    <div>
-                      <span className="font-semibold text-xs block">Local Business</span>
-                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
-                        Physical shop, bar, gym, etc.
-                      </span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setModalRole('ecommerce')}
-                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition cursor-pointer ${
-                      modalRole === 'ecommerce'
-                        ? 'border-sky-600 bg-sky-50/40 text-sky-900 ring-2 ring-sky-500/20'
-                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
-                    }`}
-                  >
-                    <Globe
-                      className={`w-4 h-4 mt-0.5 shrink-0 ${
-                        modalRole === 'ecommerce' ? 'text-sky-600' : 'text-slate-400'
-                      }`}
-                    />
-                    <div>
-                      <span className="font-semibold text-xs block">E-Commerce</span>
-                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
-                        Online store / web shop
-                      </span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setModalRole('service')}
-                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition cursor-pointer ${
-                      modalRole === 'service'
-                        ? 'border-purple-600 bg-purple-50/40 text-purple-900 ring-2 ring-purple-500/20'
-                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
-                    }`}
-                  >
-                    <Zap
-                      className={`w-4 h-4 mt-0.5 shrink-0 ${
-                        modalRole === 'service' ? 'text-purple-600' : 'text-slate-400'
-                      }`}
-                    />
-                    <div>
-                      <span className="font-semibold text-xs block">Service / Utility</span>
-                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
-                        Subscription, utility, bills
-                      </span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setModalRole('person')}
-                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition cursor-pointer ${
-                      modalRole === 'person'
-                        ? 'border-slate-600 bg-slate-100 text-slate-900 ring-2 ring-slate-400/20'
-                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
-                    }`}
-                  >
-                    <User
-                      className={`w-4 h-4 mt-0.5 shrink-0 ${
-                        modalRole === 'person' ? 'text-slate-700' : 'text-slate-400'
-                      }`}
-                    />
-                    <div>
-                      <span className="font-semibold text-xs block">Person</span>
-                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
-                        Individual peer
-                      </span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setModalRole('unclassified')}
-                    className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition cursor-pointer ${
-                      modalRole === 'unclassified'
-                        ? 'border-amber-600 bg-amber-50/40 text-amber-900 ring-2 ring-amber-500/20'
-                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
-                    }`}
-                  >
-                    <HelpCircle
-                      className={`w-4 h-4 mt-0.5 shrink-0 ${
-                        modalRole === 'unclassified' ? 'text-amber-600' : 'text-slate-400'
-                      }`}
-                    />
-                    <div>
-                      <span className="font-semibold text-xs block">Unclassified</span>
-                      <span className="text-[11px] text-slate-400 block leading-tight mt-0.5">
-                        Standard account
-                      </span>
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              {/* Conditional Inputs Based on Selected Role */}
-              {modalRole === 'chain' && (
-                <div className="space-y-3 pt-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Parent Retail Chain *
-                    </label>
-                    <CompanyCombobox
-                      companies={companies}
-                      selectedCompanyId={modalCompanySelection?.companyId ?? null}
-                      initialNewName={modalCompanySelection?.isNew ? modalCompanySelection.companyName : ''}
-                      onChange={(sel) => setModalCompanySelection(sel)}
-                      placeholder="Search or type new chain (e.g. Conad, Lidl, Eni)..."
-                    />
-                  </div>
-
-                  {/* Branch-Specific Business Types with Inherited Types */}
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Branch Business Types
-                    </label>
-                    <BusinessTypesTagInput
-                      value={modalBusinessTypes}
-                      onChange={setModalBusinessTypes}
-                      inheritedTypes={chainInheritedTypes}
-                      allAvailableTypes={allExistingBusinessTypes}
-                      placeholder="Add branch-specific type (e.g. Bar/Cafe, Carwash)..."
-                    />
-                    <p className="mt-1 text-[11px] text-slate-400">
-                      Types with badge <strong>Chain:</strong> are inherited automatically from the parent chain. You can add extra types specific to this branch.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {modalRole === 'local_business' && (
-                <div className="space-y-3 pt-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Business Types *
-                    </label>
-                    <BusinessTypesTagInput
-                      value={modalBusinessTypes}
-                      onChange={setModalBusinessTypes}
-                      allAvailableTypes={allExistingBusinessTypes}
-                      placeholder="Add business type (e.g. Bar/Cafe, Tobacconist, Pharmacy)..."
-                    />
-                    <p className="mt-1 text-[11px] text-slate-400">
-                      Physical business types that describe this venue (multiple types supported, e.g. Bar + Tobacconist).
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Sector Category Tag (Optional)
-                    </label>
-                    <CategoryCombobox
-                      categories={categories}
-                      selectedCategory={modalCategory}
-                      onChange={(cat) => setModalCategory(cat)}
-                      placeholder="Optional merchandise sector (e.g. Healthcare, Food)..."
-                    />
-                  </div>
-                </div>
-              )}
-
-              {(modalRole === 'ecommerce' || modalRole === 'service') && (
-                <div className="pt-2">
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Sector Category Tag
-                  </label>
-                  <CategoryCombobox
-                    categories={categories}
-                    selectedCategory={modalCategory}
-                    onChange={(cat) => setModalCategory(cat)}
-                    placeholder="Search or type sector (e.g. Supplements, Electronics, Streaming)..."
-                  />
-                  <p className="mt-1.5 text-[11px] text-slate-400">
-                    Category tag indicating what this {modalRole === 'ecommerce' ? 'online shop' : 'service'} provides.
-                  </p>
-                </div>
-              )}
-
-              {modalRole === 'person' && (
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 flex items-center gap-2">
-                  <User className="w-4 h-4 text-slate-500 shrink-0" />
-                  <span>Marked as a person. Excluded from retail chain and business type categorization.</span>
-                </div>
-              )}
-
-              {modalRole === 'unclassified' && (
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 flex items-center gap-2">
-                  <HelpCircle className="w-4 h-4 text-slate-400 shrink-0" />
-                  <span>Standard account with no assigned role. You can classify it at any time.</span>
-                </div>
-              )}
-
-              <div className="pt-4 border-t border-slate-100 flex items-center justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setClassifyingAccount(null)}
-                  className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingClassification}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer"
-                >
-                  {savingClassification ? 'Saving...' : 'Save Classification'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <AccountClassificationModal
+          account={classifyingAccount}
+          companies={companies}
+          categories={categories}
+          allAvailableBusinessTypes={allExistingBusinessTypes}
+          onClose={() => setClassifyingAccount(null)}
+          onSaved={loadData}
+        />
       )}
 
       {/* Create / Edit Chain Modal */}
       {companyModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-100">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200">
-            <div className="flex items-start justify-between">
-              <h2 className="text-lg font-bold text-slate-900">
-                {editingCompany ? 'Edit Chain' : 'New Parent Chain'}
-              </h2>
-              <button
-                onClick={() => setCompanyModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {companyError && (
-              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-1.5">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{companyError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveCompany} className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Chain Name *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={compFormName}
-                  onChange={(e) => setCompFormName(e.target.value)}
-                  placeholder="e.g. Conad, Carrefour, Lidl, Eni"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Chain Business Types
-                </label>
-                <BusinessTypesTagInput
-                  value={compFormBusinessTypes}
-                  onChange={setCompFormBusinessTypes}
-                  allAvailableTypes={allExistingBusinessTypes}
-                  placeholder="e.g. Supermarket, Gas Station, Pharmacy..."
-                />
-                <p className="mt-1 text-[11px] text-slate-400">
-                  All branches linked to this chain will automatically inherit these business types.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Notes (Optional)
-                </label>
-                <textarea
-                  value={compFormNotes}
-                  onChange={(e) => setCompFormNotes(e.target.value)}
-                  placeholder="Optional notes about this retail chain..."
-                  rows={2}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              <div className="pt-3 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setCompanyModalOpen(false)}
-                  className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingCompany}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer"
-                >
-                  {savingCompany ? 'Saving...' : editingCompany ? 'Update Chain' : 'Create Chain'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <ChainFormModal
+          company={editingCompany}
+          allAvailableBusinessTypes={allExistingBusinessTypes}
+          onClose={() => setCompanyModalOpen(false)}
+          onSaved={loadData}
+        />
       )}
 
       {configuringAsset && (
