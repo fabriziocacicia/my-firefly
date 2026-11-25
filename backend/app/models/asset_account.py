@@ -11,6 +11,9 @@ class AssetAccountType(str, Enum):
     """Extensible classification for Firefly III asset accounts."""
 
     STANDARD = "standard"
+    BANK_ACCOUNT = "bank_account"
+    CASH = "cash"
+    GIFT_CARD = "gift_card"
     MEAL_VOUCHER = "meal_voucher"
 
 
