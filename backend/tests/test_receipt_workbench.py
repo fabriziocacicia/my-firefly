@@ -489,6 +489,100 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             call_payload2 = create_mock2.await_args.args[0]
             self.assertEqual(call_payload2["transactions"][0]["date"], "2026-11-15T12:00:00")
 
+    def test_meal_voucher_full_payment_no_source_account_required(self):
+        self.client.put(
+            "/api/v1/asset-accounts/2/metadata",
+            json={"asset_type": "meal_voucher", "voucher_unit_value": 5.16},
+        )
+        # Client sends tampered unit value 9.99 and source_account_id=None (100% voucher payment)
+        res = self.client.post(
+            "/api/v1/receipts/",
+            json={
+                "firefly_account_id": self.active_account_id,
+                "purchase_date": "2026-11-25",
+                "total_amount": 10.32,
+                "source_account_id": None,
+                "payment_mode": "split_vouchers",
+                "voucher_account_id": 2,
+                "voucher_count": 2,
+                "voucher_unit_value": 9.99,
+                "items": [{"product_id": self.pasta_id, "paid_price": 10.32}],
+            },
+        )
+        self.assertEqual(res.status_code, 200, res.text)
+        body = res.json()
+        self.assertAlmostEqual(body["voucher_unit_value"], 5.16, places=2)
+        self.assertIsNone(body["source_account_id"])
+
+        receipt_id = body["id"]
+        asset_mock = AsyncMock(
+            return_value=[{"id": "2", "attributes": {"name": "Edenred", "current_balance": "15.48"}}]
+        )
+        create_mock = AsyncMock(return_value={"data": {"id": "2001"}})
+        with (
+            patch("app.api.v1.receipts.firefly_client.get_all_asset_accounts", asset_mock),
+            patch("app.api.v1.receipts.firefly_client.create_transaction", create_mock),
+        ):
+            push_res = self.client.post(f"/api/v1/receipts/{receipt_id}/push-to-firefly")
+            self.assertEqual(push_res.status_code, 200, push_res.text)
+            pushed = push_res.json()
+            self.assertEqual(pushed["firefly_voucher_transaction_id"], 2001)
+            self.assertIsNone(pushed["firefly_transaction_id"])
+            create_mock.assert_awaited_once()
+            tx = create_mock.await_args.args[0]["transactions"][0]
+            self.assertEqual(tx["amount"], "10.32")
+            self.assertEqual(tx["source_id"], "2")
+
+    def test_meal_voucher_over_total_and_insufficient_balance_rejected(self):
+        self.client.put(
+            "/api/v1/asset-accounts/2/metadata",
+            json={"asset_type": "meal_voucher", "voucher_unit_value": 5.16},
+        )
+        # 1. Voucher face value (10.32) > receipt total (9.00) -> 422 on create
+        over_res = self.client.post(
+            "/api/v1/receipts/",
+            json={
+                "firefly_account_id": self.active_account_id,
+                "purchase_date": "2026-11-25",
+                "total_amount": 9.00,
+                "source_account_id": 1,
+                "payment_mode": "split_vouchers",
+                "voucher_account_id": 2,
+                "voucher_count": 2,
+                "voucher_unit_value": 5.16,
+                "items": [{"product_id": self.pasta_id, "paid_price": 9.00}],
+            },
+        )
+        self.assertEqual(over_res.status_code, 422)
+
+        # 2. Valid create (2 x 5.16 = 10.32 <= 15.00), but live Firefly balance only has 1 usable voucher
+        ok_res = self.client.post(
+            "/api/v1/receipts/",
+            json={
+                "firefly_account_id": self.active_account_id,
+                "purchase_date": "2026-11-25",
+                "total_amount": 15.00,
+                "source_account_id": 1,
+                "payment_mode": "split_vouchers",
+                "voucher_account_id": 2,
+                "voucher_count": 2,
+                "voucher_unit_value": 5.16,
+                "items": [{"product_id": self.pasta_id, "paid_price": 15.00}],
+            },
+        )
+        self.assertEqual(ok_res.status_code, 200, ok_res.text)
+        receipt_id = ok_res.json()["id"]
+
+        asset_mock = AsyncMock(
+            return_value=[
+                {"id": "1", "attributes": {"current_balance": "100.00"}},
+                {"id": "2", "attributes": {"current_balance": "5.16"}},
+            ]
+        )
+        with patch("app.api.v1.receipts.firefly_client.get_all_asset_accounts", asset_mock):
+            push_res = self.client.post(f"/api/v1/receipts/{receipt_id}/push-to-firefly")
+            self.assertEqual(push_res.status_code, 422)
+
     def test_company_crud_and_account_linking(self):
         # 1. Create company
         res = self.client.post("/api/v1/companies/", json={"name": "Esselunga"})

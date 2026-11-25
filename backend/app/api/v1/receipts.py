@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.database import get_session
+from app.models.asset_account import AssetAccountMetadata, AssetAccountType
 from app.models.price import PriceRecord
 from app.models.product import Product
 from app.models.receipt import (
@@ -27,6 +28,7 @@ from app.models.receipt import (
 )
 from app.services.firefly import firefly_client
 from app.services.pricing import normalize_unit_price
+from app.services.vouchers import compute_voucher_balance_status, to_cents
 
 pillow_heif.register_heif_opener()
 
@@ -222,6 +224,66 @@ def _convert_heif_to_jpeg(raw_bytes: bytes) -> bytes:
         ) from exc
 
 
+def _resolve_and_validate_voucher_terms(
+    session: Session,
+    payment_mode: str,
+    total_amount: float,
+    voucher_account_id: Optional[int],
+    voucher_count: int,
+    voucher_unit_value: float,
+) -> tuple[float, int, int, Optional[AssetAccountMetadata]]:
+    """
+    Validates whole-voucher limits against receipt total and applies configured
+    unit value when the voucher account is flagged as meal_voucher.
+    Returns (effective_unit_value, voucher_cents, card_remainder_cents, meal_voucher_meta).
+    """
+    total_cents = to_cents(total_amount)
+    if payment_mode != "split_vouchers":
+        return voucher_unit_value, 0, total_cents, None
+
+    if voucher_count < 0:
+        raise HTTPException(
+            status_code=422, detail="voucher_count cannot be negative"
+        )
+
+    meta = (
+        session.get(AssetAccountMetadata, voucher_account_id)
+        if voucher_account_id is not None
+        else None
+    )
+    is_meal_voucher = (
+        meta is not None
+        and meta.asset_type == AssetAccountType.MEAL_VOUCHER
+        and meta.voucher_unit_value is not None
+        and to_cents(meta.voucher_unit_value) > 0
+    )
+    effective_unit_value = (
+        float(meta.voucher_unit_value) if is_meal_voucher and meta else voucher_unit_value
+    )
+    unit_cents = to_cents(effective_unit_value)
+    if voucher_count > 0 and unit_cents <= 0:
+        raise HTTPException(
+            status_code=422, detail="Voucher unit value must be greater than 0"
+        )
+
+    voucher_cents = voucher_count * unit_cents
+    if voucher_cents > total_cents:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Voucher total (€{voucher_cents / 100:.2f}) exceeds receipt total "
+                f"(€{total_cents / 100:.2f}); vouchers must be consumed in whole units"
+            ),
+        )
+
+    return (
+        effective_unit_value,
+        voucher_cents,
+        total_cents - voucher_cents,
+        meta if is_meal_voucher else None,
+    )
+
+
 @router.post("/", response_model=ReceiptRead)
 async def create_receipt(
     receipt_in: ReceiptCreate, session: Session = Depends(get_session)
@@ -260,7 +322,7 @@ async def create_receipt(
                 status_code=404, detail=f"Product {pid} not found"
             )
 
-    # 3. Validate math
+    # 3. Validate math & whole-voucher rules
     line_totals = [
         round(item.quantity * item.paid_price, 2) for item in receipt_in.items
     ]
@@ -274,6 +336,15 @@ async def create_receipt(
             ),
         )
 
+    effective_unit_value, _, _, _ = _resolve_and_validate_voucher_terms(
+        session=session,
+        payment_mode=receipt_in.payment_mode,
+        total_amount=receipt_in.total_amount,
+        voucher_account_id=receipt_in.voucher_account_id,
+        voucher_count=receipt_in.voucher_count,
+        voucher_unit_value=receipt_in.voucher_unit_value,
+    )
+
     # 4. Persist receipt and price observations
     receipt = Receipt(
         firefly_account_id=receipt_in.firefly_account_id,
@@ -285,7 +356,7 @@ async def create_receipt(
         payment_mode=receipt_in.payment_mode,
         voucher_account_id=receipt_in.voucher_account_id,
         voucher_count=receipt_in.voucher_count,
-        voucher_unit_value=receipt_in.voucher_unit_value,
+        voucher_unit_value=effective_unit_value,
         notes=receipt_in.notes,
     )
     session.add(receipt)
@@ -455,14 +526,22 @@ def get_receipt_attachment(
     )
 
 
-async def _validate_firefly_accounts(receipt: Receipt) -> str:
+async def _validate_firefly_accounts(
+    receipt: Receipt,
+    card_remainder_cents: int,
+    voucher_meta: Optional[AssetAccountMetadata] = None,
+    partial_voucher_only: bool = False,
+) -> str:
     """Validates expense and asset accounts against Firefly III and returns account name."""
     if not receipt.firefly_account_id:
         raise HTTPException(
             status_code=400,
             detail="Receipt must be assigned to a Firefly III expense account",
         )
-    if receipt.source_account_id is None:
+    requires_source_account = (
+        receipt.payment_mode == "single" or card_remainder_cents > 0
+    )
+    if requires_source_account and receipt.source_account_id is None:
         raise HTTPException(
             status_code=400,
             detail="Primary source asset account must be specified before pushing",
@@ -509,20 +588,35 @@ async def _validate_firefly_accounts(receipt: Receipt) -> str:
             detail=f"Unable to reach Firefly III to validate asset accounts: {exc}",
         ) from exc
 
-    valid_asset_ids = {int(acc["id"]) for acc in asset_accounts if "id" in acc}
-    if receipt.source_account_id not in valid_asset_ids:
+    asset_map = {int(acc["id"]): acc for acc in asset_accounts if "id" in acc}
+    if requires_source_account and receipt.source_account_id not in asset_map:
         raise HTTPException(
             status_code=400,
             detail=f"Source asset account #{receipt.source_account_id} does not exist in Firefly III",
         )
-    if (
-        receipt.payment_mode == "split_vouchers"
-        and receipt.voucher_account_id not in valid_asset_ids
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Voucher asset account #{receipt.voucher_account_id} does not exist in Firefly III",
-        )
+    if receipt.payment_mode == "split_vouchers":
+        if receipt.voucher_account_id not in asset_map:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Voucher asset account #{receipt.voucher_account_id} does not exist in Firefly III",
+            )
+        if voucher_meta is not None and not partial_voucher_only:
+            live_balance = (
+                asset_map[receipt.voucher_account_id]
+                .get("attributes", {})
+                .get("current_balance", "0")
+            )
+            status = compute_voucher_balance_status(
+                live_balance, voucher_meta.voucher_unit_value
+            )
+            if receipt.voucher_count > status.usable_vouchers:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Insufficient meal vouchers on account #{receipt.voucher_account_id}: "
+                        f"requested {receipt.voucher_count}, available {status.usable_vouchers}"
+                    ),
+                )
 
     return account_name
 
@@ -535,23 +629,24 @@ async def push_receipt_to_firefly(
 ):
     receipt = _get_receipt_or_404(session, receipt_id)
 
-    voucher_total = 0.0
-    card_remainder = receipt.total_amount
-    if receipt.payment_mode == "split_vouchers":
-        voucher_total = round(
-            min(
-                receipt.total_amount,
-                receipt.voucher_count * receipt.voucher_unit_value,
-            ),
-            2,
+    effective_unit_value, voucher_cents, card_remainder_cents, voucher_meta = (
+        _resolve_and_validate_voucher_terms(
+            session=session,
+            payment_mode=receipt.payment_mode,
+            total_amount=receipt.total_amount,
+            voucher_account_id=receipt.voucher_account_id,
+            voucher_count=receipt.voucher_count,
+            voucher_unit_value=receipt.voucher_unit_value,
         )
-        card_remainder = round(receipt.total_amount - voucher_total, 2)
+    )
+    if effective_unit_value != receipt.voucher_unit_value:
+        receipt.voucher_unit_value = effective_unit_value
 
     partial_voucher_only = (
         receipt.firefly_voucher_transaction_id is not None
         and receipt.firefly_transaction_id is None
         and receipt.payment_mode == "split_vouchers"
-        and card_remainder > 0
+        and card_remainder_cents > 0
     )
 
     if not req.force and (
@@ -563,7 +658,12 @@ async def push_receipt_to_firefly(
             detail="Receipt already has Firefly III transaction ID(s). Pass force=true to resume or resync.",
         )
 
-    account_name = await _validate_firefly_accounts(receipt)
+    account_name = await _validate_firefly_accounts(
+        receipt,
+        card_remainder_cents=card_remainder_cents,
+        voucher_meta=voucher_meta,
+        partial_voucher_only=partial_voucher_only,
+    )
 
     if req.force and not partial_voucher_only:
         for old_tx_id in (
@@ -604,7 +704,7 @@ async def push_receipt_to_firefly(
 
     # split_vouchers mode
     assert receipt.voucher_account_id is not None
-    if card_remainder <= 0.0:
+    if card_remainder_cents <= 0:
         splits = [(item, cents, "") for item, cents in zip(billable_items, allocated_cents)]
         payload = _build_firefly_tx_payload(
             receipt, splits, receipt.voucher_account_id, account_name
@@ -622,7 +722,6 @@ async def push_receipt_to_firefly(
         return await _get_receipt_read_or_404(session, receipt.id)
 
     assert receipt.source_account_id is not None
-    voucher_cents = round(voucher_total * 100)
     voucher_splits, card_splits = _partition_voucher_and_card_splits(
         billable_items, allocated_cents, voucher_cents
     )
