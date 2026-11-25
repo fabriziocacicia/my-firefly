@@ -40,6 +40,10 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     canSaveLocally,
     canPushToFirefly,
     clearDraft,
+    requiresSourceAccount,
+    voucherLimitExceeded,
+    maxVouchers,
+    refreshAssetAccounts,
   } = useReceiptWorkbench();
 
   const [submitting, setSubmitting] = useState(false);
@@ -77,10 +81,15 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     if (draftItems.length === 0) reasons.push('Add at least one item');
     if (targetTotal <= 0) reasons.push('Set Target Total > 0');
     else if (!isBalanced) reasons.push('Reconcile item sum with Target Total (|Δ| ≤ €0.01)');
-    if (!sourceAccountId) reasons.push('Select Primary Source Account');
+    if (requiresSourceAccount && !sourceAccountId) {
+      reasons.push('Select Primary Source Account');
+    }
     if (paymentMode === 'split_vouchers') {
       if (!voucherAccountId) reasons.push('Select Voucher Asset Account');
       if (voucherCount <= 0) reasons.push('Set Voucher Count ≥ 1');
+      if (voucherLimitExceeded) {
+        reasons.push(`Lower Voucher Count to ≤ ${maxVouchers}`);
+      }
     }
     return reasons;
   };
@@ -103,7 +112,8 @@ export const ReceiptWorkbenchPage: React.FC = () => {
       purchase_time: purchaseTime.trim(),
       total_amount: targetTotal,
       basket_discount: basketDiscount,
-      source_account_id: sourceAccountId,
+      source_account_id:
+        !requiresSourceAccount ? null : sourceAccountId,
       payment_mode: paymentMode,
       voucher_account_id: paymentMode === 'split_vouchers' ? voucherAccountId : null,
       voucher_count: paymentMode === 'split_vouchers' ? voucherCount : 0,
@@ -136,7 +146,7 @@ export const ReceiptWorkbenchPage: React.FC = () => {
       if (shouldPush) {
         const pushed = await api.receipts.pushToFirefly(receiptId, false);
         clearDraft();
-        await loadRecentReceipts();
+        await Promise.all([loadRecentReceipts(), refreshAssetAccounts()]);
         setStatusMessage({
           type: 'success',
           text: `Receipt #${pushed.id} saved and synced to Firefly III!`,
@@ -166,6 +176,7 @@ export const ReceiptWorkbenchPage: React.FC = () => {
     try {
       const updated = await api.receipts.pushToFirefly(receipt.id, force);
       setRecentReceipts(prev => prev.map(r => (r.id === updated.id ? updated : r)));
+      await refreshAssetAccounts();
       setStatusMessage({
         type: 'success',
         text: `Receipt #${updated.id} synced to Firefly III.`,

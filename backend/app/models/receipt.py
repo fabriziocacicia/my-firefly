@@ -1,5 +1,7 @@
 from datetime import datetime, date, time, timezone
+import math
 from typing import Optional, List, Literal
+from pydantic import field_validator
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.product import Product, ProductRead
 
@@ -84,10 +86,17 @@ class ReceiptCreate(SQLModel):
     source_account_id: Optional[int] = None
     payment_mode: Literal["single", "split_vouchers"] = "single"
     voucher_account_id: Optional[int] = None
-    voucher_count: int = Field(default=0, ge=0, le=8)
+    voucher_count: int = Field(default=0, ge=0)
     voucher_unit_value: float = Field(default=5.16, gt=0)
     notes: Optional[str] = None
     items: List[ReceiptItemCreate] = Field(min_length=1)
+
+    @field_validator("total_amount", "basket_discount", "voucher_unit_value")
+    @classmethod
+    def _validate_finite_float(cls, v: float) -> float:
+        if not math.isfinite(v):
+            raise ValueError("Monetary values must be finite numbers")
+        return v
 
 
 class ReceiptItemRead(ReceiptItemBase):

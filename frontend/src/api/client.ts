@@ -1,7 +1,8 @@
 import {
   Company, Product, Brand, Tag, PriceRecord,
-  FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount,
-  AccountMetadata, AccountMetadataUpdate,
+  FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount, FireflyRevenueAccount,
+  AccountMetadata, AccountMetadataUpdate, AssetAccountMetadataUpdate,
+  VoucherRechargeRequest, VoucherRechargeResponse,
   ProductPriceHistoryResponse, ReceiptCreatePayload, ReceiptRecord, ReceiptAttachment
 } from '../types';
 
@@ -73,6 +74,20 @@ export const api = {
     getExpenseAccount: (id: number) =>
       request<FireflyExpenseAccount>(`/firefly/expense-accounts/${id}`),
     getAssetAccounts: () => request<FireflyAssetAccount[]>('/firefly/asset-accounts'),
+    getRevenueAccounts: () => request<FireflyRevenueAccount[]>('/firefly/revenue-accounts'),
+  },
+
+  assetAccounts: {
+    updateMetadata: (accountId: number, data: AssetAccountMetadataUpdate) =>
+      request<any>(`/asset-accounts/${accountId}/metadata`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    recharge: (accountId: number, data: VoucherRechargeRequest) =>
+      request<VoucherRechargeResponse>(`/asset-accounts/${accountId}/recharge`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 
   companies: {

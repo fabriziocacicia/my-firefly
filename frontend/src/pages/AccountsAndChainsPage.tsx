@@ -1,9 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
-import { FireflyExpenseAccount, Company, AccountRole } from '../types';
+import {
+  FireflyExpenseAccount,
+  FireflyAssetAccount,
+  FireflyRevenueAccount,
+  Company,
+  AccountRole,
+} from '../types';
 import { CompanyCombobox, CompanySelection } from '../components/common/CompanyCombobox';
 import { CategoryCombobox } from '../components/common/CategoryCombobox';
 import { BusinessTypesTagInput } from '../components/common/BusinessTypesTagInput';
+import { AssetAccountsTab } from '../components/accounts/AssetAccountsTab';
+import { AssetAccountConfigModal } from '../components/accounts/AssetAccountConfigModal';
+import { VoucherRechargeModal } from '../components/accounts/VoucherRechargeModal';
 import {
   Building2,
   Store,
@@ -21,10 +30,13 @@ import {
   List,
   Globe,
   Zap,
+  Wallet,
 } from 'lucide-react';
 
 export const AccountsAndChainsPage: React.FC = () => {
   const [accounts, setAccounts] = useState<FireflyExpenseAccount[]>([]);
+  const [assetAccounts, setAssetAccounts] = useState<FireflyAssetAccount[]>([]);
+  const [revenueAccounts, setRevenueAccounts] = useState<FireflyRevenueAccount[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,7 +44,9 @@ export const AccountsAndChainsPage: React.FC = () => {
   const [filter, setFilter] = useState<
     'all' | 'chains' | 'local_business' | 'ecommerce' | 'service' | 'person' | 'unclassified'
   >('all');
-  const [activeTab, setActiveTab] = useState<'accounts' | 'chains'>('accounts');
+  const [activeTab, setActiveTab] = useState<'accounts' | 'chains' | 'assets'>('accounts');
+  const [configuringAsset, setConfiguringAsset] = useState<FireflyAssetAccount | null>(null);
+  const [rechargingAsset, setRechargingAsset] = useState<FireflyAssetAccount | null>(null);
   const [page, setPage] = useState(1);
   const ITEMS_PER_PAGE = 48;
 
@@ -81,10 +95,12 @@ export const AccountsAndChainsPage: React.FC = () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [accsRes, compsRes, catsRes] = await Promise.allSettled([
+      const [accsRes, compsRes, catsRes, assetsRes, revsRes] = await Promise.allSettled([
         api.firefly.listExpenseAccounts(),
         api.companies.list(),
         api.categories.list(),
+        api.firefly.getAssetAccounts(),
+        api.firefly.getRevenueAccounts(),
       ]);
 
       if (accsRes.status === 'fulfilled') {
@@ -105,12 +121,28 @@ export const AccountsAndChainsPage: React.FC = () => {
         console.error('Failed to load categories:', catsRes.reason);
       }
 
+      if (assetsRes.status === 'fulfilled') {
+        setAssetAccounts(assetsRes.value);
+      } else {
+        console.error('Failed to load asset accounts:', assetsRes.reason);
+      }
+
+      if (revsRes.status === 'fulfilled') {
+        setRevenueAccounts(revsRes.value);
+      } else {
+        console.error('Failed to load revenue accounts:', revsRes.reason);
+      }
+
       if (accsRes.status === 'rejected') {
         setLoadError(`Expense accounts error: ${accsRes.reason?.message || 'Failed to fetch'}`);
       } else if (compsRes.status === 'rejected') {
         setLoadError(`Chains error: ${compsRes.reason?.message || 'Failed to fetch'}`);
       } else if (catsRes.status === 'rejected') {
         setLoadError(`Categories error: ${catsRes.reason?.message || 'Failed to fetch'}`);
+      } else if (assetsRes.status === 'rejected') {
+        setLoadError(`Asset accounts error: ${assetsRes.reason?.message || 'Failed to fetch'}`);
+      } else if (revsRes.status === 'rejected') {
+        setLoadError(`Revenue accounts error: ${revsRes.reason?.message || 'Failed to fetch'}`);
       }
     } catch (err: any) {
       console.error('Failed to load accounts, companies, and categories:', err);
@@ -118,6 +150,15 @@ export const AccountsAndChainsPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const refreshAssets = async () => {
+    const [assetsRes, revsRes] = await Promise.allSettled([
+      api.firefly.getAssetAccounts(),
+      api.firefly.getRevenueAccounts(),
+    ]);
+    if (assetsRes.status === 'fulfilled') setAssetAccounts(assetsRes.value);
+    if (revsRes.status === 'fulfilled') setRevenueAccounts(revsRes.value);
   };
 
   useEffect(() => {
@@ -389,7 +430,7 @@ export const AccountsAndChainsPage: React.FC = () => {
             Accounts & Chains
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Classify Firefly III expense accounts by role (Chains, Local Businesses, E-Commerce, Services, Persons).
+            Manage Firefly III expense accounts (Chains, Local Businesses, E-Commerce, Services, Persons) and asset accounts / meal vouchers.
           </p>
         </div>
 
@@ -444,6 +485,18 @@ export const AccountsAndChainsPage: React.FC = () => {
         >
           <Building2 className="w-4 h-4" />
           Chains ({companies.length})
+        </button>
+
+        <button
+          onClick={() => setActiveTab('assets')}
+          className={`pb-3 border-b-2 flex items-center gap-2 transition ${
+            activeTab === 'assets'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Wallet className="w-4 h-4" />
+          Asset Accounts ({assetAccounts.length})
         </button>
       </div>
 
@@ -989,7 +1042,7 @@ export const AccountsAndChainsPage: React.FC = () => {
             </div>
           )}
         </>
-      ) : (
+      ) : activeTab === 'chains' ? (
         /* TAB 2: Chains Management */
         <div className="mt-6">
           <div className="flex justify-between items-center mb-6">
@@ -1091,6 +1144,14 @@ export const AccountsAndChainsPage: React.FC = () => {
             </div>
           )}
         </div>
+      ) : (
+        /* TAB 3: Asset Accounts Management */
+        <AssetAccountsTab
+          assetAccounts={assetAccounts}
+          loading={loading}
+          onConfigure={(acc) => setConfiguringAsset(acc)}
+          onRecharge={(acc) => setRechargingAsset(acc)}
+        />
       )}
 
       {/* Unified Account Classification Modal */}
@@ -1478,6 +1539,24 @@ export const AccountsAndChainsPage: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {configuringAsset && (
+        <AssetAccountConfigModal
+          account={configuringAsset}
+          revenueAccounts={revenueAccounts}
+          onClose={() => setConfiguringAsset(null)}
+          onSaved={refreshAssets}
+        />
+      )}
+
+      {rechargingAsset && (
+        <VoucherRechargeModal
+          account={rechargingAsset}
+          revenueAccounts={revenueAccounts}
+          onClose={() => setRechargingAsset(null)}
+          onSuccess={refreshAssets}
+        />
       )}
     </div>
   );

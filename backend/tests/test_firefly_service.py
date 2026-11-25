@@ -222,6 +222,79 @@ class FireflyServiceTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await client.aclose()
 
+    async def test_get_all_revenue_accounts_and_account_by_type(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "/api/v1/accounts?" in str(request.url) and "type=revenue" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [{"id": "40", "attributes": {"name": "Employer Corp", "type": "revenue"}}],
+                        "meta": {"pagination": {"total_pages": 1}},
+                    },
+                )
+            if "/api/v1/accounts/40" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={"data": {"id": "40", "attributes": {"name": "Employer Corp", "type": "revenue", "active": True}}},
+                )
+            return httpx.Response(404)
+
+        client = FireflyClient(
+            base_url="http://mock-firefly",
+            token="mock-token",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            revenues = await client.get_all_revenue_accounts()
+            self.assertEqual(len(revenues), 1)
+            self.assertEqual(revenues[0]["attributes"]["name"], "Employer Corp")
+
+            rev = await client.get_account_by_id(40, expected_type="revenue")
+            self.assertIsNotNone(rev)
+            wrong_type = await client.get_account_by_id(40, expected_type="asset")
+            self.assertIsNone(wrong_type)
+        finally:
+            await client.aclose()
+
+    async def test_create_voucher_recharge_deposit_uses_naive_timestamp(self):
+        import json as json_mod
+        from datetime import date, time
+
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            captured["body"] = json_mod.loads(request.content.decode("utf-8"))
+            return httpx.Response(200, json={"data": {"id": "777"}})
+
+        client = FireflyClient(
+            base_url="http://mock-firefly",
+            token="mock-token",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            resp = await client.create_voucher_recharge_deposit(
+                voucher_account_id=10,
+                revenue_account_id=40,
+                amount=103.20,
+                recharge_date=date(2026, 11, 25),
+                recharge_time=time(9, 30, 0),
+                description="Monthly Buoni Pasto",
+                notes="20 vouchers",
+            )
+            self.assertEqual(resp["data"]["id"], "777")
+            tx = captured["body"]["transactions"][0]
+            self.assertEqual(tx["type"], "deposit")
+            self.assertEqual(tx["date"], "2026-11-25T09:30:00")
+            self.assertEqual(tx["amount"], "103.20")
+            self.assertEqual(tx["source_id"], "40")
+            self.assertEqual(tx["destination_id"], "10")
+            self.assertEqual(tx["description"], "Monthly Buoni Pasto")
+            self.assertEqual(tx["category_name"], "Income: Benefits")
+            self.assertEqual(tx["tags"], ["Meal Voucher"])
+        finally:
+            await client.aclose()
+
 
 if __name__ == "__main__":
     unittest.main()

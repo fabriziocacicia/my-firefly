@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -11,6 +12,8 @@ from app.services.classification import (
 )
 from app.models.company import CompanyAccountLink
 from app.models.account_metadata import AccountMetadata, AccountRole
+from app.models.asset_account import AssetAccountMetadata, AssetAccountType
+from app.services.vouchers import compute_voucher_balance_status, to_cents
 
 router = APIRouter(prefix="/firefly", tags=["Firefly Sync"])
 
@@ -182,19 +185,125 @@ async def get_expense_account(
     return _build_expense_account(account_id, attr, resolved)
 
 
-@router.get("/asset-accounts")
-async def list_asset_accounts():
+class FireflyAssetAccount(BaseModel):
+    id: int
+    name: str
+    current_balance: str
+    active: bool = True
+    currency_code: Optional[str] = None
+    asset_type: AssetAccountType = AssetAccountType.STANDARD
+    voucher_unit_value: Optional[float] = None
+    default_revenue_account_id: Optional[int] = None
+    default_revenue_account_name: Optional[str] = None
+    default_recharge_description: Optional[str] = None
+    notes: Optional[str] = None
+    usable_vouchers: Optional[int] = None
+    is_exact_multiple: bool = True
+    balance_discrepancy: float = 0.0
+
+
+class FireflyRevenueAccountBrief(BaseModel):
+    id: int
+    name: str
+
+
+@router.get("/asset-accounts", response_model=List[FireflyAssetAccount])
+async def list_asset_accounts(session: Session = Depends(get_session)):
     try:
         accounts = await firefly_client.get_all_asset_accounts()
-        results = []
-        for acc in accounts:
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Firefly API error: {str(e)}")
+
+    metas = session.exec(select(AssetAccountMetadata)).all()
+    meta_map = {m.firefly_account_id: m for m in metas}
+
+    rev_name_map: dict[int, str] = {}
+    if any(m.default_revenue_account_id for m in metas):
+        try:
+            rev_accounts = await firefly_client.get_all_revenue_accounts()
+            for rev in rev_accounts:
+                try:
+                    rid = int(rev.get("id"))
+                    rev_name_map[rid] = rev.get("attributes", {}).get(
+                        "name", f"Revenue #{rid}"
+                    )
+                except (ValueError, TypeError):
+                    continue
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Failed to resolve default revenue account names from Firefly: %s", exc
+            )
+
+    results: List[FireflyAssetAccount] = []
+    for acc in accounts:
+        try:
             acc_id = int(acc.get("id"))
-            attr = acc.get("attributes", {})
-            results.append({
-                "id": acc_id,
-                "name": attr.get("name"),
-                "current_balance": attr.get("current_balance"),
-            })
+        except (ValueError, TypeError):
+            continue
+        attr = acc.get("attributes", {})
+        balance_str = str(attr.get("current_balance") or "0")
+        meta = meta_map.get(acc_id)
+
+        asset_type = meta.asset_type if meta else AssetAccountType.STANDARD
+        unit_val = meta.voucher_unit_value if meta else None
+        usable_vouchers: Optional[int] = None
+        is_exact_multiple = True
+        balance_discrepancy = 0.0
+
+        if (
+            asset_type == AssetAccountType.MEAL_VOUCHER
+            and unit_val is not None
+            and to_cents(unit_val) > 0
+        ):
+            status = compute_voucher_balance_status(balance_str, unit_val)
+            usable_vouchers = status.usable_vouchers
+            is_exact_multiple = status.is_exact_multiple
+            balance_discrepancy = status.balance_discrepancy
+
+        rev_id = meta.default_revenue_account_id if meta else None
+        results.append(
+            FireflyAssetAccount(
+                id=acc_id,
+                name=attr.get("name") or f"Asset #{acc_id}",
+                current_balance=balance_str,
+                active=bool(attr.get("active", True)),
+                currency_code=attr.get("currency_code"),
+                asset_type=asset_type,
+                voucher_unit_value=unit_val,
+                default_revenue_account_id=rev_id,
+                default_revenue_account_name=rev_name_map.get(rev_id) if rev_id else None,
+                default_recharge_description=(
+                    meta.default_recharge_description if meta else None
+                ),
+                notes=meta.notes if meta else None,
+                usable_vouchers=usable_vouchers,
+                is_exact_multiple=is_exact_multiple,
+                balance_discrepancy=balance_discrepancy,
+            )
+        )
+    return results
+
+
+@router.get("/revenue-accounts", response_model=List[FireflyRevenueAccountBrief])
+async def list_revenue_accounts():
+    try:
+        accounts = await firefly_client.get_all_revenue_accounts()
+        results: List[FireflyRevenueAccountBrief] = []
+        for acc in accounts:
+            try:
+                attr = acc.get("attributes", {})
+                if not bool(attr.get("active", True)):
+                    continue
+                acc_id = int(acc.get("id"))
+                results.append(
+                    FireflyRevenueAccountBrief(
+                        id=acc_id,
+                        name=attr.get("name") or f"Revenue #{acc_id}",
+                    )
+                )
+            except (ValueError, TypeError):
+                continue
+        results.sort(key=lambda x: x.name.lower())
         return results
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Firefly API error: {str(e)}")

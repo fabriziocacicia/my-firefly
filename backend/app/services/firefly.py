@@ -1,5 +1,6 @@
 import asyncio
 import time
+from datetime import date, time as dt_time
 from typing import Optional, Any
 import httpx
 from app.core.config import settings
@@ -81,6 +82,10 @@ class FireflyClient:
         """Fetches all asset accounts across pages (checking, cash, meal vouchers)."""
         return await self._get_all_accounts_by_type("asset")
 
+    async def get_all_revenue_accounts(self) -> list[dict[str, Any]]:
+        """Fetches all revenue accounts across pages (employers, income sources)."""
+        return await self._get_all_accounts_by_type("revenue")
+
     async def search_expense_accounts(
         self, query: str, limit: int = 20
     ) -> list[dict[str, Any]]:
@@ -98,10 +103,12 @@ class FireflyClient:
         resp.raise_for_status()
         return resp.json().get("data", [])
 
-    async def get_expense_account(self, account_id: int) -> Optional[dict[str, Any]]:
+    async def get_account_by_id(
+        self, account_id: int, expected_type: Optional[str] = None
+    ) -> Optional[dict[str, Any]]:
         """
         Fetches single account by ID via Firefly III GET /api/v1/accounts/{account_id}.
-        Returns account data dict if type is 'expense', or None if 404 or different type.
+        If `expected_type` is provided, returns None when the account has a different type.
         """
         client = self._get_client()
         resp = await client.get(
@@ -112,9 +119,18 @@ class FireflyClient:
             return None
         resp.raise_for_status()
         data = resp.json().get("data")
-        if not data or data.get("attributes", {}).get("type") != "expense":
+        if not data:
+            return None
+        if expected_type and data.get("attributes", {}).get("type") != expected_type:
             return None
         return data
+
+    async def get_expense_account(self, account_id: int) -> Optional[dict[str, Any]]:
+        """
+        Fetches single expense account by ID via Firefly III GET /api/v1/accounts/{account_id}.
+        Returns account data dict if type is 'expense', or None if 404 or different type.
+        """
+        return await self.get_account_by_id(account_id, expected_type="expense")
 
     async def resolve_expense_account_names(
         self, account_ids: set[int]
@@ -283,6 +299,42 @@ class FireflyClient:
             "transactions_created": len(created_transactions),
             "details": created_transactions,
         }
+
+    async def create_voucher_recharge_deposit(
+        self,
+        voucher_account_id: int,
+        revenue_account_id: int,
+        amount: float,
+        recharge_date: date,
+        recharge_time: dt_time,
+        description: str,
+        category_name: str = "Income: Benefits",
+        tags: Optional[list[str]] = None,
+        notes: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Creates a Firefly III deposit transaction from an employer revenue account
+        to a meal voucher asset account using a naive ISO-8601 timestamp so Firefly
+        evaluates it in the server's configured timezone.
+        """
+        payload = {
+            "error_if_duplicate_hash": False,
+            "apply_rules": True,
+            "transactions": [
+                {
+                    "type": "deposit",
+                    "date": f"{recharge_date.isoformat()}T{recharge_time.strftime('%H:%M:%S')}",
+                    "amount": f"{amount:.2f}",
+                    "description": description,
+                    "source_id": str(revenue_account_id),
+                    "destination_id": str(voucher_account_id),
+                    "category_name": category_name,
+                    "tags": tags if tags is not None else ["Meal Voucher"],
+                    "notes": notes or "",
+                }
+            ],
+        }
+        return await self.create_transaction(payload)
 
 
 firefly_client = FireflyClient()

@@ -12,11 +12,12 @@ A companion web application for **Firefly III** to track SKU-level product price
    - Built-in receipt image attachment preview and local draft autosave in browser storage.
    - 1-click push to Firefly III split transactions with optional meal voucher splits.
 
-2. **Accounts & Chains (Classification, Multi-Types & Sector Tagging)**:
+2. **Accounts & Chains (Classification, Multi-Types, Sector Tagging & Asset Accounts)**:
    - Instant live lookup and autocomplete across all Firefly III expense accounts without upfront manual mapping.
    - Classify accounts by role (`Local Business`, `Chain Branch`, `E-Commerce`, `Service`, `Person`, `Unclassified`).
    - Multi-type business modeling (`business_types` array, e.g. `[Bar/Cafe, Tobacconist]`) with automatic retail chain branch inheritance.
    - Sector category tagging (`category`) with zero-maintenance dynamic garbage collection (disappears automatically when unused).
+   - **Asset Accounts & Meal Vouchers**: View live Firefly III balances, flag meal-voucher accounts with configurable unit values and default employer revenue accounts, detect balance-multiple discrepancies, and create exact Firefly deposit recharges.
 
 3. **Products, Brands & Price Intelligence**:
    - Track products with brands, package sizes, and multi-dimensional tags (e.g. `[Food, Pasta, Organic]`, `[Fruit, Bio]`).
@@ -36,17 +37,17 @@ A companion web application for **Firefly III** to track SKU-level product price
 my-firefly/
 ├── backend/                  # Python 3.11 + FastAPI + SQLModel
 │   ├── app/
-│   │   ├── api/v1/           # REST endpoints (companies, products, prices, firefly, workflows, receipts, accounts, categories)
+│   │   ├── api/v1/           # REST endpoints (companies, products, prices, firefly, workflows, receipts, accounts, asset_accounts, categories)
 │   │   ├── core/             # Configuration & SQLite connection
-│   │   ├── models/           # SQLModel domain models (Company, AccountMetadata, Product, Price, Tag, Receipt)
-│   │   ├── services/         # Firefly III client & price normalization
+│   │   ├── models/           # SQLModel domain models (Company, AccountMetadata, AssetAccountMetadata, Product, Price, Tag, Receipt)
+│   │   ├── services/         # Firefly III client, voucher math & price normalization
 │   │   └── main.py           # FastAPI entrypoint
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/                 # TypeScript + React + Vite + Tailwind CSS
 │   ├── src/
 │   │   ├── api/client.ts     # Typed API client
-│   │   ├── components/       # UI components (Workbench, Common, Navigation)
+│   │   ├── components/       # UI components (Workbench, Accounts, Common, Navigation)
 │   │   ├── pages/            # ReceiptWorkbenchPage, AccountsAndChainsPage, CatalogPage, WorkflowsPage
 │   │   └── types/            # TypeScript interfaces
 │   ├── package.json
@@ -69,6 +70,7 @@ All significant architecture decisions, domain models, and RFCs are maintained i
 - [Receipt Workbench & Price Analytics](docs/designs/receipt_workbench_and_price_analytics.md)
 - [Live Firefly Store Lookup & Optional Companies](docs/designs/live_firefly_stores_and_optional_company.md)
 - [Expense Account Classification & Category Tagging](docs/designs/expense_account_classification_and_category_tagging.md)
+- [Meal Voucher Asset Accounts & Recharge](docs/designs/meal_voucher_asset_accounts.md)
 - [ADR-001: Multi-Type Business Modeling and Dynamic Category Tagging](docs/decisions/ADR-001-multi-type-business-modeling-and-dynamic-categories.md)
 
 ---
