@@ -92,10 +92,14 @@ export const ChainFormModal: React.FC<ChainFormModalProps> = ({
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
+            <label
+              htmlFor="chain-form-name"
+              className="block text-xs font-semibold text-slate-700 mb-1"
+            >
               Chain Name *
             </label>
             <input
+              id="chain-form-name"
               type="text"
               required
               value={name}
@@ -122,10 +126,14 @@ export const ChainFormModal: React.FC<ChainFormModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
+            <label
+              htmlFor="chain-form-notes"
+              className="block text-xs font-semibold text-slate-700 mb-1"
+            >
               Notes (Optional)
             </label>
             <textarea
+              id="chain-form-notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Optional notes about this retail chain..."
@@ -145,7 +153,7 @@ export const ChainFormModal: React.FC<ChainFormModalProps> = ({
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer"
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer"
             >
               {saving ? 'Saving...' : company ? 'Update Chain' : 'Create Chain'}
             </button>

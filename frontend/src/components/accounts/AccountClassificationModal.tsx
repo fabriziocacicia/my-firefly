@@ -366,7 +366,7 @@ export const AccountClassificationModal: React.FC<AccountClassificationModalProp
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer"
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer"
             >
               {saving ? 'Saving...' : 'Save Classification'}
             </button>
