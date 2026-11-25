@@ -177,7 +177,6 @@ export const WorkbenchHeader: React.FC = () => {
     setVoucherUnitValue,
   ]);
 
-  const effectiveTotal = targetTotal > 0 ? targetTotal : Math.max(calculatedSum, 0);
   const activeUnitValue =
     isSelectedVoucherFlagged && selectedVoucherAccount?.voucher_unit_value
       ? selectedVoucherAccount.voucher_unit_value
