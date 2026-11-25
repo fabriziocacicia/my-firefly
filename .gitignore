@@ -55,3 +55,7 @@ data/receipts/*
 .idea/
 .vscode/
 *.swp
+
+# Local planning & workflow scratchpads
+tasks/
+docs/intent/
