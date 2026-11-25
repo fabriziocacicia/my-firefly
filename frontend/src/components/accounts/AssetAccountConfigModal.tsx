@@ -1,11 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { AlertCircle, Ticket, Wallet, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { AlertCircle, X } from 'lucide-react';
 import { api } from '../../api/client';
 import {
   AssetAccountType,
   FireflyAssetAccount,
   FireflyRevenueAccount,
 } from '../../types';
+import { ASSET_TYPE_META, ASSET_TYPE_ORDER, formatAssetMoney } from './assetTypeUtils';
 
 interface AssetAccountConfigModalProps {
   account: FireflyAssetAccount;
@@ -33,8 +34,10 @@ export const AssetAccountConfigModal: React.FC<AssetAccountConfigModalProps> = (
   const [notes, setNotes] = useState(account.notes || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
+    closeButtonRef.current?.focus();
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
@@ -54,6 +57,10 @@ export const AssetAccountConfigModal: React.FC<AssetAccountConfigModalProps> = (
         return;
       }
       unitValue = Math.round(parsed * 100) / 100;
+      if (unitValue <= 0) {
+        setError('Voucher unit value must be at least €0.01.');
+        return;
+      }
     }
 
     setSaving(true);
@@ -92,14 +99,15 @@ export const AssetAccountConfigModal: React.FC<AssetAccountConfigModalProps> = (
               Configure: {account.name}
             </h2>
             <span className="text-xs text-slate-400 font-mono">
-              Asset Account #{account.id} · Balance €{Number(account.current_balance || 0).toFixed(2)}
+              Asset Account #{account.id} · Balance {formatAssetMoney(account.current_balance, account.currency_code)}
             </span>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+            className="text-slate-400 hover:text-slate-600 p-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -116,37 +124,37 @@ export const AssetAccountConfigModal: React.FC<AssetAccountConfigModalProps> = (
           <div>
             <span className="block text-xs font-semibold text-slate-700 mb-2">Account Type</span>
             <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setAssetType('standard')}
-                className={`p-3 rounded-xl border text-left flex items-start gap-2 transition cursor-pointer ${
-                  assetType === 'standard'
-                    ? 'border-indigo-600 bg-indigo-50/40 text-indigo-900 ring-2 ring-indigo-500/20'
-                    : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
-                }`}
-              >
-                <Wallet className="w-4 h-4 mt-0.5 shrink-0" />
-                <div>
-                  <span className="font-semibold text-xs block">Standard</span>
-                  <span className="text-[11px] text-slate-400 block">Bank, card, or cash</span>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAssetType('meal_voucher')}
-                className={`p-3 rounded-xl border text-left flex items-start gap-2 transition cursor-pointer ${
-                  assetType === 'meal_voucher'
-                    ? 'border-amber-600 bg-amber-50/50 text-amber-950 ring-2 ring-amber-500/20'
-                    : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
-                }`}
-              >
-                <Ticket className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
-                <div>
-                  <span className="font-semibold text-xs block">Meal Voucher</span>
-                  <span className="text-[11px] text-slate-400 block">Whole-unit vouchers</span>
-                </div>
-              </button>
+              {ASSET_TYPE_ORDER.map((typeKey) => {
+                const meta = ASSET_TYPE_META[typeKey];
+                const Icon = meta.icon;
+                const isSelected = assetType === typeKey;
+                return (
+                  <button
+                    key={typeKey}
+                    type="button"
+                    onClick={() => setAssetType(typeKey)}
+                    className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition cursor-pointer ${
+                      typeKey === 'standard' || typeKey === 'meal_voucher' ? 'col-span-2' : ''
+                    } ${
+                      isSelected
+                        ? meta.modalActiveClass
+                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <Icon
+                      className={`w-4 h-4 mt-0.5 shrink-0 ${
+                        isSelected ? meta.modalIconClass : 'text-slate-400'
+                      }`}
+                    />
+                    <div className="min-w-0">
+                      <span className="font-semibold text-xs block">{meta.label}</span>
+                      <span className="text-[11px] text-slate-400 block truncate">
+                        {meta.subtitle}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 

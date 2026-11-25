@@ -87,7 +87,7 @@ def update_asset_account_metadata(
     payload: AssetAccountMetadataUpdate,
     session: Session = Depends(get_session),
 ):
-    """Configure an asset account as standard or meal_voucher with unit value and employer default."""
+    """Configure an asset account type (standard, bank_account, cash, digital_credit, investment_account, or meal_voucher) and metadata."""
     asset_type = payload.asset_type
     voucher_unit_value: Optional[float] = None
     default_revenue_account_id: Optional[int] = None

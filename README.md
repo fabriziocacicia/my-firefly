@@ -17,7 +17,7 @@ A companion web application for **Firefly III** to track SKU-level product price
    - Classify accounts by role (`Local Business`, `Chain Branch`, `E-Commerce`, `Service`, `Person`, `Unclassified`).
    - Multi-type business modeling (`business_types` array, e.g. `[Bar/Cafe, Tobacconist]`) with automatic retail chain branch inheritance.
    - Sector category tagging (`category`) with zero-maintenance dynamic garbage collection (disappears automatically when unused).
-   - **Asset Accounts & Meal Vouchers**: View live Firefly III balances, flag meal-voucher accounts with configurable unit values and default employer revenue accounts, detect balance-multiple discrepancies, and create exact Firefly deposit recharges.
+   - **Asset Accounts & Meal Vouchers**: View live Firefly III balances, classify asset accounts (`Bank Account`, `Cash`, `Digital Credit`, `Investment Account`, `Meal Voucher`, `Standard`), inspect total active balances with a collapsible categorized breakdown, detect voucher balance-multiple discrepancies, and create exact Firefly deposit recharges.
 
 3. **Products, Brands & Price Intelligence**:
    - Track products with brands, package sizes, and multi-dimensional tags (e.g. `[Food, Pasta, Organic]`, `[Fruit, Bio]`).
@@ -71,6 +71,7 @@ All significant architecture decisions, domain models, and RFCs are maintained i
 - [Live Firefly Store Lookup & Optional Companies](docs/designs/live_firefly_stores_and_optional_company.md)
 - [Expense Account Classification & Category Tagging](docs/designs/expense_account_classification_and_category_tagging.md)
 - [Meal Voucher Asset Accounts & Recharge](docs/designs/meal_voucher_asset_accounts.md)
+- [Asset Account Types & Categorized Balance Totals](docs/designs/asset_types_and_total_balances.md)
 - [ADR-001: Multi-Type Business Modeling and Dynamic Category Tagging](docs/decisions/ADR-001-multi-type-business-modeling-and-dynamic-categories.md)
 
 ---
