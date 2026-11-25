@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, X } from 'lucide-react';
 import { api } from '../../api/client';
 import {
@@ -34,8 +34,10 @@ export const AssetAccountConfigModal: React.FC<AssetAccountConfigModalProps> = (
   const [notes, setNotes] = useState(account.notes || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
+    closeButtonRef.current?.focus();
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
@@ -101,10 +103,11 @@ export const AssetAccountConfigModal: React.FC<AssetAccountConfigModalProps> = (
             </span>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+            className="text-slate-400 hover:text-slate-600 p-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>

@@ -5,6 +5,8 @@ import {
   Plus,
   Search,
   Settings2,
+  Wallet,
+  X,
 } from 'lucide-react';
 import { AssetAccountType, FireflyAssetAccount } from '../../types';
 import { AssetBalanceSummary } from './AssetBalanceSummary';
@@ -88,8 +90,8 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
         />
       )}
 
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="relative flex-1 max-w-md">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="relative flex-1 lg:max-w-xs xl:max-w-sm">
           <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
           <input
             type="text"
@@ -97,8 +99,18 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search asset accounts or employer..."
             aria-label="Search asset accounts"
-            className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full pl-9 pr-8 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -148,10 +160,51 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
       )}
 
       {loading ? (
-        <div className="py-16 text-center text-slate-400 text-sm">Loading Firefly III asset accounts...</div>
+        <div
+          role="status"
+          aria-busy="true"
+          aria-label="Loading asset accounts"
+          className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+        >
+          {Array.from({ length: 6 }).map((_, idx) => (
+            <div
+              key={idx}
+              className="h-32 rounded-xl border border-slate-200 bg-white p-4 animate-pulse"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-slate-100" />
+                  <div className="space-y-2">
+                    <div className="h-3.5 w-28 rounded bg-slate-100" />
+                    <div className="h-3 w-16 rounded bg-slate-100" />
+                  </div>
+                </div>
+                <div className="h-4 w-16 rounded bg-slate-100" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : filtered.length === 0 ? (
-        <div className="py-16 text-center text-slate-400 text-sm bg-white border border-slate-200 rounded-xl mt-6">
-          No asset accounts match the current filter.
+        <div
+          role="status"
+          className="py-12 px-4 text-center bg-white border border-slate-200 rounded-xl mt-6"
+        >
+          <Wallet className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+          <p className="text-sm font-medium text-slate-700">
+            No asset accounts match the current filter.
+          </p>
+          {(search.trim() !== '' || filter !== 'all') && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearch('');
+                setFilter('all');
+              }}
+              className="mt-3 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
       ) : (
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -250,6 +303,12 @@ export const AssetAccountsTab: React.FC<AssetAccountsTabProps> = ({
                         </div>
                       )}
                     </div>
+                  )}
+
+                  {acc.notes && (
+                    <p className="mt-2.5 text-xs text-slate-500 line-clamp-2" title={acc.notes}>
+                      {acc.notes}
+                    </p>
                   )}
                 </div>
 
