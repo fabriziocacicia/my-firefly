@@ -81,7 +81,6 @@ class ReceiptCreate(SQLModel):
     purchase_time: Optional[time] = Field(
         default_factory=lambda: datetime.now().time().replace(microsecond=0)
     )
-    total_amount: float = Field(gt=0)
     basket_discount: float = Field(default=0.0, ge=0)
     source_account_id: Optional[int] = None
     payment_mode: Literal["single", "split_vouchers"] = "single"
@@ -91,7 +90,7 @@ class ReceiptCreate(SQLModel):
     notes: Optional[str] = None
     items: List[ReceiptItemCreate] = Field(min_length=1)
 
-    @field_validator("total_amount", "basket_discount", "voucher_unit_value")
+    @field_validator("basket_discount", "voucher_unit_value")
     @classmethod
     def _validate_finite_float(cls, v: float) -> float:
         if not math.isfinite(v):

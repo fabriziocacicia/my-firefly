@@ -232,7 +232,6 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         payload = {
             "firefly_account_id": self.active_account_id,
             "purchase_date": "2026-11-10",
-            "total_amount": 3.20,
             "basket_discount": 0.50,
             "source_account_id": 1,
             "payment_mode": "single",
@@ -260,9 +259,32 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
         res = self.client.post("/api/v1/receipts/", json=payload)
         self.assertEqual(res.status_code, 200, res.text)
         created = res.json()
+        self.assertEqual(created["total_amount"], 3.20)
         self.assertEqual(created["basket_discount"], 0.50)
         self.assertEqual(len(created["items"]), 2)
         self.assertEqual(created["store_name"], "Conad Via Roma")
+
+        # Reject receipts whose computed total (items - basket_discount) is <= 0
+        non_positive_res = self.client.post(
+            "/api/v1/receipts/",
+            json={
+                "firefly_account_id": self.active_account_id,
+                "purchase_date": "2026-11-10",
+                "basket_discount": 2.00,
+                "source_account_id": 1,
+                "payment_mode": "single",
+                "items": [
+                    {
+                        "product_id": self.pasta_id,
+                        "quantity": 1,
+                        "unit": "g",
+                        "package_size": 500,
+                        "paid_price": 2.00,
+                    }
+                ],
+            },
+        )
+        self.assertEqual(non_positive_res.status_code, 422)
 
         hist = self.client.get(f"/api/v1/prices/history/{self.pasta_id}")
         self.assertEqual(hist.status_code, 200)
@@ -278,7 +300,6 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             json={
                 "firefly_account_id": self.active_account_id,
                 "purchase_date": "2026-11-10",
-                "total_amount": 2.00,
                 "source_account_id": 1,
                 "payment_mode": "single",
                 "items": [
@@ -337,7 +358,6 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             json={
                 "firefly_account_id": self.inactive_account_id,
                 "purchase_date": "2026-11-10",
-                "total_amount": 2.00,
                 "source_account_id": 1,
                 "items": [{"product_id": self.pasta_id, "paid_price": 2.00}],
             },
@@ -350,7 +370,6 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             json={
                 "firefly_account_id": self.active_account_id,
                 "purchase_date": "2026-11-10",
-                "total_amount": 15.00,
                 "source_account_id": 1,
                 "payment_mode": "split_vouchers",
                 "voucher_account_id": 2,
@@ -448,7 +467,6 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
                 "firefly_account_id": self.active_account_id,
                 "purchase_date": "2026-11-15",
                 "purchase_time": "09:30:00",
-                "total_amount": 2.00,
                 "source_account_id": 1,
                 "payment_mode": "single",
                 "items": [{"product_id": self.pasta_id, "paid_price": 2.00}],
@@ -500,7 +518,6 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             json={
                 "firefly_account_id": self.active_account_id,
                 "purchase_date": "2026-11-25",
-                "total_amount": 10.32,
                 "source_account_id": None,
                 "payment_mode": "split_vouchers",
                 "voucher_account_id": 2,
@@ -544,7 +561,6 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             json={
                 "firefly_account_id": self.active_account_id,
                 "purchase_date": "2026-11-25",
-                "total_amount": 9.00,
                 "source_account_id": 1,
                 "payment_mode": "split_vouchers",
                 "voucher_account_id": 2,
@@ -561,7 +577,6 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             json={
                 "firefly_account_id": self.active_account_id,
                 "purchase_date": "2026-11-25",
-                "total_amount": 15.00,
                 "source_account_id": 1,
                 "payment_mode": "split_vouchers",
                 "voucher_account_id": 2,
@@ -594,7 +609,6 @@ class ReceiptsApiAndMigrationTests(unittest.TestCase):
             json={
                 "firefly_account_id": self.active_account_id,
                 "purchase_date": "2026-11-25",
-                "total_amount": 50.00,
                 "source_account_id": 1,
                 "payment_mode": "split_vouchers",
                 "voucher_account_id": 2,
