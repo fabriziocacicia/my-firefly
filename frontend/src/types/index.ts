@@ -143,7 +143,12 @@ export const COMMON_BUSINESS_TYPES = [
   'Hotel',
 ] as const;
 
-export type AssetAccountType = 'standard' | 'meal_voucher';
+export type AssetAccountType =
+  | 'standard'
+  | 'bank_account'
+  | 'cash'
+  | 'gift_card'
+  | 'meal_voucher';
 
 export interface FireflyAssetAccount {
   id: number;

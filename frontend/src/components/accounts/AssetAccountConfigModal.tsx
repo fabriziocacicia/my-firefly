@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, Ticket, Wallet, X } from 'lucide-react';
+import { AlertCircle, X } from 'lucide-react';
 import { api } from '../../api/client';
 import {
   AssetAccountType,
   FireflyAssetAccount,
   FireflyRevenueAccount,
 } from '../../types';
+import { ASSET_TYPE_META, ASSET_TYPE_ORDER } from './assetTypeUtils';
 
 interface AssetAccountConfigModalProps {
   account: FireflyAssetAccount;
@@ -116,37 +117,37 @@ export const AssetAccountConfigModal: React.FC<AssetAccountConfigModalProps> = (
           <div>
             <span className="block text-xs font-semibold text-slate-700 mb-2">Account Type</span>
             <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setAssetType('standard')}
-                className={`p-3 rounded-xl border text-left flex items-start gap-2 transition cursor-pointer ${
-                  assetType === 'standard'
-                    ? 'border-indigo-600 bg-indigo-50/40 text-indigo-900 ring-2 ring-indigo-500/20'
-                    : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
-                }`}
-              >
-                <Wallet className="w-4 h-4 mt-0.5 shrink-0" />
-                <div>
-                  <span className="font-semibold text-xs block">Standard</span>
-                  <span className="text-[11px] text-slate-400 block">Bank, card, or cash</span>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAssetType('meal_voucher')}
-                className={`p-3 rounded-xl border text-left flex items-start gap-2 transition cursor-pointer ${
-                  assetType === 'meal_voucher'
-                    ? 'border-amber-600 bg-amber-50/50 text-amber-950 ring-2 ring-amber-500/20'
-                    : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
-                }`}
-              >
-                <Ticket className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
-                <div>
-                  <span className="font-semibold text-xs block">Meal Voucher</span>
-                  <span className="text-[11px] text-slate-400 block">Whole-unit vouchers</span>
-                </div>
-              </button>
+              {ASSET_TYPE_ORDER.map((typeKey) => {
+                const meta = ASSET_TYPE_META[typeKey];
+                const Icon = meta.icon;
+                const isSelected = assetType === typeKey;
+                return (
+                  <button
+                    key={typeKey}
+                    type="button"
+                    onClick={() => setAssetType(typeKey)}
+                    className={`p-2.5 rounded-xl border text-left flex items-start gap-2 transition cursor-pointer ${
+                      typeKey === 'standard' ? 'col-span-2' : ''
+                    } ${
+                      isSelected
+                        ? meta.modalActiveClass
+                        : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <Icon
+                      className={`w-4 h-4 mt-0.5 shrink-0 ${
+                        isSelected ? meta.modalIconClass : 'text-slate-400'
+                      }`}
+                    />
+                    <div className="min-w-0">
+                      <span className="font-semibold text-xs block">{meta.label}</span>
+                      <span className="text-[11px] text-slate-400 block truncate">
+                        {meta.subtitle}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
