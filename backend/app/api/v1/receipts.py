@@ -26,8 +26,10 @@ from app.models.receipt import (
     ReceiptPushRequest,
     ReceiptRead,
 )
+from app.models.tag import Tag
 from app.services.firefly import firefly_client
 from app.services.pricing import normalize_unit_price
+from app.services.taxonomy import expand_tags_ordered, get_implication_map
 from app.services.vouchers import compute_voucher_balance_status, to_cents
 
 pillow_heif.register_heif_opener()
@@ -96,14 +98,12 @@ async def _get_receipt_read_or_404(
     return hydrated[0]
 
 
-def _allocate_receipt_cents(
-    billable_items: List[ReceiptItem], target_cents: int
-) -> List[int]:
+def _allocate_weighted_cents(weights: List[int], target_cents: int) -> List[int]:
     """
-    Allocates `target_cents` across billable items with a 1-cent floor per item
+    Allocates `target_cents` across entries with a 1-cent floor per entry
     using exact integer-quotient Largest Remainder Method so the sum equals `target_cents`.
     """
-    count = len(billable_items)
+    count = len(weights)
     if count == 0:
         raise HTTPException(
             status_code=422, detail="Receipt has no positive billable items to push"
@@ -118,18 +118,49 @@ def _allocate_receipt_cents(
         )
 
     distributable = target_cents - count
-    weights = [max(1, round(item.line_total * 100)) for item in billable_items]
-    total_weight = sum(weights)
+    safe_weights = [max(1, w) for w in weights]
+    total_weight = sum(safe_weights)
 
-    quotients = [(distributable * w) // total_weight for w in weights]
-    remainders = [(distributable * w) % total_weight for w in weights]
+    quotients = [(distributable * w) // total_weight for w in safe_weights]
+    remainders = [(distributable * w) % total_weight for w in safe_weights]
     shortfall = distributable - sum(quotients)
 
-    order = sorted(range(count), key=lambda i: (-remainders[i], -weights[i], i))
+    order = sorted(range(count), key=lambda i: (-remainders[i], -safe_weights[i], i))
     for idx in order[:shortfall]:
         quotients[idx] += 1
 
     return [1 + q for q in quotients]
+
+
+def _allocate_receipt_cents(
+    billable_items: List[ReceiptItem], target_cents: int
+) -> List[int]:
+    """Allocates `target_cents` across ReceiptItem entries using Largest Remainder Method."""
+    weights = [max(1, round(item.line_total * 100)) for item in billable_items]
+    return _allocate_weighted_cents(weights, target_cents)
+
+
+def _expand_billable_split_units(
+    billable_items: List[ReceiptItem],
+) -> list[tuple[ReceiptItem, int, str]]:
+    """
+    Expands each packaged ReceiptItem with quantity N into N individual split units
+    (so 5 packs produce 5 identical Firefly splits), and keeps loose_weight items as 1 split.
+    """
+    units: list[tuple[ReceiptItem, int, str]] = []
+    for item in billable_items:
+        total_cents = max(1, round(item.line_total * 100))
+        sale_mode = item.product.sale_mode if item.product else "packaged"
+        if sale_mode == "loose_weight":
+            units.append((item, total_cents, f"{item.quantity:g} {item.unit}"))
+            continue
+
+        pack_qty = max(1, int(round(item.quantity)))
+        base_cents, remainder = divmod(total_cents, pack_qty)
+        for idx in range(pack_qty):
+            unit_weight = base_cents + (1 if idx < remainder else 0)
+            units.append((item, max(1, unit_weight), ""))
+    return units
 
 
 def _partition_voucher_and_card_splits(
@@ -170,11 +201,48 @@ def _partition_voucher_and_card_splits(
     return voucher_splits, card_splits
 
 
+def _partition_split_units_for_vouchers(
+    split_units: list[tuple[ReceiptItem, int, str]],
+    allocated_cents: List[int],
+    voucher_cents: int,
+) -> tuple[list[tuple[ReceiptItem, int, str]], list[tuple[ReceiptItem, int, str]]]:
+    """Partitions expanded split units between voucher and card remainder transactions."""
+    voucher_splits: list[tuple[ReceiptItem, int, str]] = []
+    card_splits: list[tuple[ReceiptItem, int, str]] = []
+    cumulative = 0
+    crossed = False
+
+    for (item, _, note_ctx), unit_cents in zip(split_units, allocated_cents):
+        base_suffix = f" ({note_ctx})" if note_ctx else ""
+        if crossed:
+            card_splits.append((item, unit_cents, base_suffix))
+            continue
+
+        if cumulative + unit_cents < voucher_cents:
+            voucher_splits.append((item, unit_cents, base_suffix))
+            cumulative += unit_cents
+        elif cumulative + unit_cents == voucher_cents:
+            voucher_splits.append((item, unit_cents, base_suffix))
+            cumulative += unit_cents
+            crossed = True
+        else:
+            split_a = voucher_cents - cumulative
+            split_b = unit_cents - split_a
+            voucher_splits.append((item, split_a, f"{base_suffix} [Voucher]"))
+            card_splits.append((item, split_b, f"{base_suffix} [Card Remainder]"))
+            cumulative = voucher_cents
+            crossed = True
+
+    return voucher_splits, card_splits
+
+
 def _build_firefly_tx_payload(
     receipt: Receipt,
     splits: list[tuple[ReceiptItem, int, str]],
     source_account_id: int,
     account_name: str,
+    all_tags_by_id: dict[int, Tag] | None = None,
+    implications: dict[int, set[int]] | None = None,
 ) -> dict:
     tx_splits = []
     formatted_time = (
@@ -182,25 +250,33 @@ def _build_firefly_tx_payload(
         if receipt.purchase_time
         else "12:00:00"
     )
+    tags_map = all_tags_by_id or {}
+    imp_map = implications or {}
+
     for item, amount_cents, suffix in splits:
-        product_name = (
-            item.product.name if item.product else f"Product #{item.product_id}"
-        )
+        product = item.product
+        product_name = product.name if product else f"Product #{item.product_id}"
         base_notes = receipt.notes or ""
         split_notes = (
             f"{base_notes}{suffix}".lstrip() if suffix else base_notes
         )
-        tx_splits.append(
-            {
-                "type": "withdrawal",
-                "date": f"{receipt.purchase_date}T{formatted_time}",
-                "amount": f"{amount_cents / 100:.2f}",
-                "description": f"{product_name} (x{item.quantity})",
-                "source_id": str(source_account_id),
-                "destination_id": str(receipt.firefly_account_id),
-                "notes": split_notes,
-            }
-        )
+
+        split_payload: dict = {
+            "type": "withdrawal",
+            "date": f"{receipt.purchase_date}T{formatted_time}",
+            "amount": f"{amount_cents / 100:.2f}",
+            "description": product_name,
+            "source_id": str(source_account_id),
+            "destination_id": str(receipt.firefly_account_id),
+            "notes": split_notes,
+        }
+        if product and product.firefly_category_name:
+            split_payload["category_name"] = product.firefly_category_name
+        if product and product.tags:
+            expanded = expand_tags_ordered(product.tags, tags_map, imp_map)
+            split_payload["tags"] = [t.name for t in expanded]
+
+        tx_splits.append(split_payload)
 
     return {
         "error_if_duplicate_hash": False,
@@ -314,23 +390,49 @@ async def create_receipt(
             detail=f"Firefly expense account #{receipt_in.firefly_account_id} is inactive",
         )
 
-    # 2. Validate products exist
+    # 2. Validate products exist and fetch canonical metadata
     product_ids = {item.product_id for item in receipt_in.items}
     existing_products = session.exec(
-        select(Product.id).where(Product.id.in_(product_ids))
+        select(Product).where(Product.id.in_(product_ids))
     ).all()
-    existing_id_set = set(existing_products)
+    products_map = {p.id: p for p in existing_products if p.id is not None}
     for pid in product_ids:
-        if pid not in existing_id_set:
+        if pid not in products_map:
             raise HTTPException(
                 status_code=404, detail=f"Product {pid} not found"
             )
 
-    # 3. Compute receipt total & validate whole-voucher rules
-    line_totals = [
-        round(item.quantity * item.paid_price, 2) for item in receipt_in.items
-    ]
-    computed_total = round(sum(line_totals) - receipt_in.basket_discount, 2)
+    # 3. Resolve item quantities/units/prices against canonical Product definitions
+    resolved_items = []
+    for item in receipt_in.items:
+        product = products_map[item.product_id]
+        if product.sale_mode == "packaged" and not float(item.quantity).is_integer():
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Packaged item '{product.name}' requires an integer pack quantity "
+                    f"(got {item.quantity})"
+                ),
+            )
+        effective_unit = item.unit or product.default_unit
+        effective_pkg_size = (
+            item.package_size if item.package_size is not None else product.package_size
+        )
+        if item.total_price is not None:
+            line_total = round(item.total_price, 2)
+            effective_paid_price = round(item.total_price / item.quantity, 4)
+        else:
+            assert item.paid_price is not None
+            effective_paid_price = float(item.paid_price)
+            line_total = round(item.quantity * effective_paid_price, 2)
+        resolved_items.append(
+            (item, effective_unit, effective_pkg_size, effective_paid_price, line_total)
+        )
+
+    # 4. Compute receipt total & validate whole-voucher rules
+    computed_total = round(
+        sum(entry[4] for entry in resolved_items) - receipt_in.basket_discount, 2
+    )
     if computed_total <= 0:
         raise HTTPException(
             status_code=422,
@@ -348,7 +450,7 @@ async def create_receipt(
         voucher_unit_value=receipt_in.voucher_unit_value,
     )
 
-    # 4. Persist receipt and price observations
+    # 5. Persist receipt and price observations
     receipt = Receipt(
         firefly_account_id=receipt_in.firefly_account_id,
         purchase_date=receipt_in.purchase_date,
@@ -365,33 +467,33 @@ async def create_receipt(
     session.add(receipt)
     session.flush()
 
-    for item, line_total in zip(receipt_in.items, line_totals):
+    for item, eff_unit, eff_pkg_size, eff_paid_price, line_total in resolved_items:
         effective_regular = (
             item.regular_price
             if item.regular_price is not None
-            else item.paid_price
+            else eff_paid_price
         )
-        is_discount = item.is_discount or (item.paid_price < effective_regular)
+        is_discount = item.is_discount or (eff_paid_price < effective_regular)
         norm_paid = normalize_unit_price(
-            price=item.paid_price,
+            price=eff_paid_price,
             quantity=1.0,
-            unit=item.unit,
-            package_size=item.package_size,
+            unit=eff_unit,
+            package_size=eff_pkg_size,
         )
         norm_reg = normalize_unit_price(
             price=effective_regular,
             quantity=1.0,
-            unit=item.unit,
-            package_size=item.package_size,
+            unit=eff_unit,
+            package_size=eff_pkg_size,
         )
 
         receipt_item = ReceiptItem(
             receipt_id=receipt.id,
             product_id=item.product_id,
             quantity=item.quantity,
-            unit=item.unit,
-            package_size=item.package_size,
-            paid_price=item.paid_price,
+            unit=eff_unit,
+            package_size=eff_pkg_size,
+            paid_price=eff_paid_price,
             regular_price=effective_regular,
             is_discount=is_discount,
             line_total=line_total,
@@ -403,13 +505,14 @@ async def create_receipt(
             firefly_account_id=receipt.firefly_account_id,
             recorded_date=receipt.purchase_date,
             regular_price=effective_regular,
-            paid_price=item.paid_price,
+            paid_price=eff_paid_price,
             is_discount=is_discount,
             quantity=item.quantity,
-            unit=item.unit,
-            package_size=item.package_size,
+            unit=eff_unit,
+            package_size=eff_pkg_size,
             normalized_unit_price=norm_paid,
             normalized_regular_price=norm_reg,
+            source_type="receipt",
             notes=receipt.notes,
         )
         session.add(price_record)
@@ -683,14 +786,29 @@ async def push_receipt_to_firefly(
         session.commit()
 
     billable_items = [item for item in receipt.items if item.line_total > 0]
+    split_units = _expand_billable_split_units(billable_items)
     target_cents = round(receipt.total_amount * 100)
-    allocated_cents = _allocate_receipt_cents(billable_items, target_cents)
+    allocated_cents = _allocate_weighted_cents(
+        [weight for _, weight, _ in split_units], target_cents
+    )
+
+    all_tags = session.exec(select(Tag)).all()
+    all_tags_by_id = {t.id: t for t in all_tags if t.id is not None}
+    implications = get_implication_map(session)
 
     if receipt.payment_mode == "single":
         assert receipt.source_account_id is not None
-        splits = [(item, cents, "") for item, cents in zip(billable_items, allocated_cents)]
+        splits = [
+            (item, cents, f" ({note_ctx})" if note_ctx else "")
+            for (item, _, note_ctx), cents in zip(split_units, allocated_cents)
+        ]
         payload = _build_firefly_tx_payload(
-            receipt, splits, receipt.source_account_id, account_name
+            receipt,
+            splits,
+            receipt.source_account_id,
+            account_name,
+            all_tags_by_id=all_tags_by_id,
+            implications=implications,
         )
         try:
             resp = await firefly_client.create_transaction(payload)
@@ -707,9 +825,17 @@ async def push_receipt_to_firefly(
     # split_vouchers mode
     assert receipt.voucher_account_id is not None
     if card_remainder_cents <= 0:
-        splits = [(item, cents, "") for item, cents in zip(billable_items, allocated_cents)]
+        splits = [
+            (item, cents, f" ({note_ctx})" if note_ctx else "")
+            for (item, _, note_ctx), cents in zip(split_units, allocated_cents)
+        ]
         payload = _build_firefly_tx_payload(
-            receipt, splits, receipt.voucher_account_id, account_name
+            receipt,
+            splits,
+            receipt.voucher_account_id,
+            account_name,
+            all_tags_by_id=all_tags_by_id,
+            implications=implications,
         )
         try:
             resp = await firefly_client.create_transaction(payload)
@@ -724,14 +850,19 @@ async def push_receipt_to_firefly(
         return await _get_receipt_read_or_404(session, receipt.id)
 
     assert receipt.source_account_id is not None
-    voucher_splits, card_splits = _partition_voucher_and_card_splits(
-        billable_items, allocated_cents, voucher_cents
+    voucher_splits, card_splits = _partition_split_units_for_vouchers(
+        split_units, allocated_cents, voucher_cents
     )
 
     created_voucher_in_this_call = False
     if not partial_voucher_only:
         voucher_payload = _build_firefly_tx_payload(
-            receipt, voucher_splits, receipt.voucher_account_id, account_name
+            receipt,
+            voucher_splits,
+            receipt.voucher_account_id,
+            account_name,
+            all_tags_by_id=all_tags_by_id,
+            implications=implications,
         )
         try:
             tx1 = await firefly_client.create_transaction(voucher_payload)
@@ -750,7 +881,12 @@ async def push_receipt_to_firefly(
         voucher_tx_id = receipt.firefly_voucher_transaction_id
 
     card_payload = _build_firefly_tx_payload(
-        receipt, card_splits, receipt.source_account_id, account_name
+        receipt,
+        card_splits,
+        receipt.source_account_id,
+        account_name,
+        all_tags_by_id=all_tags_by_id,
+        implications=implications,
     )
     try:
         tx2 = await firefly_client.create_transaction(card_payload)

@@ -17,6 +17,30 @@ def get_implication_map(session: Session) -> dict[int, set[int]]:
     return build_implication_map(implications)
 
 
+def get_descendant_tag_ids(
+    target_tag_id: int,
+    implications: dict[int, set[int]],
+) -> set[int]:
+    """
+    Returns {target_tag_id} union all child/descendant tag IDs that imply `target_tag_id`.
+    Used when filtering items by a parent tag (e.g., filtering by 'Frutta' finds 'Mele').
+    """
+    reverse_graph: dict[int, set[int]] = {}
+    for child_id, parents in implications.items():
+        for parent_id in parents:
+            reverse_graph.setdefault(parent_id, set()).add(child_id)
+
+    matching: set[int] = set()
+    stack = [target_tag_id]
+    while stack:
+        current = stack.pop()
+        if current in matching:
+            continue
+        matching.add(current)
+        stack.extend(reverse_graph.get(current, ()))
+    return matching
+
+
 def would_create_cycle(
     child_tag_id: int,
     parent_tag_id: int,
