@@ -33,11 +33,39 @@ export interface AccountMetadataUpdate {
   notes?: string | null;
 }
 
+export type SaleMode = 'packaged' | 'loose_weight';
+
 export interface Tag {
   id: number;
   name: string;
+  firefly_tag_id?: number | null;
   group: string;
   color: string;
+}
+
+export interface TagImplication {
+  child_tag_id: number;
+  parent_tag_id: number;
+}
+
+export interface TagSyncResponse {
+  synced_count: number;
+  created_count: number;
+  updated_count: number;
+  tags: Tag[];
+}
+
+export interface FireflyCategoryBrief {
+  id: number;
+  name: string;
+}
+
+export interface ItemFireflyAlias {
+  id: number;
+  product_id: number;
+  raw_description: string;
+  normalized_description: string;
+  created_at: string;
 }
 
 export interface Brand {
@@ -61,11 +89,19 @@ export interface Product {
   name: string;
   brand_id?: number;
   barcode?: string;
+  sale_mode: SaleMode;
+  pack_count: number;
+  unit_size: number;
   default_unit: string;
   package_size: number;
+  firefly_category_id?: number | null;
+  firefly_category_name?: string | null;
   notes?: string;
   brand?: Brand;
   tags: Tag[];
+  effective_tags?: Tag[];
+  aliases?: ItemFireflyAlias[];
+  affected_firefly_count?: number;
 }
 
 export interface PriceRecord {
@@ -213,10 +249,16 @@ export interface DraftReceiptItem {
   product_id: number;
   product_name: string;
   brand_name?: string;
+  sale_mode?: SaleMode;
+  pack_count?: number;
+  unit_size?: number;
+  firefly_category_name?: string | null;
+  effective_tag_names?: string[];
   quantity: number;
   unit: MeasureUnit;
   package_size: number;
   paid_price: number;
+  total_price?: number;
   regular_price?: number;
   is_discount: boolean;
   line_total: number;
@@ -225,9 +267,10 @@ export interface DraftReceiptItem {
 export interface ReceiptItemPayload {
   product_id: number;
   quantity: number;
-  unit: MeasureUnit;
-  package_size: number;
-  paid_price: number;
+  unit?: MeasureUnit;
+  package_size?: number;
+  paid_price?: number;
+  total_price?: number;
   regular_price?: number;
   is_discount: boolean;
 }

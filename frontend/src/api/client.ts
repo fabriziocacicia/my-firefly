@@ -1,5 +1,6 @@
 import {
-  Company, Product, Brand, Tag, PriceRecord,
+  Company, Product, Brand, Tag, TagImplication, TagSyncResponse, FireflyCategoryBrief,
+  PriceRecord, SaleMode,
   FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount, FireflyRevenueAccount,
   AccountMetadata, AccountMetadataUpdate, AssetAccountMetadataUpdate,
   VoucherRechargeRequest, VoucherRechargeResponse,
@@ -75,6 +76,7 @@ export const api = {
       request<FireflyExpenseAccount>(`/firefly/expense-accounts/${id}`),
     getAssetAccounts: () => request<FireflyAssetAccount[]>('/firefly/asset-accounts'),
     getRevenueAccounts: () => request<FireflyRevenueAccount[]>('/firefly/revenue-accounts'),
+    getCategories: () => request<FireflyCategoryBrief[]>('/firefly/categories'),
   },
 
   assetAccounts: {
@@ -126,25 +128,68 @@ export const api = {
     list: (group?: string) => request<Tag[]>(group ? `/tags/?group=${group}` : '/tags/'),
     create: (data: { name: string; group?: string; color?: string }) =>
       request<Tag>('/tags/', { method: 'POST', body: JSON.stringify(data) }),
+    syncFirefly: () =>
+      request<TagSyncResponse>('/tags/sync-firefly', { method: 'POST' }),
+    listImplications: () => request<TagImplication[]>('/tags/implications'),
+    createImplication: (child_tag_id: number, parent_tag_id: number) =>
+      request<TagImplication>('/tags/implications', {
+        method: 'POST',
+        body: JSON.stringify({ child_tag_id, parent_tag_id }),
+      }),
+    deleteImplication: (child_tag_id: number, parent_tag_id: number) =>
+      request<void>(`/tags/implications/${child_tag_id}/${parent_tag_id}`, {
+        method: 'DELETE',
+      }),
   },
 
   products: {
-    list: (params?: { search?: string; brand_id?: number; tag_id?: number }) => {
+    list: (params?: {
+      search?: string;
+      brand_id?: number;
+      tag_id?: number;
+      firefly_category_name?: string;
+    }) => {
       const searchParams = new URLSearchParams();
       if (params?.search) searchParams.append('search', params.search);
       if (params?.brand_id) searchParams.append('brand_id', params.brand_id.toString());
       if (params?.tag_id) searchParams.append('tag_id', params.tag_id.toString());
+      if (params?.firefly_category_name) {
+        searchParams.append('firefly_category_name', params.firefly_category_name);
+      }
       return request<Product[]>(`/products/?${searchParams.toString()}`);
     },
+    get: (id: number) => request<Product>(`/products/${id}`),
     create: (data: {
       name: string;
       brand_id?: number;
       barcode?: string;
+      sale_mode?: SaleMode;
+      pack_count?: number;
+      unit_size?: number;
       default_unit: string;
-      package_size: number;
+      package_size?: number;
+      firefly_category_id?: number | null;
+      firefly_category_name?: string | null;
       tag_ids: number[];
       notes?: string;
     }) => request<Product>('/products/', { method: 'POST', body: JSON.stringify(data) }),
+    update: (
+      id: number,
+      data: {
+        name?: string;
+        brand_id?: number | null;
+        barcode?: string | null;
+        sale_mode?: SaleMode;
+        pack_count?: number;
+        unit_size?: number;
+        default_unit?: string;
+        package_size?: number;
+        firefly_category_id?: number | null;
+        firefly_category_name?: string | null;
+        tag_ids?: number[];
+        notes?: string | null;
+      }
+    ) => request<Product>(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     listBrands: () => request<Brand[]>('/products/brands'),
     createBrand: (data: { name: string; is_private_label?: boolean }) =>
       request<Brand>('/products/brands', { method: 'POST', body: JSON.stringify(data) }),

@@ -1,7 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, Search } from 'lucide-react';
 import { api } from '../../api/client';
 import { MeasureUnit, Product } from '../../types';
+import { formatProductBadge } from './productUtils';
 
 export const MEASURE_UNITS: MeasureUnit[] = ['g', 'kg', 'ml', 'l', 'pcs'];
 
@@ -40,8 +42,16 @@ export const ProductCombobox: React.FC<ProductComboboxProps> = ({
   const [results, setResults] = useState<Product[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [highlightIndex, setHighlightIndex] = useState(0);
+  const [dropdownRect, setDropdownRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setQuery(selectedProductName);
@@ -60,10 +70,34 @@ export const ProductCombobox: React.FC<ProductComboboxProps> = ({
     );
   }, [extraCreatedProduct]);
 
-  // Close dropdown on outside click
+  const updateDropdownPosition = useCallback(() => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    setDropdownRect({
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: Math.max(rect.width, 280),
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    updateDropdownPosition();
+    window.addEventListener('scroll', updateDropdownPosition, true);
+    window.addEventListener('resize', updateDropdownPosition);
+    return () => {
+      window.removeEventListener('scroll', updateDropdownPosition, true);
+      window.removeEventListener('resize', updateDropdownPosition);
+    };
+  }, [isOpen, updateDropdownPosition]);
+
+  // Close dropdown on outside click (checking both input container and portaled menu)
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const inContainer = containerRef.current?.contains(target) ?? false;
+      const inDropdown = dropdownRef.current?.contains(target) ?? false;
+      if (!inContainer && !inDropdown) {
         setIsOpen(false);
       }
     };
@@ -71,25 +105,32 @@ export const ProductCombobox: React.FC<ProductComboboxProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Debounced product lookup (150ms)
+  // Debounced product lookup (120ms)
   useEffect(() => {
     if (!isOpen) return;
+    let active = true;
     const timer = window.setTimeout(async () => {
       setIsLoading(true);
+      setSearchError(null);
       try {
         const list = await api.products.list({
           search: query.trim() || undefined,
         });
+        if (!active) return;
         setResults(list.slice(0, 20));
         setHighlightIndex(0);
       } catch (err) {
-        console.error('Product autocomplete search failed:', err);
+        if (!active) return;
+        setSearchError(err instanceof Error ? err.message : 'Search failed');
       } finally {
-        setIsLoading(false);
+        if (active) setIsLoading(false);
       }
-    }, 150);
+    }, 120);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
   }, [query, isOpen]);
 
   const handleSelectProduct = (product: Product) => {
@@ -131,6 +172,78 @@ export const ProductCombobox: React.FC<ProductComboboxProps> = ({
     }
   };
 
+  const dropdownMenu =
+    isOpen && dropdownRect && typeof document !== 'undefined'
+      ? createPortal(
+          <div
+            ref={dropdownRef}
+            style={{
+              position: 'fixed',
+              top: dropdownRect.top,
+              left: dropdownRect.left,
+              width: dropdownRect.width,
+            }}
+            className="bg-white border border-slate-200 rounded-xl shadow-xl z-[9999] max-h-72 overflow-y-auto"
+          >
+            {isLoading ? (
+              <div className="px-3 py-2 text-xs text-slate-400">Searching catalog...</div>
+            ) : searchError ? (
+              <div className="px-3 py-2 text-xs text-rose-600">{searchError}</div>
+            ) : results.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-slate-400">
+                No matching items found.
+              </div>
+            ) : (
+              results.map((prod, idx) => (
+                <button
+                  key={prod.id}
+                  type="button"
+                  onMouseDown={e => {
+                    e.preventDefault();
+                    handleSelectProduct(prod);
+                  }}
+                  className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-2 transition ${
+                    idx === highlightIndex
+                      ? 'bg-blue-50 text-blue-900'
+                      : 'hover:bg-slate-50 text-slate-800'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="font-semibold truncate">{prod.name}</div>
+                    <div className="text-[11px] text-slate-400 truncate">
+                      {[prod.brand?.name, prod.firefly_category_name]
+                        .filter(Boolean)
+                        .join(' · ') || 'Uncategorized'}
+                    </div>
+                  </div>
+                  <span className="text-[11px] text-slate-600 font-medium shrink-0 bg-slate-100 px-1.5 py-0.5 rounded">
+                    {formatProductBadge(prod)}
+                  </span>
+                </button>
+              ))
+            )}
+
+            <button
+              type="button"
+              onMouseDown={e => {
+                e.preventDefault();
+                setIsOpen(false);
+                onRequestCreate(query.trim());
+              }}
+              className={`w-full text-left px-3 py-2.5 text-xs font-semibold border-t border-slate-100 flex items-center text-blue-600 hover:bg-blue-50 sticky bottom-0 bg-white ${
+                highlightIndex >= results.length ? 'bg-blue-50' : ''
+              }`}
+            >
+              <Plus className="w-3.5 h-3.5 mr-1.5 shrink-0" />
+              <span className="truncate">
+                New Item{query.trim() ? `: "${query.trim()}"` : ''}
+              </span>
+            </button>
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
     <div ref={containerRef} className="relative w-full">
       <div className="relative flex items-center">
@@ -139,7 +252,10 @@ export const ProductCombobox: React.FC<ProductComboboxProps> = ({
           ref={inputRef}
           type="text"
           value={query}
-          onFocus={() => setIsOpen(true)}
+          onFocus={() => {
+            updateDropdownPosition();
+            setIsOpen(true);
+          }}
           onChange={e => {
             const nextVal = e.target.value;
             setQuery(nextVal);
@@ -154,57 +270,7 @@ export const ProductCombobox: React.FC<ProductComboboxProps> = ({
           className={`w-full pl-8 pr-2.5 py-1.5 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${inputClassName}`}
         />
       </div>
-
-      {isOpen && (
-        <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-40 max-h-60 overflow-y-auto">
-          {isLoading ? (
-            <div className="px-3 py-2 text-xs text-slate-400">Searching catalog...</div>
-          ) : results.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-slate-400">No matching products found.</div>
-          ) : (
-            results.map((prod, idx) => (
-              <button
-                key={prod.id}
-                type="button"
-                onMouseDown={e => {
-                  e.preventDefault();
-                  handleSelectProduct(prod);
-                }}
-                className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition ${
-                  idx === highlightIndex
-                    ? 'bg-blue-50 text-blue-900'
-                    : 'hover:bg-slate-50 text-slate-800'
-                }`}
-              >
-                <div className="min-w-0 pr-2">
-                  <div className="font-semibold truncate">{prod.name}</div>
-                  {prod.brand && (
-                    <div className="text-[11px] text-slate-400 truncate">{prod.brand.name}</div>
-                  )}
-                </div>
-                <span className="text-[11px] text-slate-500 font-medium shrink-0 bg-slate-100 px-1.5 py-0.5 rounded">
-                  {prod.package_size} {prod.default_unit}
-                </span>
-              </button>
-            ))
-          )}
-
-          <button
-            type="button"
-            onMouseDown={e => {
-              e.preventDefault();
-              setIsOpen(false);
-              onRequestCreate(query.trim());
-            }}
-            className={`w-full text-left px-3 py-2 text-xs font-semibold border-t border-slate-100 flex items-center text-blue-600 hover:bg-blue-50 ${
-              highlightIndex >= results.length ? 'bg-blue-50' : ''
-            }`}
-          >
-            <Plus className="w-3.5 h-3.5 mr-1.5" />
-            New Product{query.trim() ? `: "${query.trim()}"` : ''}
-          </button>
-        </div>
-      )}
+      {dropdownMenu}
     </div>
   );
 };
