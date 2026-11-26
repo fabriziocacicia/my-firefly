@@ -8,7 +8,7 @@ A companion web application for **Firefly III** to track SKU-level product price
 
 1. **Receipt Workbench & Computed Totals**:
    - Dual-mode (spreadsheet-style tabular grid or card stream) receipt entry with real-time computed receipt total from line items and basket discount.
-   - Portal-rendered type-ahead item lookup (`ProductCombobox`) with inline canonical item creation (`InlineProductModal`), requiring only item, quantity/weight, and unit or total price per row.
+   - Portal-rendered type-ahead item lookup (`ProductCombobox`) with inline canonical item creation (`ItemEditorModal`), requiring only item, quantity/weight, and unit or total price per row.
    - Built-in receipt image attachment preview and local draft autosave in browser storage.
    - 1-click push to Firefly III expanding `N` packaged units into `N` uniform Firefly splits with canonical description, linear Firefly category, and expanded tags (plus optional meal voucher splits).
 
@@ -22,7 +22,7 @@ A companion web application for **Firefly III** to track SKU-level product price
 3. **Canonical Items, Hierarchical Firefly Tags & Historical Sync**:
    - Track canonical items (`packaged` multipacks like `6×330ml` or `loose_weight`) with brands, Firefly III categories, and Firefly-ID-backed tags.
    - Model hierarchical tag implications (`Mele → Frutta`) in the companion app, automatically expanding flat tags onto Firefly III splits and powering multi-tag intersection analytics (`Frutta + Bio`).
-   - Reconcile historical Firefly transactions via incremental + full sync cache (`Firefly Backlog`), with unassociated category counts and safe split-preserving Firefly rewrites.
+   - Reconcile historical Firefly transactions via incremental + full sync cache (`Firefly Backlog`), with segmented `To Associate` / `Associated` / `Ignored` views, local `Unlink`, category filter counts, and async SSE background rewrite jobs (`firefly_sync_job`).
    - Automatic unit price normalization (€/kg, €/L, €/pc) and **Deal Scoring** against historical baselines.
 
 4. **Smart Workflows**:
@@ -39,8 +39,8 @@ my-firefly/
 │   ├── app/
 │   │   ├── api/v1/           # REST endpoints (companies, products, prices, firefly, firefly_sync, analytics, workflows, receipts, accounts, asset_accounts, categories)
 │   │   ├── core/             # Configuration & SQLite connection
-│   │   ├── models/           # SQLModel domain models (Company, AccountMetadata, AssetAccountMetadata, Product, Price, Tag, TagImplication, FireflySyncedSplit, Receipt)
-│   │   ├── services/         # Firefly III client, taxonomy DAG, voucher math & price normalization
+│   │   ├── models/           # SQLModel domain models (Company, AccountMetadata, AssetAccountMetadata, Product, Price, Tag, TagImplication, FireflySyncedSplit, FireflySyncJob, Receipt)
+│   │   ├── services/         # Firefly III client, async Firefly sync job worker, taxonomy DAG, voucher math & price normalization
 │   │   └── main.py           # FastAPI entrypoint
 │   ├── requirements.txt
 │   └── Dockerfile
@@ -48,6 +48,8 @@ my-firefly/
 │   ├── src/
 │   │   ├── api/client.ts     # Typed API client
 │   │   ├── components/       # UI components (workbench, accounts, catalog, common, charts)
+│   │   ├── context/          # React contexts (ReceiptWorkbenchContext)
+│   │   ├── hooks/            # Custom hooks (useFireflySyncJobs SSE client, usePortalDropdown)
 │   │   ├── pages/            # ReceiptWorkbenchPage, AccountsAndChainsPage, CatalogPage, WorkflowsPage
 │   │   └── types/            # TypeScript interfaces
 │   ├── package.json
@@ -73,6 +75,7 @@ All significant architecture decisions, domain models, and RFCs are maintained i
 - [Meal Voucher Asset Accounts & Recharge](docs/designs/meal_voucher_asset_accounts.md)
 - [Asset Account Types & Categorized Balance Totals](docs/designs/asset_types_and_total_balances.md)
 - [Canonical Items, Hierarchical Firefly Tags & Historical Sync](docs/designs/canonical_items_hierarchical_tags_and_firefly_sync.md)
+- [Asynchronous Firefly Sync Jobs & Progress Tracking](docs/designs/firefly_sync_async_jobs.md)
 - [ADR-001: Multi-Type Business Modeling and Dynamic Category Tagging](docs/decisions/ADR-001-multi-type-business-modeling-and-dynamic-categories.md)
 
 ---
