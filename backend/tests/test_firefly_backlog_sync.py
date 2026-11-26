@@ -533,6 +533,8 @@ class FireflyBacklogSyncTests(unittest.TestCase):
             body = self._wait_for_job(link_resp.json()["id"])
 
         self.assertEqual(body["status"], "completed_with_errors")
+        self.assertEqual(body["total_splits"], 2)
+        self.assertEqual(body["processed_splits"], 2)
         self.assertEqual(body["linked_splits"], 1)
         self.assertEqual(body["failed_count"], 1)
         self.assertEqual(len(body["failed_transactions"]), 1)

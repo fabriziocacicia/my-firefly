@@ -213,10 +213,6 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
       onJobStarted(job);
       setLinkingGroup(null);
       await Promise.all([loadStatusAndBacklog(true), Promise.resolve(onDataChanged())]);
-      setBanner({
-        type: 'success',
-        text: `Started background sync for "${job.product_name}" (${job.total_transactions} Firefly transaction(s)). Watch live progress below or on the catalog card.`,
-      });
     } catch (err) {
       setBanner({
         type: 'error',
@@ -231,6 +227,19 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     linkSearch.trim()
       ? p.name.toLowerCase().includes(linkSearch.trim().toLowerCase())
       : true
+  );
+
+  const visibleLinkedProductIds = new Set(
+    (statusFilter === 'linked' ? backlog?.groups || [] : [])
+      .map(g => g.linked_product_id)
+      .filter((id): id is number => id != null)
+  );
+  const topPanelJobs = jobs.filter(
+    j =>
+      isSyncJobActive(j) ||
+      j.failed_count > 0 ||
+      j.status === 'failed' ||
+      !visibleLinkedProductIds.has(j.product_id)
   );
 
   return (
@@ -409,16 +418,16 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
         </div>
       )}
 
-      {/* Active & Recent Firefly Sync Jobs */}
-      {jobs.length > 0 && (
+      {/* Active & Unshown Firefly Sync Jobs */}
+      {topPanelJobs.length > 0 && (
         <div className="bg-white rounded-xl border border-slate-200 p-3.5 space-y-2">
           <div className="flex items-center justify-between text-xs font-bold text-slate-700">
             <span>
-              Firefly Background Sync Status ({jobs.filter(isSyncJobActive).length} active)
+              Firefly Background Sync ({topPanelJobs.filter(isSyncJobActive).length} active)
             </span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {jobs.map(job => (
+            {topPanelJobs.map(job => (
               <SyncJobBadge
                 key={job.id}
                 job={job}
@@ -481,6 +490,13 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
                         → {group.linked_product_name}
                       </span>
                     )}
+                    {matchingJob && (statusFilter === 'linked' || rowJobActive) && (
+                      <SyncJobBadge
+                        job={matchingJob}
+                        onDismiss={onDismissJob}
+                        variant="inline"
+                      />
+                    )}
                     {group.suggested_product_name && (
                       <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-medium">
                         <Sparkles className="w-3 h-3 mr-1" />
@@ -507,15 +523,6 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
                           #{tName}
                         </span>
                       ))}
-                    </div>
-                  )}
-                  {matchingJob && (statusFilter === 'linked' || rowJobActive) && (
-                    <div className="pt-1.5 max-w-md">
-                      <SyncJobBadge
-                        job={matchingJob}
-                        onDismiss={onDismissJob}
-                        compact
-                      />
                     </div>
                   )}
                 </div>
@@ -682,10 +689,6 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
             );
             onJobStarted(job);
             await Promise.all([loadStatusAndBacklog(true), Promise.resolve(onDataChanged())]);
-            setBanner({
-              type: 'success',
-              text: `Created "${created.name}" and started background Firefly sync (${job.total_transactions} transaction(s)). Watch live progress below or on the catalog card.`,
-            });
           } catch (err) {
             await Promise.all([loadStatusAndBacklog(true), Promise.resolve(onDataChanged())]);
             setBanner({

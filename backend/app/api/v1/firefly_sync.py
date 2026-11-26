@@ -99,6 +99,7 @@ class BacklogUnlinkRequest(BaseModel):
 class FailedTransactionRewrite(BaseModel):
     firefly_transaction_id: int
     error: str
+    split_count: int = 1
 
 
 class RewriteResultResponse(BaseModel):
@@ -118,6 +119,7 @@ class FireflySyncJobResponse(BaseModel):
     processed_transactions: int = 0
     updated_transactions: int = 0
     total_splits: int = 0
+    processed_splits: int = 0
     linked_splits: int = 0
     updated_splits: int = 0
     failed_count: int = 0
@@ -194,6 +196,17 @@ def _serialize_job(job: FireflySyncJob) -> FireflySyncJobResponse:
     except Exception:
         raw_jids = []
 
+    parsed_errors = [
+        FailedTransactionRewrite(**e) for e in raw_errors if isinstance(e, dict)
+    ]
+    failed_splits_sum = sum(max(1, e.split_count) for e in parsed_errors)
+    if job.status in {"completed", "completed_with_errors", "failed"} and (
+        job.failed_count > len(parsed_errors) or job.total_transactions == 0
+    ):
+        processed_splits = job.total_splits
+    else:
+        processed_splits = min(job.total_splits, job.updated_splits + failed_splits_sum)
+
     return FireflySyncJobResponse(
         id=job.id or 0,
         job_type=job.job_type,  # type: ignore[arg-type]
@@ -204,12 +217,11 @@ def _serialize_job(job: FireflySyncJob) -> FireflySyncJobResponse:
         processed_transactions=job.processed_transactions,
         updated_transactions=job.updated_transactions,
         total_splits=job.total_splits,
+        processed_splits=processed_splits,
         linked_splits=job.linked_splits,
         updated_splits=job.updated_splits,
         failed_count=job.failed_count,
-        failed_transactions=[
-            FailedTransactionRewrite(**e) for e in raw_errors if isinstance(e, dict)
-        ],
+        failed_transactions=parsed_errors,
         target_journal_ids=[int(j) for j in raw_jids],
         error_message=job.error_message,
         dismissed_at=_ensure_aware_utc(job.dismissed_at),
@@ -414,6 +426,7 @@ async def _run_firefly_sync_job(
                     return
                 job.processed_transactions += 1
                 if failure is not None:
+                    failure.split_count = len(target_jids)
                     job.failed_count += 1
                     try:
                         errs = json.loads(job.failed_transactions_json or "[]")

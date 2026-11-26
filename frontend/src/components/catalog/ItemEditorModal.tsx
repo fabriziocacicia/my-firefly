@@ -255,7 +255,7 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
       const job = await api.products.propagateFirefly(pendingPropagationProduct.id);
       onPropagationJobStarted?.(job);
       setPropagationNotice(
-        `Started background Firefly sync for ${job.total_transactions} linked transaction(s). You can track live progress on the item card or Associated tab.`
+        `Started background Firefly sync for ${job.total_splits} linked entries. Live progress is visible on the item card and Associated tab.`
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start Firefly sync');

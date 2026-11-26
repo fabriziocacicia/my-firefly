@@ -144,9 +144,6 @@ export const CatalogPage: React.FC = () => {
     try {
       const job = await api.products.propagateFirefly(prod.id);
       registerJob(job);
-      setCatalogNotice(
-        `Started background Firefly sync for "${prod.name}" (${job.total_transactions} transaction(s)).`
-      );
       await loadAll(true);
     } catch (err) {
       setCatalogError(

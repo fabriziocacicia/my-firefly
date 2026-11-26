@@ -397,6 +397,7 @@ export interface BacklogResponse {
 export interface FailedTransactionRewrite {
   firefly_transaction_id: number;
   error: string;
+  split_count?: number;
 }
 
 export type FireflySyncJobStatus =
@@ -418,6 +419,7 @@ export interface FireflySyncJob {
   processed_transactions: number;
   updated_transactions: number;
   total_splits: number;
+  processed_splits: number;
   linked_splits: number;
   updated_splits: number;
   failed_count: number;
