@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import or_
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
@@ -10,7 +10,9 @@ from app.api.v1.firefly_sync import (
 from app.core.database import get_session
 from app.models.brand import Brand, BrandCreate, BrandRead
 from app.models.firefly_cache import FireflySyncedSplit
+from app.models.price import PriceRecord
 from app.models.product import (
+    ItemFireflyAlias,
     Product,
     ProductCreate,
     ProductRead,
@@ -270,3 +272,55 @@ async def propagate_product_to_firefly(
         updated_splits=updated_splits,
         failed_transactions=failures,
     )
+
+
+@router.delete("/{product_id}", status_code=204)
+def delete_product(product_id: int, session: Session = Depends(get_session)):
+    """
+    Deletes a catalog item when no companion ReceiptItem rows depend on it.
+    Unlinks cached FireflySyncedSplit rows back to the unassociated backlog and
+    cleans up tag links, Firefly aliases, and synced/manual PriceRecords.
+    """
+    product = session.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    receipt_items = session.exec(
+        select(ReceiptItem.id).where(ReceiptItem.product_id == product_id)
+    ).all()
+    if receipt_items:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot delete '{product.name}' because it is referenced by "
+                f"{len(receipt_items)} saved receipt item(s)."
+            ),
+        )
+
+    linked_splits = session.exec(
+        select(FireflySyncedSplit).where(
+            FireflySyncedSplit.linked_product_id == product_id
+        )
+    ).all()
+    for split in linked_splits:
+        split.linked_product_id = None
+        session.add(split)
+
+    for link in session.exec(
+        select(ProductTagLink).where(ProductTagLink.product_id == product_id)
+    ).all():
+        session.delete(link)
+
+    for alias in session.exec(
+        select(ItemFireflyAlias).where(ItemFireflyAlias.product_id == product_id)
+    ).all():
+        session.delete(alias)
+
+    for price in session.exec(
+        select(PriceRecord).where(PriceRecord.product_id == product_id)
+    ).all():
+        session.delete(price)
+
+    session.delete(product)
+    session.commit()
+    return Response(status_code=204)

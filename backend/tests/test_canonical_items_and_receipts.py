@@ -270,6 +270,89 @@ class CanonicalItemsAndReceiptsTests(unittest.TestCase):
         total_cents = sum(round(float(s["amount"]) * 100) for s in splits)
         self.assertEqual(total_cents, 760)
 
+    def test_delete_product_cleans_links_unlinks_synced_splits_and_guards_receipt_items(self):
+        from datetime import date
+        from app.models.firefly_cache import FireflySyncedSplit
+        from app.models.price import PriceRecord
+        from app.models.product import ItemFireflyAlias
+
+        # 1. Item with tags, alias, price record, and linked FireflySyncedSplit (0 receipt items) -> deletes cleanly
+        p1 = self.client.post(
+            "/api/v1/products/",
+            json={
+                "name": "Temp Item",
+                "sale_mode": "packaged",
+                "pack_count": 1,
+                "unit_size": 500,
+                "default_unit": "g",
+                "tag_ids": [self.tag_ids["Bio"]],
+            },
+        ).json()
+        p1_id = p1["id"]
+
+        with Session(self.engine) as session:
+            session.add(
+                ItemFireflyAlias(
+                    product_id=p1_id,
+                    raw_description="temp item old",
+                    normalized_description="temp item old",
+                )
+            )
+            session.add(
+                FireflySyncedSplit(
+                    transaction_journal_id=8801,
+                    firefly_transaction_id=880,
+                    tx_date=date(2026, 11, 20),
+                    amount_cents=200,
+                    description="Temp Item 500g",
+                    normalized_description="temp item 500g",
+                    linked_product_id=p1_id,
+                )
+            )
+            session.add(
+                PriceRecord(
+                    product_id=p1_id,
+                    firefly_account_id=20,
+                    recorded_date=date(2026, 11, 20),
+                    regular_price=2.0,
+                    paid_price=2.0,
+                    unit="g",
+                    package_size=500.0,
+                )
+            )
+            session.commit()
+
+        del_ok = self.client.delete(f"/api/v1/products/{p1_id}")
+        self.assertEqual(del_ok.status_code, 204)
+        self.assertEqual(self.client.get(f"/api/v1/products/{p1_id}").status_code, 404)
+
+        with Session(self.engine) as session:
+            split = session.get(FireflySyncedSplit, 1)
+            self.assertIsNotNone(split)
+            self.assertIsNone(split.linked_product_id)
+
+        # 2. Item referenced by a saved receipt -> blocked with 409 Conflict
+        p2 = self.client.post(
+            "/api/v1/products/",
+            json={"name": "Used Item", "sale_mode": "packaged", "pack_count": 1, "unit_size": 1, "default_unit": "pcs"},
+        ).json()
+        mock_expense = AsyncMock(
+            return_value={"id": "50", "attributes": {"name": "Conad", "type": "expense", "active": True}}
+        )
+        with patch("app.api.v1.receipts.firefly_client.get_expense_account", new=mock_expense):
+            self.client.post(
+                "/api/v1/receipts/",
+                json={
+                    "firefly_account_id": 50,
+                    "purchase_date": "2026-11-26",
+                    "purchase_time": "12:00:00",
+                    "items": [{"product_id": p2["id"], "quantity": 1, "paid_price": 1.00}],
+                },
+            )
+
+        del_conflict = self.client.delete(f"/api/v1/products/{p2['id']}")
+        self.assertEqual(del_conflict.status_code, 409)
+
 
 if __name__ == "__main__":
     unittest.main()

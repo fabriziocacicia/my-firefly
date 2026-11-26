@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Search,
   ThumbsUp,
+  Trash2,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { ProductPriceChart } from '../components/charts/ProductPriceChart';
@@ -47,7 +48,9 @@ export const CatalogPage: React.FC = () => {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [propagatingId, setPropagatingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [catalogNotice, setCatalogNotice] = useState<string | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
 
   // Price & History Modals
   const [showPriceModal, setShowPriceModal] = useState(false);
@@ -122,6 +125,7 @@ export const CatalogPage: React.FC = () => {
     }
     setPropagatingId(prod.id);
     setCatalogNotice(null);
+    setCatalogError(null);
     try {
       const res = await api.products.propagateFirefly(prod.id);
       setCatalogNotice(
@@ -129,9 +133,35 @@ export const CatalogPage: React.FC = () => {
       );
       await loadAll();
     } catch (err) {
-      console.error(err);
+      setCatalogError(
+        err instanceof Error ? err.message : 'Failed to update Firefly transactions'
+      );
     } finally {
       setPropagatingId(null);
+    }
+  };
+
+  const handleDeleteItem = async (prod: Product) => {
+    if (
+      !window.confirm(
+        `Delete "${prod.name}" from the companion app? This does not touch Firefly III; any linked Firefly splits will simply return to the unassociated backlog.`
+      )
+    ) {
+      return;
+    }
+    setDeletingId(prod.id);
+    setCatalogNotice(null);
+    setCatalogError(null);
+    try {
+      await api.products.delete(prod.id);
+      setCatalogNotice(`Deleted "${prod.name}" from catalog.`);
+      await loadAll();
+    } catch (err) {
+      setCatalogError(
+        err instanceof Error ? err.message : 'Failed to delete item from catalog'
+      );
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -266,6 +296,12 @@ export const CatalogPage: React.FC = () => {
         </div>
       )}
 
+      {catalogError && (
+        <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
+          {catalogError}
+        </div>
+      )}
+
       {activeTab === 'items' && (
         <div className="space-y-4">
           {/* Search & Filters */}
@@ -379,14 +415,25 @@ export const CatalogPage: React.FC = () => {
                             </span>
                           )}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(p)}
-                          className="p-2 rounded-lg bg-slate-50 hover:bg-blue-50 text-slate-500 hover:text-blue-600 shrink-0"
-                          title="Edit item"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center space-x-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(p)}
+                            className="p-2 rounded-lg bg-slate-50 hover:bg-blue-50 text-slate-500 hover:text-blue-600"
+                            title="Edit item"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deletingId === p.id}
+                            onClick={() => handleDeleteItem(p)}
+                            className="p-2 rounded-lg bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-600 disabled:opacity-40"
+                            title="Delete item"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
 
                       <div className="mt-3 flex flex-wrap gap-1">

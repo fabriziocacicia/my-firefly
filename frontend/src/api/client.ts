@@ -195,6 +195,7 @@ export const api = {
       request<RewriteResultResponse>(`/products/${id}/propagate-firefly`, {
         method: 'POST',
       }),
+    delete: (id: number) => request<void>(`/products/${id}`, { method: 'DELETE' }),
     listBrands: () => request<Brand[]>('/products/brands'),
     createBrand: (data: { name: string; is_private_label?: boolean }) =>
       request<Brand>('/products/brands', { method: 'POST', body: JSON.stringify(data) }),
