@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect
 
 from app.api.router import api_router
+from app.api.v1.firefly_sync import mark_interrupted_sync_jobs_failed
 from app.core.config import settings
 from app.core.database import create_db_and_tables, engine, auto_migrate_sqlite_columns
 from app.services.firefly import firefly_client
@@ -57,6 +58,7 @@ def run_db_migrations(target_engine=engine) -> None:
 async def lifespan(app: FastAPI):
     # Initialize and migrate SQLite schema on startup
     run_db_migrations(engine)
+    mark_interrupted_sync_jobs_failed(engine)
     yield
     await firefly_client.aclose()
 

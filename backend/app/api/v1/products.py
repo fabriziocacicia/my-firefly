@@ -4,12 +4,13 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.api.v1.firefly_sync import (
-    RewriteResultResponse,
-    rewrite_firefly_splits_for_product,
+    FireflySyncJobResponse,
+    _serialize_job,
+    enqueue_firefly_rewrite_job,
 )
 from app.core.database import get_session
 from app.models.brand import Brand, BrandCreate, BrandRead
-from app.models.firefly_cache import FireflySyncedSplit
+from app.models.firefly_cache import FireflySyncJob, FireflySyncedSplit
 from app.models.price import PriceRecord
 from app.models.product import (
     ItemFireflyAlias,
@@ -248,14 +249,14 @@ def update_product(
     return serialize_products(session, [loaded])[0]
 
 
-@router.post("/{product_id}/propagate-firefly", response_model=RewriteResultResponse)
+@router.post("/{product_id}/propagate-firefly", status_code=202, response_model=FireflySyncJobResponse)
 async def propagate_product_to_firefly(
     product_id: int,
     session: Session = Depends(get_session),
 ):
     """
-    Explicitly rewrites all linked Firefly III splits for `product_id` so their
-    description, category, and expanded tags match the item's current card.
+    Enqueues a background job to rewrite all linked Firefly III splits for
+    `product_id` so their description, category, and expanded tags match the item.
     """
     product = _load_product_or_404(session, product_id)
     linked_splits = session.exec(
@@ -263,27 +264,35 @@ async def propagate_product_to_firefly(
             FireflySyncedSplit.linked_product_id == product.id
         )
     ).all()
-    updated_txs, updated_splits, failures, succeeded = (
-        await rewrite_firefly_splits_for_product(session, product, linked_splits)
+    job = enqueue_firefly_rewrite_job(
+        session, product, linked_splits, job_type="product_propagate"
     )
-    return RewriteResultResponse(
-        linked_splits=len(succeeded),
-        updated_transactions=updated_txs,
-        updated_splits=updated_splits,
-        failed_transactions=failures,
-    )
+    return _serialize_job(job)
 
 
 @router.delete("/{product_id}", status_code=204)
 def delete_product(product_id: int, session: Session = Depends(get_session)):
     """
     Deletes a catalog item when no companion ReceiptItem rows depend on it.
+    Blocks deletion if a Firefly sync job is currently active for the item.
     Unlinks cached FireflySyncedSplit rows back to the unassociated backlog and
-    cleans up tag links, Firefly aliases, and synced/manual PriceRecords.
+    cleans up tag links, Firefly aliases, sync job history, and PriceRecords.
     """
     product = session.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
+
+    active_job = session.exec(
+        select(FireflySyncJob).where(
+            FireflySyncJob.product_id == product_id,
+            FireflySyncJob.status.in_(["queued", "running"]),
+        )
+    ).first()
+    if active_job:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete '{product.name}' while Firefly sync job #{active_job.id} is running.",
+        )
 
     receipt_items = session.exec(
         select(ReceiptItem.id).where(ReceiptItem.product_id == product_id)
@@ -305,6 +314,11 @@ def delete_product(product_id: int, session: Session = Depends(get_session)):
     for split in linked_splits:
         split.linked_product_id = None
         session.add(split)
+
+    for job in session.exec(
+        select(FireflySyncJob).where(FireflySyncJob.product_id == product_id)
+    ).all():
+        session.delete(job)
 
     for link in session.exec(
         select(ProductTagLink).where(ProductTagLink.product_id == product_id)

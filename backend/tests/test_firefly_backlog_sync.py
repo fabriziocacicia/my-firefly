@@ -1,3 +1,5 @@
+import json
+import time
 import unittest
 from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock, patch
@@ -10,7 +12,7 @@ from sqlmodel import SQLModel, Session, select
 
 from app.core.database import configure_sqlite_pragmas, get_session
 from app.main import app
-from app.models.firefly_cache import FireflySyncState, FireflySyncedSplit
+from app.models.firefly_cache import FireflySyncJob, FireflySyncState, FireflySyncedSplit
 from app.models.price import PriceRecord
 from app.models.product import ItemFireflyAlias, Product
 from app.models.tag import ProductTagLink, Tag, TagImplication
@@ -31,7 +33,9 @@ class FireflyBacklogSyncTests(unittest.TestCase):
                 yield session
 
         app.dependency_overrides[get_session] = override_get_session
-        self.client = TestClient(app)
+        self.enterContext(patch("app.main.engine", self.engine))
+        self.enterContext(patch("app.main.run_db_migrations"))
+        self.client = self.enterContext(TestClient(app))
 
         with Session(self.engine) as session:
             t_fruit = Tag(name="Frutta", firefly_tag_id=10)
@@ -181,6 +185,18 @@ class FireflyBacklogSyncTests(unittest.TestCase):
         self.assertEqual(after_ignore["total_unassociated"], 3)
         self.assertEqual(after_ignore["ignored_count"], 1)
 
+    def _wait_for_job(self, job_id: int, timeout: float = 3.0) -> dict:
+        deadline = time.monotonic() + timeout
+        last_body = {}
+        while time.monotonic() < deadline:
+            resp = self.client.get(f"/api/v1/firefly-sync/jobs/{job_id}")
+            self.assertEqual(resp.status_code, 200)
+            last_body = resp.json()
+            if last_body["status"] in {"completed", "completed_with_errors", "failed"}:
+                return last_body
+            time.sleep(0.02)
+        self.fail(f"Job {job_id} did not finish within {timeout}s; last state: {last_body}")
+
     def test_link_backlog_safely_preserves_sibling_splits_and_upserts_price_records(self):
         with Session(self.engine) as session:
             session.add_all(
@@ -244,9 +260,13 @@ class FireflyBacklogSyncTests(unittest.TestCase):
                     "transaction_journal_ids": [551],
                 },
             )
+            self.assertEqual(link_resp.status_code, 202)
+            job_init = link_resp.json()
+            self.assertEqual(job_init["job_type"], "backlog_link")
+            self.assertEqual(job_init["product_id"], self.product_id)
+            body = self._wait_for_job(job_init["id"])
 
-        self.assertEqual(link_resp.status_code, 200)
-        body = link_resp.json()
+        self.assertEqual(body["status"], "completed")
         self.assertEqual(body["linked_splits"], 1)
         self.assertEqual(body["updated_transactions"], 1)
         self.assertEqual(body["failed_transactions"], [])
@@ -325,9 +345,11 @@ class FireflyBacklogSyncTests(unittest.TestCase):
             patch("app.api.v1.firefly_sync.firefly_client.update_transaction", side_effect=mock_put_tx),
         ):
             prop_resp = self.client.post(f"/api/v1/products/{self.product_id}/propagate-firefly")
+            self.assertEqual(prop_resp.status_code, 202)
+            prop_job = self._wait_for_job(prop_resp.json()["id"])
 
-        self.assertEqual(prop_resp.status_code, 200)
-        self.assertEqual(prop_resp.json()["updated_transactions"], 1)
+        self.assertEqual(prop_job["status"], "completed")
+        self.assertEqual(prop_job["updated_transactions"], 1)
         self.assertEqual(
             captured_puts[0][1]["transactions"][0]["description"],
             "Mele Rosse Melinda Bio 600g",
@@ -507,10 +529,12 @@ class FireflyBacklogSyncTests(unittest.TestCase):
                 "/api/v1/firefly-sync/backlog/link",
                 json={"product_id": uncat_pid, "transaction_journal_ids": [901, 902]},
             )
+            self.assertEqual(link_resp.status_code, 202)
+            body = self._wait_for_job(link_resp.json()["id"])
 
-        self.assertEqual(link_resp.status_code, 200)
-        body = link_resp.json()
+        self.assertEqual(body["status"], "completed_with_errors")
         self.assertEqual(body["linked_splits"], 1)
+        self.assertEqual(body["failed_count"], 1)
         self.assertEqual(len(body["failed_transactions"]), 1)
         self.assertEqual(body["failed_transactions"][0]["firefly_transaction_id"], 91)
         self.assertIn("HTTP 422", body["failed_transactions"][0]["error"])
@@ -518,6 +542,96 @@ class FireflyBacklogSyncTests(unittest.TestCase):
         # Null category_name omitted cleanly from PUT payload, and fallback group_title synthesized for multi-split
         self.assertNotIn("category_name", captured_puts[0][1]["transactions"][0])
         self.assertEqual(captured_puts[0][1]["group_title"], "Conad - 2026-11-22")
+
+    def test_async_job_conflict_dismiss_sse_stream_and_startup_recovery(self):
+        from app.api.v1.firefly_sync import mark_interrupted_sync_jobs_failed
+
+        with Session(self.engine) as session:
+            stale = FireflySyncJob(
+                job_type="backlog_link",
+                product_id=self.product_id,
+                product_name="Mele Rosse Bio",
+                status="running",
+                total_transactions=10,
+                processed_transactions=3,
+            )
+            session.add(stale)
+            session.add(
+                FireflySyncedSplit(
+                    transaction_journal_id=950,
+                    firefly_transaction_id=95,
+                    tx_type="withdrawal",
+                    tx_date=date(2026, 11, 22),
+                    amount_cents=120,
+                    description="Mele Rosse Bio 600g",
+                    normalized_description="mele rosse bio 600g",
+                    firefly_expense_account_id=20,
+                    firefly_expense_account_name="Conad",
+                    firefly_category_name="Groceries",
+                    tags_json="[]",
+                )
+            )
+            session.commit()
+            stale_id = stale.id
+
+        # Startup recovery clears stale running jobs
+        recovered = mark_interrupted_sync_jobs_failed(self.engine)
+        self.assertEqual(recovered, 1)
+        stale_resp = self.client.get(f"/api/v1/firefly-sync/jobs/{stale_id}")
+        self.assertEqual(stale_resp.status_code, 200)
+        self.assertEqual(stale_resp.json()["status"], "failed")
+        self.assertIn("Interrupted", stale_resp.json()["error_message"])
+
+        # Dismiss finished stale job
+        dismiss_stale = self.client.post(f"/api/v1/firefly-sync/jobs/{stale_id}/dismiss")
+        self.assertEqual(dismiss_stale.status_code, 200)
+        self.assertEqual(self.client.get("/api/v1/firefly-sync/jobs").json(), [])
+
+        # Simulate active job -> 409 conflict on duplicate product link -> SSE emits snapshot & jobs terminal event
+        async def slow_get_tx(tx_id):
+            import asyncio
+            await asyncio.sleep(0.08)
+            return {
+                "id": str(tx_id),
+                "attributes": {
+                    "transactions": [{"transaction_journal_id": "950", "description": "Mele Rosse Bio 600g"}]
+                },
+            }
+
+        async def ok_put_tx(tx_id, payload):
+            return {"data": {"id": str(tx_id)}}
+
+        with (
+            patch("app.api.v1.firefly_sync.firefly_client.get_transaction_by_id", side_effect=slow_get_tx),
+            patch("app.api.v1.firefly_sync.firefly_client.update_transaction", side_effect=ok_put_tx),
+        ):
+            r1 = self.client.post(
+                "/api/v1/firefly-sync/backlog/link",
+                json={"product_id": self.product_id, "transaction_journal_ids": [950]},
+            )
+            self.assertEqual(r1.status_code, 202)
+            r2 = self.client.post(
+                "/api/v1/firefly-sync/backlog/link",
+                json={"product_id": self.product_id, "transaction_journal_ids": [950]},
+            )
+            self.assertEqual(r2.status_code, 409)
+
+            sse_lines = []
+            with self.client.stream("GET", "/api/v1/firefly-sync/jobs/stream") as stream_resp:
+                self.assertEqual(stream_resp.status_code, 200)
+                self.assertIn("text/event-stream", stream_resp.headers.get("content-type", ""))
+                self.assertEqual(stream_resp.headers.get("x-accel-buffering"), "no")
+                for line in stream_resp.iter_lines():
+                    if line:
+                        sse_lines.append(line)
+
+            data_events = [
+                json.loads(line[6:]) for line in sse_lines if line.startswith("data: ")
+            ]
+            self.assertGreaterEqual(len(data_events), 1)
+            final_jobs = data_events[-1]
+            self.assertEqual(final_jobs[0]["id"], r1.json()["id"])
+            self.assertEqual(final_jobs[0]["status"], "completed")
 
 
 if __name__ == "__main__":
