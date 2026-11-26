@@ -9,6 +9,7 @@ import {
   Search,
   Sparkles,
   Unlink,
+  X,
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { isSyncJobActive } from '../../hooks/useFireflySyncJobs';
@@ -295,14 +296,28 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
 
       {banner && (
         <div
-          className={`p-3 rounded-xl border text-xs flex items-center ${
+          className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2 ${
             banner.type === 'success'
               ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
               : 'bg-rose-50 border-rose-200 text-rose-700'
           }`}
         >
-          {banner.type === 'success' && <CheckCircle2 className="w-4 h-4 mr-2 shrink-0" />}
-          <span>{banner.text}</span>
+          <span className="inline-flex items-center min-w-0">
+            {banner.type === 'success' && <CheckCircle2 className="w-4 h-4 mr-2 shrink-0" />}
+            <span>{banner.text}</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setBanner(null)}
+            className={`p-0.5 rounded shrink-0 ${
+              banner.type === 'success'
+                ? 'hover:bg-emerald-100 text-emerald-700'
+                : 'hover:bg-rose-100 text-rose-700'
+            }`}
+            aria-label="Dismiss banner"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 

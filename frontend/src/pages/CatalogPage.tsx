@@ -13,6 +13,7 @@ import {
   Search,
   ThumbsUp,
   Trash2,
+  X,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { ProductPriceChart } from '../components/charts/ProductPriceChart';
@@ -312,14 +313,30 @@ export const CatalogPage: React.FC = () => {
       </div>
 
       {catalogNotice && (
-        <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
-          {catalogNotice}
+        <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center justify-between gap-2">
+          <span>{catalogNotice}</span>
+          <button
+            type="button"
+            onClick={() => setCatalogNotice(null)}
+            className="p-0.5 rounded hover:bg-emerald-100 text-emerald-700 shrink-0"
+            aria-label="Dismiss notice"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
       {catalogError && (
-        <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
-          {catalogError}
+        <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center justify-between gap-2">
+          <span>{catalogError}</span>
+          <button
+            type="button"
+            onClick={() => setCatalogError(null)}
+            className="p-0.5 rounded hover:bg-rose-100 text-rose-700 shrink-0"
+            aria-label="Dismiss error"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
