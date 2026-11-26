@@ -1,7 +1,7 @@
 import {
   Company, Product, Brand, Tag, TagImplication, TagSyncResponse, FireflyCategoryBrief,
   PriceRecord, SaleMode, FireflySyncStatus, SyncTransactionsResponse,
-  BacklogResponse, RewriteResultResponse,
+  BacklogResponse, RewriteResultResponse, TagAnalyticsResponse,
   FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount, FireflyRevenueAccount,
   AccountMetadata, AccountMetadataUpdate, AssetAccountMetadataUpdate,
   VoucherRechargeRequest, VoucherRechargeResponse,
@@ -229,6 +229,31 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ transaction_journal_ids, ignored }),
       }),
+  },
+
+  analytics: {
+    getTagAnalytics: (params?: {
+      tag_ids?: number[];
+      category_name?: string;
+      start_date?: string;
+      end_date?: string;
+    }) => {
+      const searchParams = new URLSearchParams();
+      for (const tid of params?.tag_ids || []) {
+        searchParams.append('tag_ids', String(tid));
+      }
+      if (params?.category_name) {
+        searchParams.append('category_name', params.category_name);
+      }
+      if (params?.start_date) {
+        searchParams.append('start_date', params.start_date);
+      }
+      if (params?.end_date) {
+        searchParams.append('end_date', params.end_date);
+      }
+      const qs = searchParams.toString();
+      return request<TagAnalyticsResponse>(qs ? `/analytics/tags?${qs}` : '/analytics/tags');
+    },
   },
 
   prices: {

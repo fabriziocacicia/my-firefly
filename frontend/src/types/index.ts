@@ -398,3 +398,27 @@ export interface RewriteResultResponse {
   updated_splits: number;
   failed_transactions: FailedTransactionRewrite[];
 }
+
+export interface ItemAnalyticsSummary {
+  product_id: number;
+  product_name: string;
+  brand_name?: string | null;
+  firefly_category_name?: string | null;
+  sale_mode: SaleMode;
+  default_unit: string;
+  effective_tag_names: string[];
+  total_spend: number;
+  purchase_count: number;
+  min_unit_price?: number | null;
+  median_unit_price?: number | null;
+  latest_unit_price?: number | null;
+  normalized_unit_label: string;
+}
+
+export interface TagAnalyticsResponse {
+  total_spend: number;
+  total_purchases: number;
+  matching_item_count: number;
+  applied_tags: Tag[];
+  items: ItemAnalyticsSummary[];
+}
