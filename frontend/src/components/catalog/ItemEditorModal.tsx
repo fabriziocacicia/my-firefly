@@ -251,8 +251,9 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
     try {
       const res = await api.products.propagateFirefly(pendingPropagationProduct.id);
       if (res.failed_transactions.length > 0) {
+        const firstErr = res.failed_transactions[0];
         setError(
-          `Updated ${res.updated_transactions} transaction(s), ${res.failed_transactions.length} failed.`
+          `Updated ${res.updated_transactions} transaction(s), ${res.failed_transactions.length} failed (tx #${firstErr.firefly_transaction_id}: ${firstErr.error}).`
         );
       } else {
         setPropagationNotice(

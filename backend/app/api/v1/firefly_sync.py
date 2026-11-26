@@ -1,6 +1,7 @@
 import json
+import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +19,7 @@ from app.services.firefly import firefly_client
 from app.services.pricing import normalize_unit_price
 from app.services.taxonomy import expand_tags_ordered, get_implication_map
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/firefly-sync", tags=["Firefly Backlog & Sync"])
 
 INCREMENTAL_COOLDOWN_SECONDS = 60
@@ -122,6 +124,35 @@ def _ensure_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt
 
 
+def _format_httpx_error(exc: httpx.HTTPError) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        body_text = exc.response.text.strip()
+        detail = body_text
+        try:
+            payload = exc.response.json()
+            if isinstance(payload, dict):
+                msg = str(payload.get("message") or "").strip()
+                errs = payload.get("errors")
+                if isinstance(errs, dict) and errs:
+                    err_parts = []
+                    for field, msgs in list(errs.items())[:3]:
+                        if isinstance(msgs, list) and msgs:
+                            err_parts.append(f"{field}: {msgs[0]}")
+                        else:
+                            err_parts.append(f"{field}: {msgs}")
+                    joined = "; ".join(err_parts)
+                    detail = f"{msg} ({joined})" if msg else joined
+                elif msg:
+                    detail = msg
+        except Exception:
+            pass
+        if len(detail) > 300:
+            detail = detail[:300] + "..."
+        return f"HTTP {status_code}: {detail or str(exc)}"
+    return f"{type(exc).__name__}: {exc}"
+
+
 async def rewrite_firefly_splits_for_product(
     session: Session,
     product: Product,
@@ -176,14 +207,14 @@ async def rewrite_firefly_splits_for_product(
                     continue
                 seen_jids.add(jid)
                 if jid in target_by_jid:
-                    put_splits.append(
-                        {
-                            "transaction_journal_id": jid,
-                            "description": ff_description,
-                            "category_name": product.firefly_category_name,
-                            "tags": expanded_tag_names,
-                        }
-                    )
+                    split_payload: dict[str, Any] = {
+                        "transaction_journal_id": jid,
+                        "description": ff_description,
+                        "tags": expanded_tag_names,
+                    }
+                    if product.firefly_category_name:
+                        split_payload["category_name"] = product.firefly_category_name
+                    put_splits.append(split_payload)
                 else:
                     put_splits.append({"transaction_journal_id": jid})
 
@@ -205,10 +236,17 @@ async def rewrite_firefly_splits_for_product(
                 },
             )
         except httpx.HTTPError as exc:
+            err_msg = _format_httpx_error(exc)
+            logger.warning(
+                "Failed rewriting Firefly transaction %s for product %s: %s",
+                ff_tx_id,
+                product.id,
+                err_msg,
+            )
             failures.append(
                 FailedTransactionRewrite(
                     firefly_transaction_id=ff_tx_id,
-                    error=str(exc),
+                    error=err_msg,
                 )
             )
             continue
@@ -219,7 +257,8 @@ async def rewrite_firefly_splits_for_product(
                 continue
             split_row.description = ff_description
             split_row.normalized_description = norm_product_name
-            split_row.firefly_category_name = product.firefly_category_name
+            if product.firefly_category_name:
+                split_row.firefly_category_name = product.firefly_category_name
             split_row.tags_json = json.dumps(expanded_tag_names)
             split_row.linked_product_id = product.id
             split_row.is_ignored = False

@@ -176,9 +176,10 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
       setLinkingGroup(null);
       await Promise.all([loadStatusAndBacklog(), Promise.resolve(onDataChanged())]);
       if (res.failed_transactions.length > 0) {
+        const firstErr = res.failed_transactions[0];
         setBanner({
           type: 'error',
-          text: `Linked ${res.linked_splits} split(s), but ${res.failed_transactions.length} Firefly transaction(s) failed to update.`,
+          text: `Linked ${res.linked_splits} split(s), but ${res.failed_transactions.length} Firefly transaction(s) failed to update (tx #${firstErr.firefly_transaction_id}: ${firstErr.error}).`,
         });
       } else {
         setBanner({
@@ -591,9 +592,10 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
             );
             await Promise.all([loadStatusAndBacklog(), Promise.resolve(onDataChanged())]);
             if (res.failed_transactions.length > 0) {
+              const firstErr = res.failed_transactions[0];
               setBanner({
                 type: 'error',
-                text: `Created "${created.name}" and linked ${res.linked_splits} split(s), but ${res.failed_transactions.length} Firefly transaction(s) failed to update.`,
+                text: `Created "${created.name}" and linked ${res.linked_splits} split(s), but ${res.failed_transactions.length} Firefly transaction(s) failed to update (tx #${firstErr.firefly_transaction_id}: ${firstErr.error}).`,
               });
             } else {
               setBanner({

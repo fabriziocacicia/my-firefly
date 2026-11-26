@@ -2,6 +2,7 @@ import unittest
 from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock, patch
 
+import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
@@ -407,6 +408,95 @@ class FireflyBacklogSyncTests(unittest.TestCase):
         unassoc_after = self.client.get("/api/v1/firefly-sync/backlog").json()
         self.assertEqual(unassoc_after["total_unassociated"], 2)
         self.assertEqual(unassoc_after["linked_count"], 0)
+
+    def test_link_omits_null_category_and_formats_firefly_http_errors(self):
+        with Session(self.engine) as session:
+            uncat_product = Product(
+                name="Sapone Mani",
+                sale_mode="packaged",
+                pack_count=1,
+                default_unit="pcs",
+                firefly_category_name=None,
+            )
+            session.add(uncat_product)
+            session.flush()
+            uncat_pid = uncat_product.id
+            session.add_all(
+                [
+                    FireflySyncedSplit(
+                        transaction_journal_id=901,
+                        firefly_transaction_id=90,
+                        tx_type="withdrawal",
+                        tx_date=date(2026, 11, 22),
+                        amount_cents=199,
+                        description="Sapone Liquid",
+                        normalized_description="sapone liquid",
+                        firefly_expense_account_id=20,
+                        firefly_expense_account_name="Conad",
+                        firefly_category_name="Personal Care",
+                        tags_json="[]",
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=902,
+                        firefly_transaction_id=91,
+                        tx_type="withdrawal",
+                        tx_date=date(2026, 11, 22),
+                        amount_cents=199,
+                        description="Sapone Liquid",
+                        normalized_description="sapone liquid",
+                        firefly_expense_account_id=20,
+                        firefly_expense_account_name="Conad",
+                        firefly_category_name="Personal Care",
+                        tags_json="[]",
+                    ),
+                ]
+            )
+            session.commit()
+
+        captured_puts = []
+
+        async def mock_get_tx(tx_id):
+            jid = "901" if tx_id == 90 else "902"
+            return {
+                "id": str(tx_id),
+                "attributes": {
+                    "transactions": [{"transaction_journal_id": jid, "description": "Sapone Liquid"}]
+                },
+            }
+
+        async def mock_put_tx(tx_id, payload):
+            if tx_id == 91:
+                req = httpx.Request("PUT", f"http://firefly/api/v1/transactions/{tx_id}")
+                resp = httpx.Response(
+                    422,
+                    request=req,
+                    json={
+                        "message": "The given data was invalid.",
+                        "errors": {"transactions.0.description": ["Too long."]},
+                    },
+                )
+                raise httpx.HTTPStatusError("422", request=req, response=resp)
+            captured_puts.append((tx_id, payload))
+            return {"data": {"id": str(tx_id)}}
+
+        with (
+            patch("app.api.v1.firefly_sync.firefly_client.get_transaction_by_id", side_effect=mock_get_tx),
+            patch("app.api.v1.firefly_sync.firefly_client.update_transaction", side_effect=mock_put_tx),
+        ):
+            link_resp = self.client.post(
+                "/api/v1/firefly-sync/backlog/link",
+                json={"product_id": uncat_pid, "transaction_journal_ids": [901, 902]},
+            )
+
+        self.assertEqual(link_resp.status_code, 200)
+        body = link_resp.json()
+        self.assertEqual(body["linked_splits"], 1)
+        self.assertEqual(len(body["failed_transactions"]), 1)
+        self.assertEqual(body["failed_transactions"][0]["firefly_transaction_id"], 91)
+        self.assertIn("HTTP 422", body["failed_transactions"][0]["error"])
+        self.assertIn("transactions.0.description: Too long.", body["failed_transactions"][0]["error"])
+        # Null category_name omitted cleanly from PUT payload
+        self.assertNotIn("category_name", captured_puts[0][1]["transactions"][0])
 
 
 if __name__ == "__main__":
