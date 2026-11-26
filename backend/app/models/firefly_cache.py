@@ -1,5 +1,6 @@
 from datetime import datetime, date, timezone
 from typing import Optional
+import sqlalchemy as sa
 from sqlmodel import SQLModel, Field
 
 
@@ -30,3 +31,34 @@ class FireflySyncState(SQLModel, table=True):
     last_full_sync_at: Optional[datetime] = Field(default=None)
     last_incremental_sync_at: Optional[datetime] = Field(default=None)
     high_watermark_date: Optional[date] = Field(default=None)
+
+
+class FireflySyncJob(SQLModel, table=True):
+    __tablename__ = "firefly_sync_job"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    job_type: str = Field(index=True)  # "backlog_link" | "product_propagate"
+    product_id: int = Field(
+        sa_column=sa.Column(
+            sa.Integer(),
+            sa.ForeignKey("product.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    product_name: str
+    status: str = Field(default="queued", index=True)  # queued|running|completed|completed_with_errors|failed
+    total_transactions: int = Field(default=0)
+    processed_transactions: int = Field(default=0)
+    updated_transactions: int = Field(default=0)
+    total_splits: int = Field(default=0)
+    linked_splits: int = Field(default=0)
+    updated_splits: int = Field(default=0)
+    failed_count: int = Field(default=0)
+    failed_transactions_json: str = Field(default="[]")
+    target_journal_ids_json: str = Field(default="[]")
+    error_message: Optional[str] = Field(default=None)
+    dismissed_at: Optional[datetime] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
+    started_at: Optional[datetime] = Field(default=None)
+    finished_at: Optional[datetime] = Field(default=None)
