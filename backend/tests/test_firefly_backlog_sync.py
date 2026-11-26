@@ -221,6 +221,7 @@ class FireflyBacklogSyncTests(unittest.TestCase):
             return {
                 "id": str(tx_id),
                 "attributes": {
+                    "group_title": "Conad - 2026-11-20",
                     "transactions": [
                         {"transaction_journal_id": "551", "description": "mele rosse bioo 600g"},
                         {"transaction_journal_id": "552", "description": "Latte Intero 1L"},
@@ -256,6 +257,7 @@ class FireflyBacklogSyncTests(unittest.TestCase):
         self.assertEqual(tx_id, 55)
         self.assertEqual(put_payload["apply_rules"], False)
         self.assertEqual(put_payload["fire_webhooks"], False)
+        self.assertEqual(put_payload["group_title"], "Conad - 2026-11-20")
         tx_splits = put_payload["transactions"]
         self.assertEqual(len(tx_splits), 2)
         by_jid = {s["transaction_journal_id"]: s for s in tx_splits}
@@ -456,11 +458,29 @@ class FireflyBacklogSyncTests(unittest.TestCase):
         captured_puts = []
 
         async def mock_get_tx(tx_id):
-            jid = "901" if tx_id == 90 else "902"
+            if tx_id == 90:
+                return {
+                    "id": str(tx_id),
+                    "attributes": {
+                        "group_title": None,
+                        "transactions": [
+                            {
+                                "transaction_journal_id": "901",
+                                "description": "Sapone Liquid",
+                                "destination_name": "Conad",
+                                "date": "2026-11-22T12:00:00+00:00",
+                            },
+                            {
+                                "transaction_journal_id": "999",
+                                "description": "Altro",
+                            },
+                        ],
+                    },
+                }
             return {
                 "id": str(tx_id),
                 "attributes": {
-                    "transactions": [{"transaction_journal_id": jid, "description": "Sapone Liquid"}]
+                    "transactions": [{"transaction_journal_id": "902", "description": "Sapone Liquid"}]
                 },
             }
 
@@ -495,8 +515,9 @@ class FireflyBacklogSyncTests(unittest.TestCase):
         self.assertEqual(body["failed_transactions"][0]["firefly_transaction_id"], 91)
         self.assertIn("HTTP 422", body["failed_transactions"][0]["error"])
         self.assertIn("transactions.0.description: Too long.", body["failed_transactions"][0]["error"])
-        # Null category_name omitted cleanly from PUT payload
+        # Null category_name omitted cleanly from PUT payload, and fallback group_title synthesized for multi-split
         self.assertNotIn("category_name", captured_puts[0][1]["transactions"][0])
+        self.assertEqual(captured_puts[0][1]["group_title"], "Conad - 2026-11-22")
 
 
 if __name__ == "__main__":

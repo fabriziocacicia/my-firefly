@@ -196,7 +196,8 @@ async def rewrite_firefly_splits_for_product(
                 )
                 continue
 
-            current_splits = tx_data.get("attributes", {}).get("transactions", [])
+            tx_attrs = tx_data.get("attributes") or {}
+            current_splits = tx_attrs.get("transactions", [])
             put_splits: List[dict] = []
             seen_jids: set[int] = set()
 
@@ -227,14 +228,31 @@ async def rewrite_firefly_splits_for_product(
                 )
                 continue
 
-            await firefly_client.update_transaction(
-                ff_tx_id,
-                {
-                    "apply_rules": False,
-                    "fire_webhooks": False,
-                    "transactions": put_splits,
-                },
-            )
+            put_body: dict[str, Any] = {
+                "apply_rules": False,
+                "fire_webhooks": False,
+                "transactions": put_splits,
+            }
+            group_title = str(tx_attrs.get("group_title") or "").strip()
+            if not group_title and len(put_splits) > 1:
+                first_split = current_splits[0] if current_splits else {}
+                dest_or_src = str(
+                    first_split.get("destination_name")
+                    or first_split.get("source_name")
+                    or ""
+                ).strip()
+                tx_date_str = str(first_split.get("date") or "")[:10]
+                if dest_or_src and tx_date_str:
+                    group_title = f"{dest_or_src} - {tx_date_str}"
+                else:
+                    group_title = (
+                        str(first_split.get("description") or "").strip()
+                        or f"Transaction #{ff_tx_id}"
+                    )
+            if group_title:
+                put_body["group_title"] = group_title
+
+            await firefly_client.update_transaction(ff_tx_id, put_body)
         except httpx.HTTPError as exc:
             err_msg = _format_httpx_error(exc)
             logger.warning(
