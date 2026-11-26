@@ -344,6 +344,18 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
                     <span>Stores: {group.sample_stores.join(', ')}</span>
                   )}
                 </div>
+                {group.sample_tags && group.sample_tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1 pt-0.5">
+                    {group.sample_tags.map(tName => (
+                      <span
+                        key={tName}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700"
+                      >
+                        #{tName}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
@@ -460,6 +472,7 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
         isOpen={creatingFromGroup !== null}
         initialName={creatingFromGroup?.sample_description || ''}
         initialCategoryName={creatingFromGroup?.category_name ?? null}
+        initialTagNames={creatingFromGroup?.sample_tags ?? []}
         onClose={() => setCreatingFromGroup(null)}
         onSaved={async created => {
           const targetGroup = creatingFromGroup;

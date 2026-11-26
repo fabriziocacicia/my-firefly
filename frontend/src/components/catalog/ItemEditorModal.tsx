@@ -18,6 +18,7 @@ interface ItemEditorModalProps {
   editingProduct?: Product | null;
   initialName?: string;
   initialCategoryName?: string | null;
+  initialTagNames?: string[];
   onClose: () => void;
   onSaved: (product: Product, wasEdited: boolean) => void;
 }
@@ -27,6 +28,7 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
   editingProduct = null,
   initialName = '',
   initialCategoryName = null,
+  initialTagNames = [],
   onClose,
   onSaved,
 }) => {
@@ -54,6 +56,8 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
   const [pendingPropagationProduct, setPendingPropagationProduct] = useState<Product | null>(null);
   const [propagating, setPropagating] = useState(false);
   const [propagationNotice, setPropagationNotice] = useState<string | null>(null);
+
+  const initialTagNamesKey = initialTagNames.join('\0');
 
   useEffect(() => {
     if (!isOpen) return;
@@ -83,18 +87,58 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
       setSelectedTagIds([]);
     }
 
+    let cancelled = false;
     Promise.allSettled([
       api.products.listBrands(),
       api.firefly.getCategories(),
       api.tags.list(),
       api.tags.listImplications(),
-    ]).then(([brandsRes, catsRes, tagsRes, impsRes]) => {
+    ]).then(async ([brandsRes, catsRes, tagsRes, impsRes]) => {
+      if (cancelled) return;
       if (brandsRes.status === 'fulfilled') setBrands(brandsRes.value);
       if (catsRes.status === 'fulfilled') setCategories(catsRes.value);
-      if (tagsRes.status === 'fulfilled') setTags(tagsRes.value);
       if (impsRes.status === 'fulfilled') setImplications(impsRes.value);
+      if (tagsRes.status === 'fulfilled') {
+        let loadedTags = tagsRes.value;
+        if (!editingProduct && initialTagNames.length > 0) {
+          const cleanInitial = initialTagNames
+            .map(n => n.trim())
+            .filter(Boolean);
+          const hasMissing = cleanInitial.some(
+            name => !loadedTags.some(t => t.name.trim().toLowerCase() === name.toLowerCase())
+          );
+          if (hasMissing) {
+            try {
+              const syncRes = await api.tags.syncFirefly();
+              if (!cancelled && syncRes.tags) {
+                loadedTags = syncRes.tags;
+              }
+            } catch {
+              // Keep locally loaded tags if Firefly tag sync fails
+            }
+          }
+          if (!cancelled) {
+            const byLower = new Map(
+              loadedTags.map(t => [t.name.trim().toLowerCase(), t.id])
+            );
+            const preselectedIds: number[] = [];
+            for (const rawName of cleanInitial) {
+              const matchedId = byLower.get(rawName.toLowerCase());
+              if (matchedId !== undefined && !preselectedIds.includes(matchedId)) {
+                preselectedIds.push(matchedId);
+              }
+            }
+            setSelectedTagIds(preselectedIds);
+          }
+        }
+        if (!cancelled) setTags(loadedTags);
+      }
     });
-  }, [isOpen, editingProduct, initialName, initialCategoryName]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, editingProduct, initialName, initialCategoryName, initialTagNamesKey]);
 
   const activeBrandName = useMemo(() => {
     if (showNewBrand && newBrandName.trim()) return newBrandName.trim();

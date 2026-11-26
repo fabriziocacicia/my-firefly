@@ -376,6 +376,7 @@ export interface BacklogGroup {
   total_amount: number;
   latest_date: string;
   sample_stores: string[];
+  sample_tags?: string[];
   journal_ids: number[];
   suggested_product_id?: number | null;
   suggested_product_name?: string | null;

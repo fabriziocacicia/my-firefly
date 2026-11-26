@@ -55,6 +55,7 @@ class BacklogGroup(BaseModel):
     total_amount: float
     latest_date: date
     sample_stores: List[str] = []
+    sample_tags: List[str] = []
     journal_ids: List[int] = []
     suggested_product_id: Optional[int] = None
     suggested_product_name: Optional[str] = None
@@ -537,6 +538,19 @@ def get_firefly_backlog(
                 if r.firefly_expense_account_name
             }
         )[:3]
+        tag_map: dict[str, str] = {}
+        for r in rows_sorted:
+            try:
+                parsed_tags = json.loads(r.tags_json or "[]")
+            except Exception:
+                parsed_tags = []
+            if isinstance(parsed_tags, list):
+                for raw_t in parsed_tags:
+                    clean_t = str(raw_t).strip()
+                    if clean_t and clean_t.lower() not in tag_map:
+                        tag_map[clean_t.lower()] = clean_t
+        sample_tags = sorted(tag_map.values(), key=lambda s: s.lower())
+
         hint = hint_map.get(norm_desc)
         groups.append(
             BacklogGroup(
@@ -547,6 +561,7 @@ def get_firefly_backlog(
                 total_amount=round(sum(r.amount_cents for r in rows_sorted) / 100.0, 2),
                 latest_date=rows_sorted[0].tx_date,
                 sample_stores=stores,
+                sample_tags=sample_tags,
                 journal_ids=[r.transaction_journal_id for r in rows_sorted],
                 suggested_product_id=hint[0] if hint else None,
                 suggested_product_name=hint[1] if hint else None,

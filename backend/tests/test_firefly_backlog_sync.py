@@ -114,7 +114,7 @@ class FireflyBacklogSyncTests(unittest.TestCase):
                             "destination_id": "21",
                             "destination_name": "Lidl",
                             "category_name": "Groceries",
-                            "tags": [],
+                            "tags": ["Bio"],
                         },
                         {
                             "transaction_journal_id": "562",
@@ -168,6 +168,7 @@ class FireflyBacklogSyncTests(unittest.TestCase):
         self.assertEqual(groups[0]["sample_description"], "mele rosse bioo 600g")
         self.assertEqual(groups[0]["occurrence_count"], 2)
         self.assertEqual(groups[0]["total_amount"], 4.8)
+        self.assertEqual(set(groups[0]["sample_tags"]), {"Mele", "Bio"})
 
         # Ignore rent transaction
         ignore_resp = self.client.post(
