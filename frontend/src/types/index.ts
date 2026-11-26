@@ -102,6 +102,7 @@ export interface Product {
   effective_tags?: Tag[];
   aliases?: ItemFireflyAlias[];
   affected_firefly_count?: number;
+  firefly_description?: string;
 }
 
 export interface PriceRecord {

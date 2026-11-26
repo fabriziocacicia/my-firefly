@@ -44,7 +44,7 @@ class FireflyBacklogSyncTests(unittest.TestCase):
             session.commit()
 
             prod = Product(
-                name="Mele Rosse Bio 600g",
+                name="Mele Rosse Bio",
                 sale_mode="packaged",
                 pack_count=1,
                 unit_size=600.0,
@@ -296,10 +296,11 @@ class FireflyBacklogSyncTests(unittest.TestCase):
         # PATCH product does NOT call Firefly automatically
         patch_resp = self.client.patch(
             f"/api/v1/products/{self.product_id}",
-            json={"name": "Mele Rosse Melinda Bio 600g"},
+            json={"name": "Mele Rosse Melinda Bio"},
         )
         self.assertEqual(patch_resp.status_code, 200)
         self.assertEqual(patch_resp.json()["affected_firefly_count"], 1)
+        self.assertEqual(patch_resp.json()["firefly_description"], "Mele Rosse Melinda Bio 600g")
 
         captured_puts = []
 

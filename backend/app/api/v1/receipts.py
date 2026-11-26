@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.asset_account import AssetAccountMetadata, AssetAccountType
 from app.models.price import PriceRecord
-from app.models.product import Product
+from app.models.product import Product, format_firefly_description
 from app.models.receipt import (
     Receipt,
     ReceiptAttachment,
@@ -255,7 +255,11 @@ def _build_firefly_tx_payload(
 
     for item, amount_cents, suffix in splits:
         product = item.product
-        product_name = product.name if product else f"Product #{item.product_id}"
+        product_name = (
+            format_firefly_description(product)
+            if product
+            else f"Product #{item.product_id}"
+        )
         base_notes = receipt.notes or ""
         split_notes = (
             f"{base_notes}{suffix}".lstrip() if suffix else base_notes

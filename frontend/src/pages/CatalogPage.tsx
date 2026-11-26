@@ -370,9 +370,14 @@ export const CatalogPage: React.FC = () => {
                           <h3 className="text-base font-semibold text-slate-900 mt-1 truncate">
                             {p.name}
                           </h3>
-                          <span className="text-xs text-slate-500">
+                          <span className="text-xs text-slate-500 block">
                             {formatProductBadge(p)}
                           </span>
+                          {p.firefly_description && (
+                            <span className="text-[11px] text-slate-400 block truncate mt-0.5">
+                              FF: {p.firefly_description}
+                            </span>
+                          )}
                         </div>
                         <button
                           type="button"

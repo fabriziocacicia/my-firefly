@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
@@ -14,6 +15,7 @@ from app.models.product import (
     ProductCreate,
     ProductRead,
     ProductUpdate,
+    format_firefly_description,
 )
 from app.models.receipt import Receipt, ReceiptItem
 from app.models.tag import ProductTagLink, Tag
@@ -83,6 +85,7 @@ def serialize_products(session: Session, products: list[Product]) -> list[Produc
         data["effective_tags"] = effective
         data["aliases"] = p.aliases
         data["affected_firefly_count"] = affected_counts.get(p.id, 0)
+        data["firefly_description"] = format_firefly_description(p)
         serialized.append(ProductRead(**data))
     return serialized
 
@@ -135,7 +138,12 @@ def list_products(
         selectinload(Product.aliases),
     )
     if search:
-        query = query.where(Product.name.ilike(f"%{search}%"))
+        query = query.outerjoin(Brand).where(
+            or_(
+                Product.name.ilike(f"%{search}%"),
+                Brand.name.ilike(f"%{search}%"),
+            )
+        )
     if brand_id:
         query = query.where(Product.brand_id == brand_id)
     if firefly_category_name:

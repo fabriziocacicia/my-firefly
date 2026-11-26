@@ -30,6 +30,41 @@ export function formatProductBadge(product: Product): string {
   );
 }
 
+function formatCleanNumber(val: number): string {
+  if (Math.abs(val - Math.round(val)) < 1e-6) {
+    return String(Math.round(val));
+  }
+  return Number(val.toFixed(4)).toString();
+}
+
+export function formatFireflyDescriptionPreview(params: {
+  name: string;
+  brandName?: string | null;
+  saleMode: SaleMode;
+  packCount: number;
+  unitSize: number;
+  defaultUnit: string;
+}): string {
+  const parts: string[] = [];
+  const cleanName = params.name.trim();
+  if (cleanName) parts.push(cleanName);
+  const cleanBrand = params.brandName?.trim();
+  if (cleanBrand) parts.push(cleanBrand);
+
+  if (params.saleMode !== 'loose_weight') {
+    const unit = (params.defaultUnit || 'pcs').trim();
+    const count = Math.max(1, Math.round(params.packCount || 1));
+    const size = params.unitSize > 0 ? params.unitSize : 1;
+    if (unit === 'pcs') {
+      parts.push(`x${formatCleanNumber(count * size)}`);
+    } else {
+      const token = `${formatCleanNumber(size)}${unit}`;
+      parts.push(count > 1 ? `${count}x${token}` : token);
+    }
+  }
+  return parts.join(' ');
+}
+
 export function computePriceFromInput(
   priceMode: PriceInputMode,
   rawPrice: string,

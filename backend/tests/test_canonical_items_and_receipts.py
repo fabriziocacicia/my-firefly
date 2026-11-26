@@ -61,14 +61,18 @@ class CanonicalItemsAndReceiptsTests(unittest.TestCase):
         self.engine.dispose()
 
     def test_create_update_and_filter_canonical_product_with_effective_tags(self):
+        brand_resp = self.client.post("/api/v1/products/brands", json={"name": "MD"})
+        brand_id = brand_resp.json()["id"]
+
         create_resp = self.client.post(
             "/api/v1/products/",
             json={
-                "name": "Birra Moretti 6x330ml",
+                "name": "Fusilli Integrali Bio",
+                "brand_id": brand_id,
                 "sale_mode": "packaged",
-                "pack_count": 6,
-                "unit_size": 330,
-                "default_unit": "ml",
+                "pack_count": 1,
+                "unit_size": 500,
+                "default_unit": "g",
                 "firefly_category_id": 10,
                 "firefly_category_name": "Groceries",
                 "tag_ids": [self.tag_ids["Mele"], self.tag_ids["Bio"]],
@@ -77,12 +81,18 @@ class CanonicalItemsAndReceiptsTests(unittest.TestCase):
         self.assertEqual(create_resp.status_code, 200)
         prod = create_resp.json()
         self.assertEqual(prod["sale_mode"], "packaged")
-        self.assertEqual(prod["pack_count"], 6)
-        self.assertEqual(prod["unit_size"], 330.0)
-        self.assertEqual(prod["package_size"], 1980.0)
+        self.assertEqual(prod["pack_count"], 1)
+        self.assertEqual(prod["unit_size"], 500.0)
+        self.assertEqual(prod["package_size"], 500.0)
         self.assertEqual(prod["firefly_category_name"], "Groceries")
+        self.assertEqual(prod["firefly_description"], "Fusilli Integrali Bio MD 500g")
         effective_names = {t["name"] for t in prod["effective_tags"]}
         self.assertEqual(effective_names, {"Mele", "Frutta", "Alimentari", "Bio"})
+
+        # Search also matches by brand name ("MD")
+        search_brand = self.client.get("/api/v1/products/?search=MD")
+        self.assertEqual(search_brand.status_code, 200)
+        self.assertEqual(len(search_brand.json()), 1)
 
         # Filtering by implied parent tag ("Frutta") returns items tagged with "Mele"
         list_resp = self.client.get(
@@ -91,15 +101,31 @@ class CanonicalItemsAndReceiptsTests(unittest.TestCase):
         self.assertEqual(list_resp.status_code, 200)
         self.assertEqual(len(list_resp.json()), 1)
 
-        # PATCH updates fields cleanly
+        # PATCH to pieces format ("Uova Bio MD x4")
         patch_resp = self.client.patch(
             f"/api/v1/products/{prod['id']}",
-            json={"name": "Mele Rosse Bio 600g", "pack_count": 1, "unit_size": 600, "default_unit": "g"},
+            json={"name": "Uova Bio", "pack_count": 4, "unit_size": 1, "default_unit": "pcs"},
         )
         self.assertEqual(patch_resp.status_code, 200)
         updated = patch_resp.json()
-        self.assertEqual(updated["name"], "Mele Rosse Bio 600g")
-        self.assertEqual(updated["package_size"], 600.0)
+        self.assertEqual(updated["name"], "Uova Bio")
+        self.assertEqual(updated["package_size"], 4.0)
+        self.assertEqual(updated["firefly_description"], "Uova Bio MD x4")
+
+        # Multipack format ("Birra Moretti 6x330ml")
+        multipack = self.client.post(
+            "/api/v1/products/",
+            json={
+                "name": "Birra Moretti",
+                "sale_mode": "packaged",
+                "pack_count": 6,
+                "unit_size": 330,
+                "default_unit": "ml",
+                "firefly_category_name": "Groceries",
+                "tag_ids": [],
+            },
+        ).json()
+        self.assertEqual(multipack["firefly_description"], "Birra Moretti 6x330ml")
 
     def test_pricing_normalization_for_multipack_and_loose_weight(self):
         # 6x330ml = 1980ml = 1.98L at €3.96 => €2.00/L
@@ -161,10 +187,12 @@ class CanonicalItemsAndReceiptsTests(unittest.TestCase):
             self.assertEqual(rec["items"][0]["line_total"], 2.00)
 
     def test_push_to_firefly_expands_n_packs_into_n_splits_with_category_and_expanded_tags(self):
+        barilla_id = self.client.post("/api/v1/products/brands", json={"name": "Barilla"}).json()["id"]
         pasta = self.client.post(
             "/api/v1/products/",
             json={
-                "name": "Pasta Barilla Fusilli 1kg",
+                "name": "Fusilli",
+                "brand_id": barilla_id,
                 "sale_mode": "packaged",
                 "pack_count": 1,
                 "unit_size": 1.0,
@@ -227,7 +255,7 @@ class CanonicalItemsAndReceiptsTests(unittest.TestCase):
         # 5 packs of Pasta + 1 loose-weight Banane = 6 splits
         self.assertEqual(len(splits), 6)
 
-        pasta_splits = [s for s in splits if s["description"] == "Pasta Barilla Fusilli 1kg"]
+        pasta_splits = [s for s in splits if s["description"] == "Fusilli Barilla 1kg"]
         self.assertEqual(len(pasta_splits), 5)
         for s in pasta_splits:
             self.assertEqual(s["category_name"], "Groceries")

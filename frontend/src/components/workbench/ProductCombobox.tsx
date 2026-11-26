@@ -209,7 +209,9 @@ export const ProductCombobox: React.FC<ProductComboboxProps> = ({
                   }`}
                 >
                   <div className="min-w-0">
-                    <div className="font-semibold truncate">{prod.name}</div>
+                    <div className="font-semibold truncate">
+                      {prod.firefly_description || prod.name}
+                    </div>
                     <div className="text-[11px] text-slate-400 truncate">
                       {[prod.brand?.name, prod.firefly_category_name]
                         .filter(Boolean)

@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from app.core.database import get_session
 from app.models.firefly_cache import FireflySyncState, FireflySyncedSplit
 from app.models.price import PriceRecord
-from app.models.product import ItemFireflyAlias, Product
+from app.models.product import ItemFireflyAlias, Product, format_firefly_description
 from app.models.receipt import Receipt, ReceiptItem
 from app.models.tag import Tag
 from app.services.firefly import firefly_client
@@ -142,7 +142,8 @@ async def rewrite_firefly_splits_for_product(
     updated_split_count = 0
     failures: List[FailedTransactionRewrite] = []
     succeeded_splits: List[FireflySyncedSplit] = []
-    norm_product_name = product.name.strip().lower()
+    ff_description = format_firefly_description(product)
+    norm_product_name = ff_description.strip().lower()
 
     for ff_tx_id, target_by_jid in grouped_by_tx.items():
         try:
@@ -170,7 +171,7 @@ async def rewrite_firefly_splits_for_product(
                     put_splits.append(
                         {
                             "transaction_journal_id": jid,
-                            "description": product.name,
+                            "description": ff_description,
                             "category_name": product.firefly_category_name or "",
                             "tags": expanded_tag_names,
                         }
@@ -208,7 +209,7 @@ async def rewrite_firefly_splits_for_product(
         for jid, split_row in target_by_jid.items():
             if jid not in seen_jids:
                 continue
-            split_row.description = product.name
+            split_row.description = ff_description
             split_row.normalized_description = norm_product_name
             split_row.firefly_category_name = product.firefly_category_name
             split_row.tags_json = json.dumps(expanded_tag_names)
@@ -349,15 +350,19 @@ async def sync_firefly_transactions(
             (Receipt.firefly_transaction_id.is_not(None))
             | (Receipt.firefly_voucher_transaction_id.is_not(None))
         )
-        .options(selectinload(Receipt.items).selectinload(ReceiptItem.product))
+        .options(
+            selectinload(Receipt.items)
+            .selectinload(ReceiptItem.product)
+            .selectinload(Product.brand)
+        )
     ).all()
     receipt_tx_product_map: dict[int, dict[str, int]] = {}
     for rec in pushed_receipts:
-        name_map = {
-            ri.product.name.strip().lower(): ri.product_id
-            for ri in rec.items
-            if ri.product and ri.product.name
-        }
+        name_map: dict[str, int] = {}
+        for ri in rec.items:
+            if ri.product and ri.product.name:
+                name_map[ri.product.name.strip().lower()] = ri.product_id
+                name_map[format_firefly_description(ri.product).lower()] = ri.product_id
         if rec.firefly_transaction_id:
             receipt_tx_product_map[rec.firefly_transaction_id] = name_map
         if rec.firefly_voucher_transaction_id:
@@ -512,9 +517,10 @@ def get_firefly_backlog(
         for a in aliases
         if a.product is not None
     }
-    products = session.exec(select(Product)).all()
+    products = session.exec(select(Product).options(selectinload(Product.brand))).all()
     for p in products:
         if p.id is not None:
+            hint_map.setdefault(format_firefly_description(p).lower(), (p.id, p.name))
             hint_map.setdefault(p.name.strip().lower(), (p.id, p.name))
 
     grouped: dict[tuple[str, Optional[str]], list[FireflySyncedSplit]] = {}
@@ -582,7 +588,7 @@ async def link_backlog_splits_to_product(
     product = session.exec(
         select(Product)
         .where(Product.id == req.product_id)
-        .options(selectinload(Product.tags))
+        .options(selectinload(Product.brand), selectinload(Product.tags))
     ).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")

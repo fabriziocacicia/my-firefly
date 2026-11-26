@@ -104,3 +104,39 @@ class ProductRead(ProductBase):
     effective_tags: List[TagRead] = []
     aliases: List[ItemFireflyAliasRead] = []
     affected_firefly_count: int = 0
+    firefly_description: str = ""
+
+
+def _format_clean_number(value: float) -> str:
+    if abs(value - round(value)) < 1e-6:
+        return str(int(round(value)))
+    return f"{value:.4f}".rstrip("0").rstrip(".")
+
+
+def format_firefly_description(product: Product) -> str:
+    """
+    Builds the canonical Firefly III transaction/split description:
+    - loose_weight: "<name> [<brand>]"
+    - packaged (pcs): "<name> [<brand>] x<total_pcs>"
+    - packaged (g/kg/ml/l, pack_count=1): "<name> [<brand>] <unit_size><default_unit>"
+    - packaged (multipack, pack_count>1): "<name> [<brand>] <pack_count>x<unit_size><default_unit>"
+    """
+    parts: List[str] = [product.name.strip()]
+    if product.brand and product.brand.name and product.brand.name.strip():
+        parts.append(product.brand.name.strip())
+
+    if product.sale_mode != "loose_weight":
+        unit = (product.default_unit or "pcs").strip()
+        pack_count = max(1, int(product.pack_count or 1))
+        unit_size = float(product.unit_size or product.package_size or 1.0)
+        if unit == "pcs":
+            total_pcs = pack_count * unit_size
+            parts.append(f"x{_format_clean_number(total_pcs)}")
+        else:
+            size_token = f"{_format_clean_number(unit_size)}{unit}"
+            if pack_count > 1:
+                parts.append(f"{pack_count}x{size_token}")
+            else:
+                parts.append(size_token)
+
+    return " ".join(part for part in parts if part)

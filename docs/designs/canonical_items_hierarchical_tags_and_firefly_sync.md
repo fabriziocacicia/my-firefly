@@ -131,15 +131,20 @@ flowchart LR
 ### 6.2 Canonical Item (`Product`) & Packaging Metadata (Issues #1 & #5)
 
 - **`Product` columns:**
-  - `name: str` (canonical name, e.g., `"Mele Rosse Bio 600g"`)
+  - `name: str` (clean item name without brand or size, e.g., `"Fusilli Integrali Bio"`, `"Uova Bio"`, `"Mele Rosse"`)
   - `sale_mode: Literal["packaged", "loose_weight"]` (default `"packaged"`)
-  - `pack_count: int` (default `1`, `>= 1` — e.g., `6` for `6×330ml`)
-  - `unit_size: float` (default `1.0`, `> 0` — e.g., `330` for `6×330ml`, `600` for `600g`; `1.0` when `loose_weight`)
+  - `pack_count: int` (default `1`, `>= 1` — e.g., `6` for a `6×330ml` multipack)
+  - `unit_size: float` (default `1.0`, `> 0` — e.g., `330` for `6×330ml`, `500` for `500g`, `4` for `x4 pcs`; `1.0` when `loose_weight`)
   - `default_unit: Literal["g", "kg", "ml", "l", "pcs"]`
   - `package_size: float` (kept in sync as `pack_count * unit_size` for compatibility with existing analytics/normalization)
   - `firefly_category_id: Optional[int]`
   - `firefly_category_name: Optional[str]`
   - `brand_id`, `barcode`, `notes`
+- **Canonical Firefly Transaction Description (`format_firefly_description`):**
+  - `loose_weight`: `<name> [<brand>]` (e.g., `"Mele Rosse Melinda"` or `"Banane Bio"`).
+  - `packaged` with `default_unit == "pcs"`: `<name> [<brand>] x<total_pcs>` (e.g., `"Uova Bio MD x4"`).
+  - `packaged` with `g`/`kg`/`ml`/`l` (`pack_count == 1`): `<name> [<brand>] <unit_size><default_unit>` (e.g., `"Fusilli Integrali Bio MD 500g"`).
+  - `packaged` multipack (`pack_count > 1`): `<name> [<brand>] <pack_count>x<unit_size><default_unit>` (e.g., `"Birra Moretti 6x330ml"`).
 - **Unit Price Normalization:**
   - `packaged`: `total_measure = receipt_quantity * pack_count * unit_size`
   - `loose_weight`: `total_measure = receipt_quantity` (entered in `product.default_unit`, e.g., `0.84 kg`)
