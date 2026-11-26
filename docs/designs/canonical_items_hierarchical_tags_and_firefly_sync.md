@@ -1,7 +1,7 @@
 # Spec: Canonical Items, Hierarchical Firefly Tags & Historical Sync — V1
 
 * **Author:** Fabrizio & Antigravity
-* **Status:** Approved
+* **Status:** Implemented
 * **Date:** 2026-11-26
 * **Related Issues:** [#1](https://github.com/fabriziocacicia/my-firefly/issues/1), [#4](https://github.com/fabriziocacicia/my-firefly/issues/4), [#5](https://github.com/fabriziocacicia/my-firefly/issues/5)
 * **Confirmed Intent:** [`docs/intent/items-tags-firefly-sync.md`](../intent/items-tags-firefly-sync.md)
