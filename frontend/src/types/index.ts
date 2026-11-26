@@ -368,6 +368,8 @@ export interface CategoryBacklogCount {
   count: number;
 }
 
+export type BacklogStatusFilter = 'unassociated' | 'linked' | 'ignored';
+
 export interface BacklogGroup {
   normalized_description: string;
   sample_description: string;
@@ -380,10 +382,13 @@ export interface BacklogGroup {
   journal_ids: number[];
   suggested_product_id?: number | null;
   suggested_product_name?: string | null;
+  linked_product_id?: number | null;
+  linked_product_name?: string | null;
 }
 
 export interface BacklogResponse {
   total_unassociated: number;
+  linked_count: number;
   ignored_count: number;
   category_counts: CategoryBacklogCount[];
   groups: BacklogGroup[];

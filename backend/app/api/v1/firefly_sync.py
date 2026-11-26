@@ -59,10 +59,13 @@ class BacklogGroup(BaseModel):
     journal_ids: List[int] = []
     suggested_product_id: Optional[int] = None
     suggested_product_name: Optional[str] = None
+    linked_product_id: Optional[int] = None
+    linked_product_name: Optional[str] = None
 
 
 class BacklogResponse(BaseModel):
     total_unassociated: int
+    linked_count: int = 0
     ignored_count: int
     category_counts: List[CategoryBacklogCount]
     groups: List[BacklogGroup]
@@ -76,6 +79,10 @@ class BacklogLinkRequest(BaseModel):
 class BacklogIgnoreRequest(BaseModel):
     transaction_journal_ids: List[int] = Field(min_length=1)
     ignored: bool = True
+
+
+class BacklogUnlinkRequest(BaseModel):
+    transaction_journal_ids: List[int] = Field(min_length=1)
 
 
 class FailedTransactionRewrite(BaseModel):
@@ -173,7 +180,7 @@ async def rewrite_firefly_splits_for_product(
                         {
                             "transaction_journal_id": jid,
                             "description": ff_description,
-                            "category_name": product.firefly_category_name or "",
+                            "category_name": product.firefly_category_name,
                             "tags": expanded_tag_names,
                         }
                     )
@@ -474,6 +481,7 @@ async def sync_firefly_transactions(
 
 @router.get("/backlog", response_model=BacklogResponse)
 def get_firefly_backlog(
+    status: Literal["unassociated", "linked", "ignored"] = Query("unassociated"),
     category: Optional[str] = Query(
         None,
         description="Filter by Firefly category name, or '__uncategorized__' for null category",
@@ -482,13 +490,23 @@ def get_firefly_backlog(
     session: Session = Depends(get_session),
 ):
     all_splits = session.exec(select(FireflySyncedSplit)).all()
-    ignored_count = sum(1 for s in all_splits if s.is_ignored)
+    ignored_splits = [s for s in all_splits if s.is_ignored]
+    linked_splits = [
+        s for s in all_splits if s.linked_product_id is not None and not s.is_ignored
+    ]
     unassociated = [
         s for s in all_splits if s.linked_product_id is None and not s.is_ignored
     ]
 
+    if status == "linked":
+        target_pool = linked_splits
+    elif status == "ignored":
+        target_pool = ignored_splits
+    else:
+        target_pool = unassociated
+
     cat_counter: dict[Optional[str], int] = {}
-    for s in unassociated:
+    for s in target_pool:
         cat_counter[s.firefly_category_name] = cat_counter.get(s.firefly_category_name, 0) + 1
 
     category_counts = [
@@ -499,7 +517,7 @@ def get_firefly_backlog(
         )
     ]
 
-    filtered = unassociated
+    filtered = target_pool
     if category == "__uncategorized__":
         filtered = [s for s in filtered if not s.firefly_category_name]
     elif category is not None and category != "":
@@ -519,17 +537,24 @@ def get_firefly_backlog(
         if a.product is not None
     }
     products = session.exec(select(Product).options(selectinload(Product.brand))).all()
+    product_name_by_id: dict[int, str] = {}
     for p in products:
         if p.id is not None:
+            product_name_by_id[p.id] = p.name
             hint_map.setdefault(format_firefly_description(p).lower(), (p.id, p.name))
             hint_map.setdefault(p.name.strip().lower(), (p.id, p.name))
 
-    grouped: dict[tuple[str, Optional[str]], list[FireflySyncedSplit]] = {}
+    grouped: dict[tuple[str, Optional[str], Optional[int]], list[FireflySyncedSplit]] = {}
     for s in filtered:
-        grouped.setdefault((s.normalized_description, s.firefly_category_name), []).append(s)
+        key = (
+            s.normalized_description,
+            s.firefly_category_name,
+            s.linked_product_id if status == "linked" else None,
+        )
+        grouped.setdefault(key, []).append(s)
 
     groups: List[BacklogGroup] = []
-    for (norm_desc, cat_name), rows in grouped.items():
+    for (norm_desc, cat_name, linked_pid), rows in grouped.items():
         rows_sorted = sorted(rows, key=lambda r: (r.tx_date, r.id or 0), reverse=True)
         stores = sorted(
             {
@@ -551,7 +576,7 @@ def get_firefly_backlog(
                         tag_map[clean_t.lower()] = clean_t
         sample_tags = sorted(tag_map.values(), key=lambda s: s.lower())
 
-        hint = hint_map.get(norm_desc)
+        hint = hint_map.get(norm_desc) if status == "unassociated" else None
         groups.append(
             BacklogGroup(
                 normalized_description=norm_desc,
@@ -565,6 +590,10 @@ def get_firefly_backlog(
                 journal_ids=[r.transaction_journal_id for r in rows_sorted],
                 suggested_product_id=hint[0] if hint else None,
                 suggested_product_name=hint[1] if hint else None,
+                linked_product_id=linked_pid,
+                linked_product_name=(
+                    product_name_by_id.get(linked_pid) if linked_pid is not None else None
+                ),
             )
         )
 
@@ -572,7 +601,8 @@ def get_firefly_backlog(
 
     return BacklogResponse(
         total_unassociated=len(unassociated),
-        ignored_count=ignored_count,
+        linked_count=len(linked_splits),
+        ignored_count=len(ignored_splits),
         category_counts=category_counts,
         groups=groups,
     )
@@ -593,6 +623,35 @@ def ignore_backlog_splits(
         session.add(s)
     session.commit()
     return {"updated_count": len(splits), "ignored": req.ignored}
+
+
+@router.post("/backlog/unlink")
+def unlink_backlog_splits(
+    req: BacklogUnlinkRequest,
+    session: Session = Depends(get_session),
+):
+    """Unlinks cached Firefly splits back to the unassociated backlog locally without touching Firefly III."""
+    splits = session.exec(
+        select(FireflySyncedSplit).where(
+            FireflySyncedSplit.transaction_journal_id.in_(req.transaction_journal_ids)
+        )
+    ).all()
+    for s in splits:
+        s.linked_product_id = None
+        s.is_ignored = False
+        session.add(s)
+
+    synced_prices = session.exec(
+        select(PriceRecord).where(
+            PriceRecord.transaction_journal_id.in_(req.transaction_journal_ids),
+            PriceRecord.source_type == "firefly_sync",
+        )
+    ).all()
+    for pr in synced_prices:
+        session.delete(pr)
+
+    session.commit()
+    return {"updated_count": len(splits)}
 
 
 @router.post("/backlog/link", response_model=RewriteResultResponse)

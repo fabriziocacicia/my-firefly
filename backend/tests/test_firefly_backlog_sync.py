@@ -330,6 +330,84 @@ class FireflyBacklogSyncTests(unittest.TestCase):
             "Mele Rosse Melinda Bio 600g",
         )
 
+    def test_backlog_status_filter_linked_ignored_and_unlink(self):
+        with Session(self.engine) as session:
+            session.add_all(
+                [
+                    FireflySyncedSplit(
+                        transaction_journal_id=801,
+                        firefly_transaction_id=80,
+                        tx_type="withdrawal",
+                        tx_date=date(2026, 11, 21),
+                        amount_cents=240,
+                        description="Mele Rosse Bio 600g",
+                        normalized_description="mele rosse bio 600g",
+                        firefly_expense_account_id=20,
+                        firefly_expense_account_name="Conad",
+                        firefly_category_name="Groceries",
+                        tags_json="[]",
+                        linked_product_id=self.product_id,
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=802,
+                        firefly_transaction_id=80,
+                        tx_type="withdrawal",
+                        tx_date=date(2026, 11, 21),
+                        amount_cents=500,
+                        description="Bolletta Luce",
+                        normalized_description="bolletta luce",
+                        firefly_expense_account_id=21,
+                        firefly_expense_account_name="Enel",
+                        firefly_category_name="Utilities",
+                        tags_json="[]",
+                        is_ignored=True,
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=803,
+                        firefly_transaction_id=81,
+                        tx_type="withdrawal",
+                        tx_date=date(2026, 11, 22),
+                        amount_cents=120,
+                        description="Acqua Naturale",
+                        normalized_description="acqua naturale",
+                        firefly_expense_account_id=20,
+                        firefly_expense_account_name="Conad",
+                        firefly_category_name="Groceries",
+                        tags_json="[]",
+                    ),
+                ]
+            )
+            session.commit()
+
+        # Default (unassociated) hides linked (801) and ignored (802)
+        unassoc = self.client.get("/api/v1/firefly-sync/backlog").json()
+        self.assertEqual(unassoc["total_unassociated"], 1)
+        self.assertEqual(unassoc["linked_count"], 1)
+        self.assertEqual(unassoc["ignored_count"], 1)
+        self.assertEqual(len(unassoc["groups"]), 1)
+        self.assertEqual(unassoc["groups"][0]["sample_description"], "Acqua Naturale")
+
+        # Linked tab shows 801 with linked_product_name
+        linked = self.client.get("/api/v1/firefly-sync/backlog?status=linked").json()
+        self.assertEqual(len(linked["groups"]), 1)
+        self.assertEqual(linked["groups"][0]["linked_product_id"], self.product_id)
+        self.assertEqual(linked["groups"][0]["linked_product_name"], "Mele Rosse Bio")
+
+        # Ignored tab shows 802
+        ignored = self.client.get("/api/v1/firefly-sync/backlog?status=ignored").json()
+        self.assertEqual(len(ignored["groups"]), 1)
+        self.assertEqual(ignored["groups"][0]["sample_description"], "Bolletta Luce")
+
+        # Unlink 801 returns it to unassociated backlog
+        unlink_resp = self.client.post(
+            "/api/v1/firefly-sync/backlog/unlink",
+            json={"transaction_journal_ids": [801]},
+        )
+        self.assertEqual(unlink_resp.status_code, 200)
+        unassoc_after = self.client.get("/api/v1/firefly-sync/backlog").json()
+        self.assertEqual(unassoc_after["total_unassociated"], 2)
+        self.assertEqual(unassoc_after["linked_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 import {
   Company, Product, Brand, Tag, TagImplication, TagSyncResponse, FireflyCategoryBrief,
   PriceRecord, SaleMode, FireflySyncStatus, SyncTransactionsResponse,
-  BacklogResponse, RewriteResultResponse, TagAnalyticsResponse,
+  BacklogResponse, BacklogStatusFilter, RewriteResultResponse, TagAnalyticsResponse,
   FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount, FireflyRevenueAccount,
   AccountMetadata, AccountMetadataUpdate, AssetAccountMetadataUpdate,
   VoucherRechargeRequest, VoucherRechargeResponse,
@@ -207,8 +207,11 @@ export const api = {
       request<SyncTransactionsResponse>(`/firefly-sync/transactions?mode=${mode}`, {
         method: 'POST',
       }),
-    getBacklog: (params?: { category?: string | null; search?: string }) => {
+    getBacklog: (params?: { status?: BacklogStatusFilter; category?: string | null; search?: string }) => {
       const searchParams = new URLSearchParams();
+      if (params?.status) {
+        searchParams.append('status', params.status);
+      }
       if (params?.category !== undefined && params.category !== null) {
         searchParams.append('category', params.category);
       }
@@ -229,6 +232,11 @@ export const api = {
       request<{ updated_count: number; ignored: boolean }>('/firefly-sync/backlog/ignore', {
         method: 'POST',
         body: JSON.stringify({ transaction_journal_ids, ignored }),
+      }),
+    unlinkBacklog: (transaction_journal_ids: number[]) =>
+      request<{ updated_count: number }>('/firefly-sync/backlog/unlink', {
+        method: 'POST',
+        body: JSON.stringify({ transaction_journal_ids }),
       }),
   },
 
