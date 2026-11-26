@@ -1,15 +1,8 @@
-import React, {
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Plus, Search, X } from 'lucide-react';
 import { api } from '../../api/client';
+import { usePortalDropdown } from '../../hooks/usePortalDropdown';
 import { Tag } from '../../types';
 
 export interface TagComboboxProps {
@@ -46,15 +39,20 @@ export const TagCombobox: React.FC<TagComboboxProps> = ({
   const [activeIndex, setActiveIndex] = useState(0);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dropdownRect, setDropdownRect] = useState<{
-    top: number;
-    left: number;
-    width: number;
-  } | null>(null);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const { containerRef, dropdownRef, dropdownRect } = usePortalDropdown({
+    isOpen,
+    onClose: () => {
+      setIsOpen(false);
+      setInputValue(selectedTag?.name || '');
+      setError(null);
+    },
+    minWidth: 220,
+    preferredMaxHeight: 240,
+  });
 
   useEffect(() => {
     setInputValue(selectedTag?.name || '');
@@ -84,45 +82,14 @@ export const TagCombobox: React.FC<TagComboboxProps> = ({
   const canCreate = Boolean(onTagCreated) && Boolean(trimmedInput) && !exactExisting;
   const totalOptions = filteredTags.length + (canCreate ? 1 : 0);
 
-  const updateDropdownPosition = useCallback(() => {
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    setDropdownRect({
-      top: rect.bottom + 4,
-      left: rect.left,
-      width: rect.width,
-    });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!isOpen) return;
-    updateDropdownPosition();
-    window.addEventListener('scroll', updateDropdownPosition, true);
-    window.addEventListener('resize', updateDropdownPosition);
-    return () => {
-      window.removeEventListener('scroll', updateDropdownPosition, true);
-      window.removeEventListener('resize', updateDropdownPosition);
-    };
-  }, [isOpen, updateDropdownPosition]);
-
-  useEffect(() => {
-    const handleOutside = (e: MouseEvent) => {
-      const target = e.target as Node;
-      const inContainer = containerRef.current?.contains(target) ?? false;
-      const inDropdown = dropdownRef.current?.contains(target) ?? false;
-      if (!inContainer && !inDropdown) {
-        setIsOpen(false);
-        setInputValue(selectedTag?.name || '');
-        setError(null);
-      }
-    };
-    document.addEventListener('mousedown', handleOutside);
-    return () => document.removeEventListener('mousedown', handleOutside);
-  }, [selectedTag]);
-
   useEffect(() => {
     setActiveIndex(0);
   }, [query, filteredTags.length]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    optionRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex, isOpen]);
 
   const handleSelectTag = (tag: Tag) => {
     onChange(tag.id);
@@ -158,7 +125,7 @@ export const TagCombobox: React.FC<TagComboboxProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' || e.key === 'Tab') {
       setIsOpen(false);
       setInputValue(selectedTag?.name || '');
       return;
@@ -192,6 +159,11 @@ export const TagCombobox: React.FC<TagComboboxProps> = ({
     }
   };
 
+  const activeDescendantId =
+    isOpen && totalOptions > 0 && activeIndex < totalOptions
+      ? `${listboxId}-opt-${activeIndex}`
+      : undefined;
+
   return (
     <div ref={containerRef} className={`relative ${className}`}>
       <div className="relative flex items-center">
@@ -204,6 +176,7 @@ export const TagCombobox: React.FC<TagComboboxProps> = ({
           aria-autocomplete="list"
           aria-expanded={isOpen}
           aria-controls={listboxId}
+          aria-activedescendant={activeDescendantId}
           aria-label={ariaLabel || placeholder}
           value={inputValue}
           onFocus={() => {
@@ -243,6 +216,7 @@ export const TagCombobox: React.FC<TagComboboxProps> = ({
 
       {isOpen &&
         dropdownRect &&
+        typeof document !== 'undefined' &&
         createPortal(
           <div
             ref={dropdownRef}
@@ -250,14 +224,15 @@ export const TagCombobox: React.FC<TagComboboxProps> = ({
               position: 'fixed',
               top: dropdownRect.top,
               left: dropdownRect.left,
-              width: Math.max(dropdownRect.width, 220),
+              width: dropdownRect.width,
             }}
             className="z-[80] bg-white rounded-xl border border-slate-200 shadow-xl overflow-hidden"
           >
             <ul
               id={listboxId}
               role="listbox"
-              className="max-h-60 overflow-y-auto divide-y divide-slate-100 text-xs"
+              style={{ maxHeight: dropdownRect.maxHeight }}
+              className="overflow-y-auto divide-y divide-slate-100 text-xs"
             >
               {filteredTags.length === 0 && !canCreate ? (
                 <li className="px-3 py-2.5 text-slate-400 text-center">
@@ -270,6 +245,10 @@ export const TagCombobox: React.FC<TagComboboxProps> = ({
                   return (
                     <li key={tag.id} role="option" aria-selected={isSelected}>
                       <button
+                        id={`${listboxId}-opt-${idx}`}
+                        ref={el => {
+                          optionRefs.current[idx] = el;
+                        }}
                         type="button"
                         onMouseDown={e => {
                           e.preventDefault();
@@ -295,6 +274,10 @@ export const TagCombobox: React.FC<TagComboboxProps> = ({
               {canCreate && (
                 <li role="option" aria-selected={false}>
                   <button
+                    id={`${listboxId}-opt-${filteredTags.length}`}
+                    ref={el => {
+                      optionRefs.current[filteredTags.length] = el;
+                    }}
                     type="button"
                     disabled={creating}
                     onMouseDown={e => {

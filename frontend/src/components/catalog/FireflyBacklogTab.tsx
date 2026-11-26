@@ -61,27 +61,47 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
   const [linkSearch, setLinkSearch] = useState('');
   const [selectedLinkProductId, setSelectedLinkProductId] = useState<number | null>(null);
   const [submittingLink, setSubmittingLink] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
 
   // Create-new-item-and-link modal state
   const [creatingFromGroup, setCreatingFromGroup] = useState<BacklogGroup | null>(null);
 
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search), 200);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const loadSeqRef = useRef(0);
+  const activeAbortRef = useRef<AbortController | null>(null);
+
   const loadStatusAndBacklog = useCallback(
     async (silent: boolean = false) => {
+      activeAbortRef.current?.abort();
+      const controller = new AbortController();
+      activeAbortRef.current = controller;
+      const reqId = ++loadSeqRef.current;
+
       if (!silent) setLoading(true);
       try {
         const [statusData, backlogData] = await Promise.all([
           api.fireflySync.getStatus(),
-          api.fireflySync.getBacklog({
-            status: statusFilter,
-            category: selectedCategory,
-            search: search.trim() || undefined,
-          }),
+          api.fireflySync.getBacklog(
+            {
+              status: statusFilter,
+              category: selectedCategory,
+              search: debouncedSearch.trim() || undefined,
+            },
+            { signal: controller.signal }
+          ),
         ]);
+        if (controller.signal.aborted || reqId !== loadSeqRef.current) return;
         setStatus(statusData);
         setBacklog(backlogData);
         setRequiresInitialFullSync(!statusData.last_full_sync_at);
         onUnassociatedCountChange?.(backlogData.total_unassociated);
       } catch (err) {
+        if (controller.signal.aborted || reqId !== loadSeqRef.current) return;
         if (!silent) {
           setBanner({
             type: 'error',
@@ -89,14 +109,20 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
           });
         }
       } finally {
-        if (!silent) setLoading(false);
+        if (reqId === loadSeqRef.current && !silent) setLoading(false);
       }
     },
-    [statusFilter, selectedCategory, search, onUnassociatedCountChange]
+    [statusFilter, selectedCategory, debouncedSearch, onUnassociatedCountChange]
   );
+
+  const loadStatusAndBacklogRef = useRef(loadStatusAndBacklog);
+  loadStatusAndBacklogRef.current = loadStatusAndBacklog;
 
   useEffect(() => {
     loadStatusAndBacklog();
+    return () => {
+      activeAbortRef.current?.abort();
+    };
   }, [loadStatusAndBacklog]);
 
   // Keep To Associate / Associated counts & rows fresh while SSE jobs run or finish
@@ -130,7 +156,7 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
         if (res.status === 'requires_full_sync') {
           setRequiresInitialFullSync(true);
         } else if (res.status === 'synced' && res.splits_upserted > 0) {
-          loadStatusAndBacklog();
+          loadStatusAndBacklogRef.current(true);
         }
       })
       .catch(() => {
@@ -199,12 +225,23 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     setLinkingGroup(group);
     setLinkSearch('');
     setSelectedLinkProductId(group.suggested_product_id ?? null);
+    setLinkError(null);
   };
+
+  useEffect(() => {
+    if (!linkingGroup) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLinkingGroup(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [linkingGroup]);
 
   const handleConfirmLink = async () => {
     if (!linkingGroup || !selectedLinkProductId) return;
     setSubmittingLink(true);
     setBanner(null);
+    setLinkError(null);
     try {
       const job = await api.fireflySync.linkBacklog(
         selectedLinkProductId,
@@ -214,10 +251,7 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
       setLinkingGroup(null);
       await Promise.all([loadStatusAndBacklog(true), Promise.resolve(onDataChanged())]);
     } catch (err) {
-      setBanner({
-        type: 'error',
-        text: err instanceof Error ? err.message : 'Failed to link transactions',
-      });
+      setLinkError(err instanceof Error ? err.message : 'Failed to link transactions');
     } finally {
       setSubmittingLink(false);
     }
@@ -446,7 +480,13 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search unassociated Firefly descriptions (e.g. mele, barilla)..."
+          placeholder={
+            statusFilter === 'linked'
+              ? 'Search associated Firefly descriptions...'
+              : statusFilter === 'ignored'
+              ? 'Search ignored Firefly descriptions...'
+              : 'Search unassociated Firefly descriptions (e.g. mele, barilla)...'
+          }
           className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
@@ -459,14 +499,18 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
           </div>
         ) : !backlog || backlog.groups.length === 0 ? (
           <div className="py-12 text-center text-xs text-slate-400">
-            No unassociated Firefly entries match this filter.
+            {statusFilter === 'linked'
+              ? 'No associated Firefly entries match this filter.'
+              : statusFilter === 'ignored'
+              ? 'No ignored Firefly entries match this filter.'
+              : 'No unassociated Firefly entries match this filter.'}
           </div>
         ) : (
           backlog.groups.map(group => {
             const groupJidSet = new Set(group.journal_ids);
             const matchingJob =
-              (group.linked_product_id && jobsByProductId[group.linked_product_id]) ||
               jobs.find(j => j.target_journal_ids.some(jid => groupJidSet.has(jid))) ||
+              (group.linked_product_id ? jobsByProductId[group.linked_product_id] : null) ||
               null;
             const rowJobActive = matchingJob ? isSyncJobActive(matchingJob) : false;
             return (
@@ -596,7 +640,14 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
 
       {/* Link to Existing Item Modal */}
       {linkingGroup && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={e => {
+            if (e.target === e.currentTarget) setLinkingGroup(null);
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
+        >
           <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl border border-slate-200 space-y-4">
             <div>
               <h3 className="text-base font-bold text-slate-900">
@@ -626,12 +677,15 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
               ) : (
                 filteredModalProducts.map(prod => {
                   const selected = selectedLinkProductId === prod.id;
+                  const activeJobForProd =
+                    jobsByProductId[prod.id] && isSyncJobActive(jobsByProductId[prod.id]);
                   return (
                     <button
                       key={prod.id}
                       type="button"
+                      disabled={activeJobForProd}
                       onClick={() => setSelectedLinkProductId(prod.id)}
-                      className={`w-full text-left px-3 py-2.5 text-xs flex items-center justify-between transition ${
+                      className={`w-full text-left px-3 py-2.5 text-xs flex items-center justify-between transition disabled:opacity-50 ${
                         selected ? 'bg-blue-50 text-blue-900' : 'hover:bg-slate-50'
                       }`}
                     >
@@ -641,14 +695,26 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
                           {prod.firefly_category_name || 'No category'}
                         </div>
                       </div>
-                      {selected && (
-                        <span className="text-[11px] font-bold text-blue-600">Selected</span>
+                      {activeJobForProd ? (
+                        <span className="text-[11px] font-semibold text-blue-600">
+                          Syncing...
+                        </span>
+                      ) : (
+                        selected && (
+                          <span className="text-[11px] font-bold text-blue-600">Selected</span>
+                        )
                       )}
                     </button>
                   );
                 })
               )}
             </div>
+
+            {linkError && (
+              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700">
+                {linkError}
+              </div>
+            )}
 
             <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
               <button

@@ -12,7 +12,10 @@ import {
   TagImplication,
 } from '../../types';
 import { TagMultiCombobox } from '../common/TagMultiCombobox';
-import { formatFireflyDescriptionPreview } from '../workbench/productUtils';
+import {
+  formatFireflyDescriptionPreview,
+  toMeasureUnit,
+} from '../workbench/productUtils';
 
 interface ItemEditorModalProps {
   isOpen: boolean;
@@ -76,7 +79,7 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
       setSaleMode(editingProduct.sale_mode || 'packaged');
       setPackCount(String(editingProduct.pack_count || 1));
       setUnitSize(String(editingProduct.unit_size || editingProduct.package_size || 1));
-      setDefaultUnit((editingProduct.default_unit as MeasureUnit) || 'g');
+      setDefaultUnit(toMeasureUnit(editingProduct.default_unit));
       setSelectedCategoryName(editingProduct.firefly_category_name || '');
       setSelectedTagIds(editingProduct.tags.map(t => t.id));
     } else {
@@ -160,6 +163,15 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
       }),
     [name, activeBrandName, saleMode, packCount, unitSize, defaultUnit]
   );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -265,7 +277,14 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={e => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
+    >
       <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center space-x-2">

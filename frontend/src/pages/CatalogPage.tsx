@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BarChart3,
   DollarSign,
@@ -44,8 +44,15 @@ export const CatalogPage: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [allItemCategories, setAllItemCategories] = useState<string[]>([]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search), 200);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   // Item Create / Edit Modal
   const [editorOpen, setEditorOpen] = useState(false);
@@ -70,30 +77,63 @@ export const CatalogPage: React.FC = () => {
   const [paidPrice, setPaidPrice] = useState('');
   const [isDiscount, setIsDiscount] = useState(false);
   const [quantity, setQuantity] = useState('1');
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const [savingPrice, setSavingPrice] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const historySeqRef = useRef(0);
+
+  const loadSeqRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const loadAll = useCallback(async (silent: boolean = false) => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const reqId = ++loadSeqRef.current;
+
     if (!silent) setLoading(true);
     try {
-      const [prods, tgs, imps, syncStatus] = await Promise.all([
-        api.products.list({
-          search: search.trim() || undefined,
-          tag_id: selectedTagId || undefined,
-          firefly_category_name: selectedCategory || undefined,
-        }),
+      const hasFilters = Boolean(
+        debouncedSearch.trim() || selectedTagId || selectedCategory
+      );
+      const [prods, tgs, imps, syncStatus, ffCategories] = await Promise.all([
+        api.products.list(
+          {
+            search: debouncedSearch.trim() || undefined,
+            tag_id: selectedTagId || undefined,
+            firefly_category_name: selectedCategory || undefined,
+          },
+          { signal: controller.signal }
+        ),
         api.tags.list(),
         api.tags.listImplications(),
         api.fireflySync.getStatus(),
+        api.categories.list().catch(() => [] as string[]),
       ]);
+      if (controller.signal.aborted || reqId !== loadSeqRef.current) return;
+
       setProducts(prods);
       setTags(tgs);
       setImplications(imps);
       setUnassociatedCount(syncStatus.unassociated_count);
+
+      setAllItemCategories(prev => {
+        const names = new Set<string>(hasFilters ? prev : []);
+        for (const cat of ffCategories) {
+          if (cat) names.add(cat);
+        }
+        for (const p of prods) {
+          if (p.firefly_category_name) names.add(p.firefly_category_name);
+        }
+        return Array.from(names).sort((a, b) => a.localeCompare(b));
+      });
     } catch (err) {
+      if (controller.signal.aborted || reqId !== loadSeqRef.current) return;
       console.error(err);
     } finally {
-      if (!silent) setLoading(false);
+      if (reqId === loadSeqRef.current && !silent) setLoading(false);
     }
-  }, [search, selectedTagId, selectedCategory]);
+  }, [debouncedSearch, selectedTagId, selectedCategory]);
 
   const {
     jobs,
@@ -109,15 +149,10 @@ export const CatalogPage: React.FC = () => {
 
   useEffect(() => {
     loadAll();
+    return () => {
+      abortControllerRef.current?.abort();
+    };
   }, [loadAll]);
-
-  const distinctItemCategories = useMemo(() => {
-    const names = new Set<string>();
-    for (const p of products) {
-      if (p.firefly_category_name) names.add(p.firefly_category_name);
-    }
-    return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [products]);
 
   const openCreateModal = () => {
     setEditingProduct(null);
@@ -186,7 +221,26 @@ export const CatalogPage: React.FC = () => {
     setQuantity('1');
     setPriceFireflyAccountId(null);
     setPriceStoreName('');
+    setPriceError(null);
     setShowPriceModal(true);
+  };
+
+  const openHistoryModal = async (product: Product) => {
+    const seq = ++historySeqRef.current;
+    setHistoryData(null);
+    setHistoryError(null);
+    setSelectedProduct(product);
+    setShowHistoryModal(true);
+    try {
+      const hist = await api.prices.getHistory(product.id);
+      if (seq !== historySeqRef.current) return;
+      setHistoryData({ analysis: hist.analysis, records: hist.records });
+    } catch (err) {
+      if (seq !== historySeqRef.current) return;
+      setHistoryError(
+        err instanceof Error ? err.message : 'Failed to load price history'
+      );
+    }
   };
 
   const handleRecordPrice = async (e: React.FormEvent) => {
@@ -195,29 +249,41 @@ export const CatalogPage: React.FC = () => {
 
     const reg = parseFloat(regularPrice) || parseFloat(paidPrice);
     const paid = parseFloat(paidPrice);
+    setSavingPrice(true);
+    setPriceError(null);
 
-    await api.prices.record({
-      product_id: selectedProduct.id,
-      firefly_account_id: priceFireflyAccountId,
-      recorded_date: new Date().toISOString().split('T')[0],
-      regular_price: reg,
-      paid_price: paid,
-      is_discount: isDiscount || paid < reg,
-      quantity: parseFloat(quantity) || 1.0,
-      unit: selectedProduct.default_unit,
-    });
+    try {
+      await api.prices.record({
+        product_id: selectedProduct.id,
+        firefly_account_id: priceFireflyAccountId,
+        recorded_date: new Date().toISOString().split('T')[0],
+        regular_price: reg,
+        paid_price: paid,
+        is_discount: isDiscount || paid < reg,
+        quantity: parseFloat(quantity) || 1.0,
+        unit: selectedProduct.default_unit,
+      });
 
-    setShowPriceModal(false);
-    openHistoryModal(selectedProduct);
+      setShowPriceModal(false);
+      await openHistoryModal(selectedProduct);
+    } catch (err) {
+      setPriceError(err instanceof Error ? err.message : 'Failed to record price');
+    } finally {
+      setSavingPrice(false);
+    }
   };
 
-  const openHistoryModal = async (product: Product) => {
-    setHistoryData(null);
-    setSelectedProduct(product);
-    setShowHistoryModal(true);
-    const hist = await api.prices.getHistory(product.id);
-    setHistoryData({ analysis: hist.analysis, records: hist.records });
-  };
+  useEffect(() => {
+    if (!showPriceModal && !showHistoryModal) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowPriceModal(false);
+        setShowHistoryModal(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showPriceModal, showHistoryModal]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -351,14 +417,14 @@ export const CatalogPage: React.FC = () => {
                 className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            {distinctItemCategories.length > 0 && (
+            {allItemCategories.length > 0 && (
               <select
                 value={selectedCategory || ''}
                 onChange={e => setSelectedCategory(e.target.value || null)}
                 className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm"
               >
                 <option value="">All Categories</option>
-                {distinctItemCategories.map(cat => (
+                {allItemCategories.map(cat => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
@@ -567,7 +633,7 @@ export const CatalogPage: React.FC = () => {
       {activeTab === 'analytics' && (
         <CatalogAnalyticsTab
           tags={tags}
-          availableCategories={distinctItemCategories}
+          availableCategories={allItemCategories}
         />
       )}
 
@@ -582,7 +648,14 @@ export const CatalogPage: React.FC = () => {
 
       {/* Log Price Modal */}
       {showPriceModal && selectedProduct && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={e => {
+            if (e.target === e.currentTarget) setShowPriceModal(false);
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
+        >
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200">
             <h2 className="text-lg font-bold text-slate-900">
               Log Price for {selectedProduct.name}
@@ -650,6 +723,12 @@ export const CatalogPage: React.FC = () => {
                 </label>
               </div>
 
+              {priceError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700">
+                  {priceError}
+                </div>
+              )}
+
               <div className="pt-3 flex justify-end space-x-2">
                 <button
                   type="button"
@@ -660,9 +739,10 @@ export const CatalogPage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold"
+                  disabled={savingPrice}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold"
                 >
-                  Save Price
+                  {savingPrice ? 'Saving...' : 'Save Price'}
                 </button>
               </div>
             </form>
@@ -672,7 +752,14 @@ export const CatalogPage: React.FC = () => {
 
       {/* Price History & Deal Analysis Modal */}
       {showHistoryModal && selectedProduct && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={e => {
+            if (e.target === e.currentTarget) setShowHistoryModal(false);
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
+        >
           <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-xl border border-slate-200 max-h-[85vh] overflow-y-auto">
             <div className="flex items-start justify-between">
               <div>
@@ -683,10 +770,17 @@ export const CatalogPage: React.FC = () => {
                 type="button"
                 onClick={() => setShowHistoryModal(false)}
                 className="text-slate-400 hover:text-slate-600 text-lg font-bold"
+                aria-label="Close modal"
               >
                 &times;
               </button>
             </div>
+
+            {historyError && (
+              <div className="mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
+                {historyError}
+              </div>
+            )}
 
             {historyData?.analysis && (
               <div className="mt-4 p-4 rounded-xl bg-slate-50 border border-slate-200">

@@ -2,12 +2,13 @@ import React, { useRef, useState } from 'react';
 import { Check, Pencil, Plus, ReceiptText, Trash2, X } from 'lucide-react';
 import { DraftItemInput, useReceiptWorkbench } from '../../context/ReceiptWorkbenchContext';
 import { DraftReceiptItem, MeasureUnit, Product, SaleMode } from '../../types';
-import { InlineProductModal } from './InlineProductModal';
-import { ProductCombobox, toMeasureUnit } from './ProductCombobox';
+import { ItemEditorModal } from '../catalog/ItemEditorModal';
+import { ProductCombobox } from './ProductCombobox';
 import {
   PriceInputMode,
   computePriceFromInput,
   formatPackagingLabel,
+  toMeasureUnit,
 } from './productUtils';
 
 export const CardStreamView: React.FC = () => {
@@ -201,7 +202,6 @@ export const CardStreamView: React.FC = () => {
             onSelect={applyProductSelection}
             onClearSelection={() => {
               setSelectedProductId(null);
-              setProductName('');
               setBrandName(undefined);
               setCategoryName(undefined);
               setEffectiveTagNames([]);
@@ -446,11 +446,11 @@ export const CardStreamView: React.FC = () => {
         )}
       </div>
 
-      <InlineProductModal
+      <ItemEditorModal
         isOpen={modalOpen}
         initialName={modalInitialName}
         onClose={() => setModalOpen(false)}
-        onCreated={created => {
+        onSaved={created => {
           setLastCreatedProduct(created);
           applyProductSelection(created);
         }}

@@ -1,14 +1,8 @@
-import React, {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Search, Tag as TagIcon, X } from 'lucide-react';
 import { api } from '../../api/client';
+import { usePortalDropdown } from '../../hooks/usePortalDropdown';
 import { Tag, TagImplication } from '../../types';
 import { getEffectiveTagsForIds } from '../workbench/productUtils';
 
@@ -29,20 +23,25 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
   onTagCreated,
   placeholder = 'Search or create Firefly tags...',
 }) => {
+  const inputId = useId();
+  const listboxId = `${inputId}-listbox`;
+
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(0);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dropdownRect, setDropdownRect] = useState<{
-    top: number;
-    left: number;
-    width: number;
-  } | null>(null);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const { containerRef, dropdownRef, dropdownRect, updatePosition } = usePortalDropdown({
+    isOpen,
+    onClose: () => setIsOpen(false),
+    minWidth: 240,
+    preferredMaxHeight: 240,
+    deps: [selectedTagIds.length],
+  });
 
   const selectedSet = useMemo(() => new Set(selectedTagIds), [selectedTagIds]);
   const tagsById = useMemo(() => new Map(tags.map(t => [t.id, t])), [tags]);
@@ -57,12 +56,14 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
     [selectedTagIds, tags, implications]
   );
 
-  const filteredOptions = useMemo(() => {
+  const renderedOptions = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return tags.filter(t => {
-      if (selectedSet.has(t.id)) return false;
-      return q ? t.name.toLowerCase().includes(q) : true;
-    });
+    return tags
+      .filter(t => {
+        if (selectedSet.has(t.id)) return false;
+        return q ? t.name.toLowerCase().includes(q) : true;
+      })
+      .slice(0, 30);
   }, [tags, selectedSet, query]);
 
   const trimmedQuery = query.trim();
@@ -75,43 +76,14 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
   );
   const canCreate = Boolean(trimmedQuery) && !exactExisting;
 
-  const updateDropdownPosition = useCallback(() => {
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    setDropdownRect({
-      top: rect.bottom + 4,
-      left: rect.left,
-      width: rect.width,
-    });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!isOpen) return;
-    updateDropdownPosition();
-    window.addEventListener('scroll', updateDropdownPosition, true);
-    window.addEventListener('resize', updateDropdownPosition);
-    return () => {
-      window.removeEventListener('scroll', updateDropdownPosition, true);
-      window.removeEventListener('resize', updateDropdownPosition);
-    };
-  }, [isOpen, updateDropdownPosition, selectedTagIds.length]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Node;
-      const inContainer = containerRef.current?.contains(target) ?? false;
-      const inDropdown = dropdownRef.current?.contains(target) ?? false;
-      if (!inContainer && !inDropdown) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
   useEffect(() => {
     setHighlightIndex(0);
-  }, [query, filteredOptions.length]);
+  }, [query, renderedOptions.length]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    optionRefs.current[highlightIndex]?.scrollIntoView({ block: 'nearest' });
+  }, [highlightIndex, isOpen]);
 
   const handleSelectTag = (tag: Tag) => {
     if (!selectedSet.has(tag.id)) {
@@ -146,10 +118,10 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
     }
   };
 
-  const totalChoices = filteredOptions.length + (canCreate ? 1 : 0);
+  const totalChoices = renderedOptions.length + (canCreate ? 1 : 0);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' || e.key === 'Tab') {
       setIsOpen(false);
       return;
     }
@@ -182,8 +154,8 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
         setIsOpen(true);
         return;
       }
-      if (highlightIndex < filteredOptions.length && filteredOptions[highlightIndex]) {
-        handleSelectTag(filteredOptions[highlightIndex]);
+      if (highlightIndex < renderedOptions.length && renderedOptions[highlightIndex]) {
+        handleSelectTag(renderedOptions[highlightIndex]);
       } else if (canCreate) {
         handleCreateMissingTag();
       } else if (exactExisting && !selectedSet.has(exactExisting.id)) {
@@ -192,31 +164,45 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
     }
   };
 
+  const activeDescendantId =
+    isOpen && totalChoices > 0 && highlightIndex < totalChoices
+      ? `${listboxId}-opt-${highlightIndex}`
+      : undefined;
+
   const dropdownMenu =
     isOpen && dropdownRect && typeof document !== 'undefined'
       ? createPortal(
           <div
             ref={dropdownRef}
+            id={listboxId}
+            role="listbox"
             style={{
               position: 'fixed',
               top: dropdownRect.top,
               left: dropdownRect.left,
               width: dropdownRect.width,
+              maxHeight: dropdownRect.maxHeight,
             }}
-            className="bg-white border border-slate-200 rounded-xl shadow-xl z-[9999] max-h-60 overflow-y-auto"
+            className="bg-white border border-slate-200 rounded-xl shadow-xl z-[9999] overflow-y-auto"
           >
-            {filteredOptions.length === 0 && !canCreate ? (
+            {renderedOptions.length === 0 && !canCreate ? (
               <div className="px-3 py-2 text-xs text-slate-400">
                 {tags.length === 0
                   ? 'Type a name to create your first Firefly tag.'
                   : 'No remaining tags match your search.'}
               </div>
             ) : (
-              filteredOptions.slice(0, 30).map((tag, idx) => {
+              renderedOptions.map((tag, idx) => {
                 const { implied } = getEffectiveTagsForIds([tag.id], tags, implications);
                 return (
                   <button
                     key={tag.id}
+                    id={`${listboxId}-opt-${idx}`}
+                    ref={el => {
+                      optionRefs.current[idx] = el;
+                    }}
+                    role="option"
+                    aria-selected={idx === highlightIndex}
                     type="button"
                     onMouseDown={e => {
                       e.preventDefault();
@@ -241,6 +227,12 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
 
             {canCreate && (
               <button
+                id={`${listboxId}-opt-${renderedOptions.length}`}
+                ref={el => {
+                  optionRefs.current[renderedOptions.length] = el;
+                }}
+                role="option"
+                aria-selected={highlightIndex === renderedOptions.length}
                 type="button"
                 disabled={creating}
                 onMouseDown={e => {
@@ -248,7 +240,7 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
                   handleCreateMissingTag();
                 }}
                 className={`w-full text-left px-3 py-2.5 text-xs font-semibold border-t border-slate-100 flex items-center text-blue-600 hover:bg-blue-50 sticky bottom-0 bg-white ${
-                  highlightIndex >= filteredOptions.length ? 'bg-blue-50' : ''
+                  highlightIndex >= renderedOptions.length ? 'bg-blue-50' : ''
                 }`}
               >
                 <Plus className="w-3.5 h-3.5 mr-1.5 shrink-0" />
@@ -268,7 +260,7 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
         ref={containerRef}
         onClick={() => {
           inputRef.current?.focus();
-          updateDropdownPosition();
+          updatePosition();
           setIsOpen(true);
         }}
         className="p-2 border border-slate-300 rounded-xl bg-white focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 transition min-h-[44px] flex flex-wrap items-center gap-1.5 cursor-text"
@@ -286,7 +278,7 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
                 handleRemoveTag(tag.id);
               }}
               className="text-blue-600 hover:text-blue-900 rounded-full p-0.5 hover:bg-blue-100"
-              title={`Remove ${tag.name}`}
+              aria-label={`Remove ${tag.name}`}
             >
               <X className="w-3 h-3" />
             </button>
@@ -297,10 +289,16 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
           <Search className="w-3.5 h-3.5 text-slate-400 mr-1.5 shrink-0" />
           <input
             ref={inputRef}
+            id={inputId}
             type="text"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={isOpen}
+            aria-controls={listboxId}
+            aria-activedescendant={activeDescendantId}
             value={query}
             onFocus={() => {
-              updateDropdownPosition();
+              updatePosition();
               setIsOpen(true);
             }}
             onChange={e => {
@@ -330,9 +328,7 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
         </div>
       )}
 
-      {error && (
-        <p className="text-xs text-rose-600 font-medium">{error}</p>
-      )}
+      {error && <p className="text-xs text-rose-600 font-medium">{error}</p>}
 
       {dropdownMenu}
     </div>

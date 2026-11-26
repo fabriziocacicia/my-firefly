@@ -1,14 +1,92 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Plus, Tag, Trash2 } from 'lucide-react';
 import { DraftItemInput, useReceiptWorkbench } from '../../context/ReceiptWorkbenchContext';
 import { DraftReceiptItem, MeasureUnit, Product } from '../../types';
-import { InlineProductModal } from './InlineProductModal';
-import { ProductCombobox, toMeasureUnit } from './ProductCombobox';
+import { ItemEditorModal } from '../catalog/ItemEditorModal';
+import { ProductCombobox } from './ProductCombobox';
 import {
   PriceInputMode,
   computePriceFromInput,
   formatPackagingLabel,
+  toMeasureUnit,
 } from './productUtils';
+
+interface CommittedNumberInputProps {
+  value: number | undefined;
+  onCommit: (next: number | undefined) => void;
+  allowEmpty?: boolean;
+  integerOnly?: boolean;
+  min?: number;
+  step?: string;
+  placeholder?: string;
+  className?: string;
+  title?: string;
+}
+
+const CommittedNumberInput: React.FC<CommittedNumberInputProps> = ({
+  value,
+  onCommit,
+  allowEmpty = false,
+  integerOnly = false,
+  min = 0,
+  step = '0.01',
+  placeholder,
+  className,
+  title,
+}) => {
+  const [draft, setDraft] = useState(value !== undefined ? String(value) : '');
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) {
+      setDraft(value !== undefined ? String(value) : '');
+    }
+  }, [value, focused]);
+
+  return (
+    <input
+      type="number"
+      step={step}
+      min={min}
+      placeholder={placeholder}
+      title={title}
+      value={draft}
+      onFocus={() => setFocused(true)}
+      onChange={e => {
+        const raw = e.target.value;
+        setDraft(raw);
+        if (raw.trim() === '') {
+          if (allowEmpty) onCommit(undefined);
+          return;
+        }
+        const parsed = parseFloat(raw);
+        if (isNaN(parsed) || parsed < min) return;
+        if (integerOnly && !Number.isInteger(parsed)) return;
+        onCommit(parsed);
+      }}
+      onBlur={() => {
+        setFocused(false);
+        if (draft.trim() === '') {
+          if (allowEmpty) {
+            onCommit(undefined);
+          } else {
+            setDraft(value !== undefined ? String(value) : '');
+          }
+          return;
+        }
+        const parsed = parseFloat(draft);
+        if (
+          isNaN(parsed) ||
+          parsed < min ||
+          (integerOnly && !Number.isInteger(parsed))
+        ) {
+          setDraft(value !== undefined ? String(value) : '');
+        }
+      }}
+      className={className}
+    />
+  );
+};
 
 export const TabularGridView: React.FC = () => {
   const { draftItems, addItem, updateItem, removeItem } = useReceiptWorkbench();
@@ -202,12 +280,14 @@ export const TabularGridView: React.FC = () => {
                 </td>
                 <td className="px-2 py-2">
                   <div className="flex items-center space-x-1">
-                    <input
-                      type="number"
+                    <CommittedNumberInput
                       step={item.sale_mode === 'loose_weight' ? 'any' : '1'}
-                      min={item.sale_mode === 'loose_weight' ? '0.001' : '1'}
+                      min={item.sale_mode === 'loose_weight' ? 0.001 : 1}
+                      integerOnly={item.sale_mode !== 'loose_weight'}
                       value={item.quantity}
-                      onChange={e => updateExistingNumber(item, 'quantity', e.target.value)}
+                      onCommit={next => {
+                        if (next !== undefined) updateExistingNumber(item, 'quantity', String(next));
+                      }}
                       className="w-full px-2 py-1 border border-slate-200 rounded-md text-xs"
                     />
                     {item.sale_mode === 'loose_weight' && (
@@ -218,24 +298,27 @@ export const TabularGridView: React.FC = () => {
                   </div>
                 </td>
                 <td className="px-2 py-2">
-                  <input
-                    type="number"
+                  <CommittedNumberInput
                     step="0.01"
-                    min="0"
+                    min={0}
                     value={item.paid_price}
-                    onChange={e => updateExistingNumber(item, 'paid_price', e.target.value)}
+                    onCommit={next => {
+                      if (next !== undefined) updateExistingNumber(item, 'paid_price', String(next));
+                    }}
                     className="w-full px-2 py-1 border border-slate-200 rounded-md text-xs font-semibold"
                     title="Unit price (€)"
                   />
                 </td>
                 <td className="px-2 py-2">
-                  <input
-                    type="number"
+                  <CommittedNumberInput
                     step="0.01"
-                    min="0"
+                    min={0}
+                    allowEmpty
                     placeholder="Same"
-                    value={item.regular_price ?? ''}
-                    onChange={e => updateExistingNumber(item, 'regular_price', e.target.value)}
+                    value={item.regular_price}
+                    onCommit={next =>
+                      updateExistingNumber(item, 'regular_price', next !== undefined ? String(next) : '')
+                    }
                     className="w-full px-2 py-1 border border-slate-200 rounded-md text-xs"
                   />
                 </td>
@@ -288,7 +371,6 @@ export const TabularGridView: React.FC = () => {
                   onSelect={applyProductToActiveRow}
                   onClearSelection={() => {
                     setSelectedProduct(null);
-                    setProductLabel('');
                   }}
                   onRequestCreate={initialName => {
                     setModalInitialName(initialName);
@@ -438,11 +520,11 @@ export const TabularGridView: React.FC = () => {
         to commit the row.
       </p>
 
-      <InlineProductModal
+      <ItemEditorModal
         isOpen={modalOpen}
         initialName={modalInitialName}
         onClose={() => setModalOpen(false)}
-        onCreated={created => {
+        onSaved={created => {
           setLastCreatedProduct(created);
           applyProductToActiveRow(created);
         }}

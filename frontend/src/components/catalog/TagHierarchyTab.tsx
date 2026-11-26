@@ -23,6 +23,7 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
   const [childTagId, setChildTagId] = useState<number | null>(null);
   const [parentTagId, setParentTagId] = useState<number | null>(null);
   const [savingEdge, setSavingEdge] = useState(false);
+  const [deletingEdgeKey, setDeletingEdgeKey] = useState<string | null>(null);
 
   const [banner, setBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
@@ -98,6 +99,8 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
   };
 
   const handleDeleteImplication = async (childId: number, parentId: number) => {
+    const key = `${childId}-${parentId}`;
+    setDeletingEdgeKey(key);
     setBanner(null);
     try {
       await api.tags.deleteImplication(childId, parentId);
@@ -107,6 +110,8 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
         type: 'error',
         text: err instanceof Error ? err.message : 'Failed to remove implication rule',
       });
+    } finally {
+      setDeletingEdgeKey(null);
     }
   };
 
@@ -263,10 +268,13 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
                       </div>
                       <button
                         type="button"
+                        disabled={
+                          deletingEdgeKey === `${imp.child_tag_id}-${imp.parent_tag_id}`
+                        }
                         onClick={() =>
                           handleDeleteImplication(imp.child_tag_id, imp.parent_tag_id)
                         }
-                        className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50"
+                        className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 disabled:opacity-40"
                         title="Remove rule"
                       >
                         <Trash2 className="w-3.5 h-3.5" />

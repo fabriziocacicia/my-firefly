@@ -33,11 +33,14 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
       message = errorBody.detail;
     } else if (Array.isArray(errorBody?.detail)) {
       message = errorBody.detail
-        .map((e: any) => {
+        .map((e: unknown) => {
           if (!e) return '';
           if (typeof e === 'string') return e;
-          if (typeof e.msg === 'string') return e.msg;
-          if (typeof e.detail === 'string') return e.detail;
+          if (typeof e === 'object') {
+            const obj = e as Record<string, unknown>;
+            if (typeof obj.msg === 'string') return obj.msg;
+            if (typeof obj.detail === 'string') return obj.detail;
+          }
           return JSON.stringify(e);
         })
         .filter(Boolean)
@@ -144,12 +147,15 @@ export const api = {
   },
 
   products: {
-    list: (params?: {
-      search?: string;
-      brand_id?: number;
-      tag_id?: number;
-      firefly_category_name?: string;
-    }) => {
+    list: (
+      params?: {
+        search?: string;
+        brand_id?: number;
+        tag_id?: number;
+        firefly_category_name?: string;
+      },
+      options?: { signal?: AbortSignal }
+    ) => {
       const searchParams = new URLSearchParams();
       if (params?.search) searchParams.append('search', params.search);
       if (params?.brand_id) searchParams.append('brand_id', params.brand_id.toString());
@@ -157,7 +163,9 @@ export const api = {
       if (params?.firefly_category_name) {
         searchParams.append('firefly_category_name', params.firefly_category_name);
       }
-      return request<Product[]>(`/products/?${searchParams.toString()}`);
+      return request<Product[]>(`/products/?${searchParams.toString()}`, {
+        signal: options?.signal,
+      });
     },
     get: (id: number) => request<Product>(`/products/${id}`),
     create: (data: {
@@ -207,7 +215,10 @@ export const api = {
       request<SyncTransactionsResponse>(`/firefly-sync/transactions?mode=${mode}`, {
         method: 'POST',
       }),
-    getBacklog: (params?: { status?: BacklogStatusFilter; category?: string | null; search?: string }) => {
+    getBacklog: (
+      params?: { status?: BacklogStatusFilter; category?: string | null; search?: string },
+      options?: { signal?: AbortSignal }
+    ) => {
       const searchParams = new URLSearchParams();
       if (params?.status) {
         searchParams.append('status', params.status);
@@ -220,7 +231,8 @@ export const api = {
       }
       const qs = searchParams.toString();
       return request<BacklogResponse>(
-        qs ? `/firefly-sync/backlog?${qs}` : '/firefly-sync/backlog'
+        qs ? `/firefly-sync/backlog?${qs}` : '/firefly-sync/backlog',
+        { signal: options?.signal }
       );
     },
     linkBacklog: (product_id: number, transaction_journal_ids: number[]) =>

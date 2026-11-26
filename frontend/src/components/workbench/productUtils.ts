@@ -1,6 +1,13 @@
-import { Product, SaleMode, Tag, TagImplication } from '../../types';
+import { MeasureUnit, Product, SaleMode, Tag, TagImplication } from '../../types';
 
 export type PriceInputMode = 'unit' | 'total';
+
+const MEASURE_UNITS = new Set<MeasureUnit>(['g', 'kg', 'ml', 'l', 'pcs']);
+
+export function toMeasureUnit(raw?: string | null): MeasureUnit {
+  const clean = (raw || '').trim().toLowerCase() as MeasureUnit;
+  return MEASURE_UNITS.has(clean) ? clean : 'g';
+}
 
 export function formatPackagingLabel(
   saleMode: SaleMode | undefined,
