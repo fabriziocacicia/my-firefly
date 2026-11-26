@@ -343,3 +343,58 @@ export interface ProductPriceHistoryResponse {
   analysis: DealAnalysis | null;
   records: PriceRecord[];
 }
+
+export interface FireflySyncStatus {
+  last_full_sync_at?: string | null;
+  last_incremental_sync_at?: string | null;
+  high_watermark_date?: string | null;
+  total_cached_splits: number;
+  unassociated_count: number;
+  ignored_count: number;
+}
+
+export interface SyncTransactionsResponse {
+  status: 'synced' | 'skipped_cooldown' | 'requires_full_sync';
+  mode: 'incremental' | 'full';
+  splits_upserted: number;
+  last_full_sync_at?: string | null;
+  last_incremental_sync_at?: string | null;
+  high_watermark_date?: string | null;
+}
+
+export interface CategoryBacklogCount {
+  category_name: string | null;
+  count: number;
+}
+
+export interface BacklogGroup {
+  normalized_description: string;
+  sample_description: string;
+  category_name: string | null;
+  occurrence_count: number;
+  total_amount: number;
+  latest_date: string;
+  sample_stores: string[];
+  journal_ids: number[];
+  suggested_product_id?: number | null;
+  suggested_product_name?: string | null;
+}
+
+export interface BacklogResponse {
+  total_unassociated: number;
+  ignored_count: number;
+  category_counts: CategoryBacklogCount[];
+  groups: BacklogGroup[];
+}
+
+export interface FailedTransactionRewrite {
+  firefly_transaction_id: number;
+  error: string;
+}
+
+export interface RewriteResultResponse {
+  linked_splits: number;
+  updated_transactions: number;
+  updated_splits: number;
+  failed_transactions: FailedTransactionRewrite[];
+}

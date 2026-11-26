@@ -1,6 +1,7 @@
 import {
   Company, Product, Brand, Tag, TagImplication, TagSyncResponse, FireflyCategoryBrief,
-  PriceRecord, SaleMode,
+  PriceRecord, SaleMode, FireflySyncStatus, SyncTransactionsResponse,
+  BacklogResponse, RewriteResultResponse,
   FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount, FireflyRevenueAccount,
   AccountMetadata, AccountMetadataUpdate, AssetAccountMetadataUpdate,
   VoucherRechargeRequest, VoucherRechargeResponse,
@@ -190,9 +191,44 @@ export const api = {
         notes?: string | null;
       }
     ) => request<Product>(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    propagateFirefly: (id: number) =>
+      request<RewriteResultResponse>(`/products/${id}/propagate-firefly`, {
+        method: 'POST',
+      }),
     listBrands: () => request<Brand[]>('/products/brands'),
     createBrand: (data: { name: string; is_private_label?: boolean }) =>
       request<Brand>('/products/brands', { method: 'POST', body: JSON.stringify(data) }),
+  },
+
+  fireflySync: {
+    getStatus: () => request<FireflySyncStatus>('/firefly-sync/status'),
+    syncTransactions: (mode: 'incremental' | 'full' = 'incremental') =>
+      request<SyncTransactionsResponse>(`/firefly-sync/transactions?mode=${mode}`, {
+        method: 'POST',
+      }),
+    getBacklog: (params?: { category?: string | null; search?: string }) => {
+      const searchParams = new URLSearchParams();
+      if (params?.category !== undefined && params.category !== null) {
+        searchParams.append('category', params.category);
+      }
+      if (params?.search) {
+        searchParams.append('search', params.search);
+      }
+      const qs = searchParams.toString();
+      return request<BacklogResponse>(
+        qs ? `/firefly-sync/backlog?${qs}` : '/firefly-sync/backlog'
+      );
+    },
+    linkBacklog: (product_id: number, transaction_journal_ids: number[]) =>
+      request<RewriteResultResponse>('/firefly-sync/backlog/link', {
+        method: 'POST',
+        body: JSON.stringify({ product_id, transaction_journal_ids }),
+      }),
+    ignoreBacklog: (transaction_journal_ids: number[], ignored: boolean = true) =>
+      request<{ updated_count: number; ignored: boolean }>('/firefly-sync/backlog/ignore', {
+        method: 'POST',
+        body: JSON.stringify({ transaction_journal_ids, ignored }),
+      }),
   },
 
   prices: {
