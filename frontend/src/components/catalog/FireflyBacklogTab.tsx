@@ -19,7 +19,7 @@ import { ItemEditorModal } from './ItemEditorModal';
 
 interface FireflyBacklogTabProps {
   products: Product[];
-  onDataChanged: () => void;
+  onDataChanged: () => void | Promise<void>;
   onUnassociatedCountChange?: (count: number) => void;
 }
 
@@ -476,19 +476,27 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
         onClose={() => setCreatingFromGroup(null)}
         onSaved={async created => {
           const targetGroup = creatingFromGroup;
-          setCreatingFromGroup(null);
           if (!targetGroup) return;
+          setBanner(null);
           try {
             const res = await api.fireflySync.linkBacklog(
               created.id,
               targetGroup.journal_ids
             );
             await Promise.all([loadStatusAndBacklog(), Promise.resolve(onDataChanged())]);
-            setBanner({
-              type: 'success',
-              text: `Created "${created.name}" and linked ${res.linked_splits} Firefly split(s).`,
-            });
+            if (res.failed_transactions.length > 0) {
+              setBanner({
+                type: 'error',
+                text: `Created "${created.name}" and linked ${res.linked_splits} split(s), but ${res.failed_transactions.length} Firefly transaction(s) failed to update.`,
+              });
+            } else {
+              setBanner({
+                type: 'success',
+                text: `Created "${created.name}" and linked ${res.linked_splits} Firefly split(s).`,
+              });
+            }
           } catch (err) {
+            await Promise.all([loadStatusAndBacklog(), Promise.resolve(onDataChanged())]);
             setBanner({
               type: 'error',
               text:

@@ -20,7 +20,7 @@ interface ItemEditorModalProps {
   initialCategoryName?: string | null;
   initialTagNames?: string[];
   onClose: () => void;
-  onSaved: (product: Product, wasEdited: boolean) => void;
+  onSaved: (product: Product, wasEdited: boolean) => void | Promise<void>;
 }
 
 export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
@@ -216,7 +216,7 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
           firefly_category_name: selectedCategoryName.trim() || null,
           tag_ids: selectedTagIds,
         });
-        onSaved(updated, true);
+        await onSaved(updated, true);
         if ((updated.affected_firefly_count ?? 0) > 0) {
           setPendingPropagationProduct(updated);
         } else {
@@ -234,7 +234,7 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
           firefly_category_name: selectedCategoryName.trim() || null,
           tag_ids: selectedTagIds,
         });
-        onSaved(created, false);
+        await onSaved(created, false);
         onClose();
       }
     } catch (err) {

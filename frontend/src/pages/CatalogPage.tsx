@@ -525,9 +525,7 @@ export const CatalogPage: React.FC = () => {
         isOpen={editorOpen}
         editingProduct={editingProduct}
         onClose={() => setEditorOpen(false)}
-        onSaved={() => {
-          loadAll();
-        }}
+        onSaved={() => loadAll()}
       />
 
       {/* Log Price Modal */}
