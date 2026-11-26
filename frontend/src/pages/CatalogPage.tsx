@@ -20,8 +20,10 @@ import { StoreCombobox } from '../components/common/StoreCombobox';
 import { CatalogAnalyticsTab } from '../components/catalog/CatalogAnalyticsTab';
 import { FireflyBacklogTab } from '../components/catalog/FireflyBacklogTab';
 import { ItemEditorModal } from '../components/catalog/ItemEditorModal';
+import { SyncJobBadge } from '../components/catalog/SyncJobBadge';
 import { TagHierarchyTab } from '../components/catalog/TagHierarchyTab';
 import { formatProductBadge } from '../components/workbench/productUtils';
+import { isSyncJobActive, useFireflySyncJobs } from '../hooks/useFireflySyncJobs';
 import {
   DealAnalysis,
   PriceRecord,
@@ -68,8 +70,8 @@ export const CatalogPage: React.FC = () => {
   const [isDiscount, setIsDiscount] = useState(false);
   const [quantity, setQuantity] = useState('1');
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
+  const loadAll = useCallback(async (silent: boolean = false) => {
+    if (!silent) setLoading(true);
     try {
       const [prods, tgs, imps, syncStatus] = await Promise.all([
         api.products.list({
@@ -88,9 +90,21 @@ export const CatalogPage: React.FC = () => {
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [search, selectedTagId, selectedCategory]);
+
+  const {
+    jobs,
+    activeJobs,
+    jobsByProductId,
+    registerJob,
+    dismissJob,
+  } = useFireflySyncJobs({
+    onJobsChanged: async () => {
+      await loadAll(true);
+    },
+  });
 
   useEffect(() => {
     loadAll();
@@ -127,14 +141,15 @@ export const CatalogPage: React.FC = () => {
     setCatalogNotice(null);
     setCatalogError(null);
     try {
-      const res = await api.products.propagateFirefly(prod.id);
+      const job = await api.products.propagateFirefly(prod.id);
+      registerJob(job);
       setCatalogNotice(
-        `Updated ${res.updated_transactions} Firefly transaction(s) for "${prod.name}".`
+        `Started background Firefly sync for "${prod.name}" (${job.total_transactions} transaction(s)).`
       );
-      await loadAll();
+      await loadAll(true);
     } catch (err) {
       setCatalogError(
-        err instanceof Error ? err.message : 'Failed to update Firefly transactions'
+        err instanceof Error ? err.message : 'Failed to start Firefly sync job'
       );
     } finally {
       setPropagatingId(null);
@@ -263,6 +278,12 @@ export const CatalogPage: React.FC = () => {
           >
             {unassociatedCount}
           </span>
+          {activeJobs.length > 0 && (
+            <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+              <RefreshCw className="w-2.5 h-2.5 mr-1 animate-spin" />
+              {activeJobs.length}
+            </span>
+          )}
         </button>
         <button
           type="button"
@@ -385,6 +406,8 @@ export const CatalogPage: React.FC = () => {
               products.map(p => {
                 const directIds = new Set(p.tags.map(t => t.id));
                 const effective = p.effective_tags && p.effective_tags.length > 0 ? p.effective_tags : p.tags;
+                const itemJob = jobsByProductId[p.id];
+                const itemJobActive = itemJob ? isSyncJobActive(itemJob) : false;
                 return (
                   <div
                     key={p.id}
@@ -426,10 +449,14 @@ export const CatalogPage: React.FC = () => {
                           </button>
                           <button
                             type="button"
-                            disabled={deletingId === p.id}
+                            disabled={deletingId === p.id || itemJobActive}
                             onClick={() => handleDeleteItem(p)}
                             className="p-2 rounded-lg bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-600 disabled:opacity-40"
-                            title="Delete item"
+                            title={
+                              itemJobActive
+                                ? 'Cannot delete while Firefly sync job is running'
+                                : 'Delete item'
+                            }
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -451,6 +478,12 @@ export const CatalogPage: React.FC = () => {
                           </span>
                         ))}
                       </div>
+
+                      {itemJob && (
+                        <div className="mt-3">
+                          <SyncJobBadge job={itemJob} onDismiss={dismissJob} compact />
+                        </div>
+                      )}
                     </div>
 
                     <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
@@ -466,17 +499,17 @@ export const CatalogPage: React.FC = () => {
                         {(p.affected_firefly_count ?? 0) > 0 && (
                           <button
                             type="button"
-                            disabled={propagatingId === p.id}
+                            disabled={propagatingId === p.id || itemJobActive}
                             onClick={() => handlePropagateItem(p)}
-                            className="inline-flex items-center text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
+                            className="inline-flex items-center text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
                             title="Push current item name, category & tags to linked Firefly transactions"
                           >
                             <RefreshCw
                               className={`w-3 h-3 mr-1 ${
-                                propagatingId === p.id ? 'animate-spin' : ''
+                                propagatingId === p.id || itemJobActive ? 'animate-spin' : ''
                               }`}
                             />
-                            Sync {p.affected_firefly_count} FF
+                            {itemJobActive ? 'Syncing...' : `Sync ${p.affected_firefly_count} FF`}
                           </button>
                         )}
                       </div>
@@ -500,7 +533,11 @@ export const CatalogPage: React.FC = () => {
       {activeTab === 'backlog' && (
         <FireflyBacklogTab
           products={products}
-          onDataChanged={loadAll}
+          jobs={jobs}
+          jobsByProductId={jobsByProductId}
+          onJobStarted={registerJob}
+          onDismissJob={dismissJob}
+          onDataChanged={() => loadAll(true)}
           onUnassociatedCountChange={setUnassociatedCount}
         />
       )}
@@ -509,7 +546,7 @@ export const CatalogPage: React.FC = () => {
         <TagHierarchyTab
           tags={tags}
           implications={implications}
-          onRefresh={loadAll}
+          onRefresh={() => loadAll(true)}
         />
       )}
 
@@ -525,7 +562,8 @@ export const CatalogPage: React.FC = () => {
         isOpen={editorOpen}
         editingProduct={editingProduct}
         onClose={() => setEditorOpen(false)}
-        onSaved={() => loadAll()}
+        onSaved={() => loadAll(true)}
+        onPropagationJobStarted={registerJob}
       />
 
       {/* Log Price Modal */}

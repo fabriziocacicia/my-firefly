@@ -399,11 +399,35 @@ export interface FailedTransactionRewrite {
   error: string;
 }
 
-export interface RewriteResultResponse {
-  linked_splits: number;
+export type FireflySyncJobStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'completed_with_errors'
+  | 'failed';
+
+export type FireflySyncJobType = 'backlog_link' | 'product_propagate';
+
+export interface FireflySyncJob {
+  id: number;
+  job_type: FireflySyncJobType;
+  product_id: number;
+  product_name: string;
+  status: FireflySyncJobStatus;
+  total_transactions: number;
+  processed_transactions: number;
   updated_transactions: number;
+  total_splits: number;
+  linked_splits: number;
   updated_splits: number;
+  failed_count: number;
   failed_transactions: FailedTransactionRewrite[];
+  target_journal_ids: number[];
+  error_message?: string | null;
+  dismissed_at?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 export interface ItemAnalyticsSummary {

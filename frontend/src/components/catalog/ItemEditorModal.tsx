@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import {
   Brand,
   FireflyCategoryBrief,
+  FireflySyncJob,
   MeasureUnit,
   Product,
   SaleMode,
@@ -21,6 +22,7 @@ interface ItemEditorModalProps {
   initialTagNames?: string[];
   onClose: () => void;
   onSaved: (product: Product, wasEdited: boolean) => void | Promise<void>;
+  onPropagationJobStarted?: (job: FireflySyncJob) => void;
 }
 
 export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
@@ -31,6 +33,7 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
   initialTagNames = [],
   onClose,
   onSaved,
+  onPropagationJobStarted,
 }) => {
   const [name, setName] = useState('');
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -249,19 +252,13 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
     setPropagating(true);
     setError(null);
     try {
-      const res = await api.products.propagateFirefly(pendingPropagationProduct.id);
-      if (res.failed_transactions.length > 0) {
-        const firstErr = res.failed_transactions[0];
-        setError(
-          `Updated ${res.updated_transactions} transaction(s), ${res.failed_transactions.length} failed (tx #${firstErr.firefly_transaction_id}: ${firstErr.error}).`
-        );
-      } else {
-        setPropagationNotice(
-          `Updated ${res.updated_transactions} linked Firefly transaction(s) (${res.updated_splits} splits).`
-        );
-      }
+      const job = await api.products.propagateFirefly(pendingPropagationProduct.id);
+      onPropagationJobStarted?.(job);
+      setPropagationNotice(
+        `Started background Firefly sync for ${job.total_transactions} linked transaction(s). You can track live progress on the item card or Associated tab.`
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update Firefly III');
+      setError(err instanceof Error ? err.message : 'Failed to start Firefly sync');
     } finally {
       setPropagating(false);
     }

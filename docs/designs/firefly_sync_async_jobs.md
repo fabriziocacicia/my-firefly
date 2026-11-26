@@ -1,6 +1,6 @@
 # Spec Delta: Asynchronous Firefly Sync Jobs & Progress Tracking
 
-* **Status:** Approved (Implementing)
+* **Status:** Implemented
 * **Date:** 2026-11-26
 * **Base Spec:** [`canonical_items_hierarchical_tags_and_firefly_sync.md`](./canonical_items_hierarchical_tags_and_firefly_sync.md)
 

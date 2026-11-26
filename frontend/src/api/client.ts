@@ -1,7 +1,7 @@
 import {
   Company, Product, Brand, Tag, TagImplication, TagSyncResponse, FireflyCategoryBrief,
   PriceRecord, SaleMode, FireflySyncStatus, SyncTransactionsResponse,
-  BacklogResponse, BacklogStatusFilter, RewriteResultResponse, TagAnalyticsResponse,
+  BacklogResponse, BacklogStatusFilter, FireflySyncJob, TagAnalyticsResponse,
   FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount, FireflyRevenueAccount,
   AccountMetadata, AccountMetadataUpdate, AssetAccountMetadataUpdate,
   VoucherRechargeRequest, VoucherRechargeResponse,
@@ -192,7 +192,7 @@ export const api = {
       }
     ) => request<Product>(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     propagateFirefly: (id: number) =>
-      request<RewriteResultResponse>(`/products/${id}/propagate-firefly`, {
+      request<FireflySyncJob>(`/products/${id}/propagate-firefly`, {
         method: 'POST',
       }),
     delete: (id: number) => request<void>(`/products/${id}`, { method: 'DELETE' }),
@@ -224,10 +224,20 @@ export const api = {
       );
     },
     linkBacklog: (product_id: number, transaction_journal_ids: number[]) =>
-      request<RewriteResultResponse>('/firefly-sync/backlog/link', {
+      request<FireflySyncJob>('/firefly-sync/backlog/link', {
         method: 'POST',
         body: JSON.stringify({ product_id, transaction_journal_ids }),
       }),
+    listJobs: (includeDismissed: boolean = false) =>
+      request<FireflySyncJob[]>(
+        `/firefly-sync/jobs?include_dismissed=${includeDismissed ? 'true' : 'false'}`
+      ),
+    getJob: (jobId: number) => request<FireflySyncJob>(`/firefly-sync/jobs/${jobId}`),
+    dismissJob: (jobId: number) =>
+      request<FireflySyncJob>(`/firefly-sync/jobs/${jobId}/dismiss`, {
+        method: 'POST',
+      }),
+    jobsStreamUrl: `${BASE_URL}/firefly-sync/jobs/stream`,
     ignoreBacklog: (transaction_journal_ids: number[], ignored: boolean = true) =>
       request<{ updated_count: number; ignored: boolean }>('/firefly-sync/backlog/ignore', {
         method: 'POST',
