@@ -25,6 +25,8 @@ class PriceRecordBase(SQLModel):
 
     # External reference
     firefly_transaction_id: Optional[int] = Field(default=None, index=True)
+    transaction_journal_id: Optional[int] = Field(default=None, index=True, unique=True)
+    source_type: str = Field(default="receipt")  # "receipt" | "manual" | "firefly_sync"
     notes: Optional[str] = Field(default=None)
 
 

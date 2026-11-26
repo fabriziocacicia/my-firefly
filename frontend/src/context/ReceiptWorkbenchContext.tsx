@@ -283,10 +283,14 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
   );
 
   const addItem = useCallback((item: DraftItemInput) => {
+    const lineTotal =
+      item.total_price !== undefined
+        ? round2(item.total_price)
+        : round2(item.quantity * item.paid_price);
     const newItem: DraftReceiptItem = {
       ...item,
       temp_id: createTempId(),
-      line_total: round2(item.quantity * item.paid_price),
+      line_total: lineTotal,
     };
     setDraftItems(prev => [...prev, newItem]);
   }, []);
@@ -296,9 +300,19 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
       prev.map(existing => {
         if (existing.temp_id !== tempId) return existing;
         const merged = { ...existing, ...updates };
+        if (
+          ('quantity' in updates || 'paid_price' in updates) &&
+          updates.total_price === undefined
+        ) {
+          merged.total_price = undefined;
+        }
+        const lineTotal =
+          merged.total_price !== undefined
+            ? round2(merged.total_price)
+            : round2(merged.quantity * merged.paid_price);
         return {
           ...merged,
-          line_total: round2(merged.quantity * merged.paid_price),
+          line_total: lineTotal,
         };
       })
     );
@@ -407,59 +421,100 @@ export const ReceiptWorkbenchProvider: React.FC<{ children: React.ReactNode }> =
     (paymentMode !== 'split_vouchers' ||
       (Boolean(voucherAccountId) && voucherCount > 0 && !voucherLimitExceeded));
 
-  const value: ReceiptWorkbenchContextValue = {
-    fireflyAccountId,
-    setFireflyAccountId,
-    storeName,
-    setStoreName,
-    purchaseDate,
-    setPurchaseDate,
-    purchaseTime,
-    setPurchaseTime,
-    basketDiscount,
-    setBasketDiscount,
-    notes,
-    setNotes,
-    sourceAccountId,
-    setSourceAccountId,
-    paymentMode,
-    setPaymentMode,
-    voucherAccountId,
-    setVoucherAccountId,
-    voucherCount,
-    setVoucherCount,
-    voucherUnitValue,
-    setVoucherUnitValue,
-    draftItems,
-    savedReceiptId,
-    setSavedReceiptId,
-    activeMode,
-    setActiveMode,
-    attachedFile,
-    setAttachedFile,
-    isHydrated,
-    addItem,
-    updateItem,
-    removeItem,
-    clearDraft,
-    computedItemsSum,
-    calculatedSum,
-    canSaveLocally,
-    canPushToFirefly,
-    assetAccounts,
-    assetAccountsError,
-    refreshAssetAccounts,
-    mealVoucherAccounts,
-    selectedSourceAccount,
-    selectedVoucherAccount,
-    usableVouchers,
-    maxByTotal,
-    maxVouchers,
-    voucherCovered,
-    cardRemainder,
-    requiresSourceAccount,
-    voucherLimitExceeded,
-  };
+  const value = useMemo<ReceiptWorkbenchContextValue>(
+    () => ({
+      fireflyAccountId,
+      setFireflyAccountId,
+      storeName,
+      setStoreName,
+      purchaseDate,
+      setPurchaseDate,
+      purchaseTime,
+      setPurchaseTime,
+      basketDiscount,
+      setBasketDiscount,
+      notes,
+      setNotes,
+      sourceAccountId,
+      setSourceAccountId,
+      paymentMode,
+      setPaymentMode,
+      voucherAccountId,
+      setVoucherAccountId,
+      voucherCount,
+      setVoucherCount,
+      voucherUnitValue,
+      setVoucherUnitValue,
+      draftItems,
+      savedReceiptId,
+      setSavedReceiptId,
+      activeMode,
+      setActiveMode,
+      attachedFile,
+      setAttachedFile,
+      isHydrated,
+      addItem,
+      updateItem,
+      removeItem,
+      clearDraft,
+      computedItemsSum,
+      calculatedSum,
+      canSaveLocally,
+      canPushToFirefly,
+      assetAccounts,
+      assetAccountsError,
+      refreshAssetAccounts,
+      mealVoucherAccounts,
+      selectedSourceAccount,
+      selectedVoucherAccount,
+      usableVouchers,
+      maxByTotal,
+      maxVouchers,
+      voucherCovered,
+      cardRemainder,
+      requiresSourceAccount,
+      voucherLimitExceeded,
+    }),
+    [
+      fireflyAccountId,
+      storeName,
+      purchaseDate,
+      purchaseTime,
+      basketDiscount,
+      notes,
+      sourceAccountId,
+      paymentMode,
+      voucherAccountId,
+      voucherCount,
+      voucherUnitValue,
+      draftItems,
+      savedReceiptId,
+      activeMode,
+      attachedFile,
+      isHydrated,
+      addItem,
+      updateItem,
+      removeItem,
+      clearDraft,
+      computedItemsSum,
+      calculatedSum,
+      canSaveLocally,
+      canPushToFirefly,
+      assetAccounts,
+      assetAccountsError,
+      refreshAssetAccounts,
+      mealVoucherAccounts,
+      selectedSourceAccount,
+      selectedVoucherAccount,
+      usableVouchers,
+      maxByTotal,
+      maxVouchers,
+      voucherCovered,
+      cardRemainder,
+      requiresSourceAccount,
+      voucherLimitExceeded,
+    ]
+  );
 
   return (
     <ReceiptWorkbenchContext.Provider value={value}>

@@ -1,9 +1,15 @@
 import React, { useRef, useState } from 'react';
 import { Check, Pencil, Plus, ReceiptText, Trash2, X } from 'lucide-react';
 import { DraftItemInput, useReceiptWorkbench } from '../../context/ReceiptWorkbenchContext';
-import { DraftReceiptItem, MeasureUnit, Product } from '../../types';
-import { InlineProductModal } from './InlineProductModal';
-import { MEASURE_UNITS, ProductCombobox, toMeasureUnit } from './ProductCombobox';
+import { DraftReceiptItem, MeasureUnit, Product, SaleMode } from '../../types';
+import { ItemEditorModal } from '../catalog/ItemEditorModal';
+import { ProductCombobox } from './ProductCombobox';
+import {
+  PriceInputMode,
+  computePriceFromInput,
+  formatPackagingLabel,
+  toMeasureUnit,
+} from './productUtils';
 
 export const CardStreamView: React.FC = () => {
   const { draftItems, addItem, updateItem, removeItem } = useReceiptWorkbench();
@@ -12,10 +18,17 @@ export const CardStreamView: React.FC = () => {
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [productName, setProductName] = useState('');
   const [brandName, setBrandName] = useState<string | undefined>(undefined);
-  const [qty, setQty] = useState('1');
+  const [saleMode, setSaleMode] = useState<SaleMode>('packaged');
+  const [packCount, setPackCount] = useState(1);
+  const [unitSize, setUnitSize] = useState(1);
   const [unit, setUnit] = useState<MeasureUnit>('pcs');
-  const [pkgSize, setPkgSize] = useState('1');
-  const [paidPrice, setPaidPrice] = useState('');
+  const [pkgSize, setPkgSize] = useState(1);
+  const [categoryName, setCategoryName] = useState<string | null | undefined>(undefined);
+  const [effectiveTagNames, setEffectiveTagNames] = useState<string[]>([]);
+
+  const [qty, setQty] = useState('1');
+  const [priceMode, setPriceMode] = useState<PriceInputMode>('unit');
+  const [priceValue, setPriceValue] = useState('');
   const [regularPrice, setRegularPrice] = useState('');
   const [isDiscount, setIsDiscount] = useState(false);
 
@@ -33,10 +46,16 @@ export const CardStreamView: React.FC = () => {
     setSelectedProductId(null);
     setProductName('');
     setBrandName(undefined);
-    setQty('1');
+    setSaleMode('packaged');
+    setPackCount(1);
+    setUnitSize(1);
     setUnit('pcs');
-    setPkgSize('1');
-    setPaidPrice('');
+    setPkgSize(1);
+    setCategoryName(undefined);
+    setEffectiveTagNames([]);
+    setQty('1');
+    setPriceMode('unit');
+    setPriceValue('');
     setRegularPrice('');
     setIsDiscount(false);
     setFormError(null);
@@ -46,8 +65,14 @@ export const CardStreamView: React.FC = () => {
     setSelectedProductId(prod.id);
     setProductName(prod.name);
     setBrandName(prod.brand?.name);
+    setSaleMode(prod.sale_mode || 'packaged');
+    setPackCount(prod.pack_count || 1);
+    setUnitSize(prod.unit_size || prod.package_size || 1);
     setUnit(toMeasureUnit(prod.default_unit));
-    setPkgSize(String(prod.package_size > 0 ? prod.package_size : 1));
+    setPkgSize(prod.package_size > 0 ? prod.package_size : 1);
+    setCategoryName(prod.firefly_category_name);
+    const eff = prod.effective_tags && prod.effective_tags.length > 0 ? prod.effective_tags : prod.tags;
+    setEffectiveTagNames(eff.map(t => t.name));
     setQty('1');
     setFormError(null);
     window.setTimeout(() => qtyInputRef.current?.focus(), 0);
@@ -58,10 +83,21 @@ export const CardStreamView: React.FC = () => {
     setSelectedProductId(item.product_id);
     setProductName(item.product_name);
     setBrandName(item.brand_name);
-    setQty(String(item.quantity));
+    setSaleMode(item.sale_mode || 'packaged');
+    setPackCount(item.pack_count || 1);
+    setUnitSize(item.unit_size || item.package_size || 1);
     setUnit(item.unit);
-    setPkgSize(String(item.package_size));
-    setPaidPrice(String(item.paid_price));
+    setPkgSize(item.package_size);
+    setCategoryName(item.firefly_category_name);
+    setEffectiveTagNames(item.effective_tag_names || []);
+    setQty(String(item.quantity));
+    if (item.total_price !== undefined) {
+      setPriceMode('total');
+      setPriceValue(String(item.total_price));
+    } else {
+      setPriceMode('unit');
+      setPriceValue(String(item.paid_price));
+    }
     setRegularPrice(item.regular_price !== undefined ? String(item.regular_price) : '');
     setIsDiscount(item.is_discount);
     setFormError(null);
@@ -70,27 +106,27 @@ export const CardStreamView: React.FC = () => {
   const handleSubmitCard = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!selectedProductId || !productName) {
-      setFormError('Select or create a product before adding.');
+      setFormError('Select or create an item before adding.');
       productInputRef.current?.focus();
       return;
     }
     const parsedQty = parseFloat(qty);
-    const parsedPkg = parseFloat(pkgSize);
-    const parsedPaid = parseFloat(paidPrice);
-    const parsedReg = regularPrice.trim() !== '' ? parseFloat(regularPrice) : undefined;
-
     if (isNaN(parsedQty) || parsedQty <= 0) {
-      setFormError('Quantity must be greater than zero.');
+      setFormError('Quantity / weight must be greater than zero.');
       return;
     }
-    if (isNaN(parsedPkg) || parsedPkg <= 0) {
-      setFormError('Package size must be greater than zero.');
+    if (saleMode !== 'loose_weight' && !Number.isInteger(parsedQty)) {
+      setFormError('Packaged items require a whole pack quantity (1, 2, ...).');
       return;
     }
-    if (isNaN(parsedPaid) || parsedPaid < 0) {
-      setFormError('Enter a valid paid price.');
+
+    const computed = computePriceFromInput(priceMode, priceValue, parsedQty);
+    if (!computed) {
+      setFormError('Enter a valid price.');
       return;
     }
+
+    const parsedReg = regularPrice.trim() !== '' ? parseFloat(regularPrice) : undefined;
     if (parsedReg !== undefined && (isNaN(parsedReg) || parsedReg < 0)) {
       setFormError('Regular price must be >= 0.');
       return;
@@ -100,13 +136,19 @@ export const CardStreamView: React.FC = () => {
       product_id: selectedProductId,
       product_name: productName,
       brand_name: brandName,
+      sale_mode: saleMode,
+      pack_count: packCount,
+      unit_size: unitSize,
+      firefly_category_name: categoryName,
+      effective_tag_names: effectiveTagNames,
       quantity: parsedQty,
       unit,
-      package_size: parsedPkg,
-      paid_price: parsedPaid,
+      package_size: pkgSize,
+      paid_price: computed.paidPrice,
+      total_price: computed.totalPrice,
       regular_price: parsedReg,
       is_discount:
-        isDiscount || (parsedReg !== undefined && parsedPaid < parsedReg),
+        isDiscount || (parsedReg !== undefined && computed.paidPrice < parsedReg),
     };
 
     if (editingTempId) {
@@ -126,8 +168,9 @@ export const CardStreamView: React.FC = () => {
     }
   };
 
-  const previewLineTotal =
-    Math.round((parseFloat(qty) || 0) * (parseFloat(paidPrice) || 0) * 100) / 100;
+  const parsedQty = parseFloat(qty) || 0;
+  const computedPreview = computePriceFromInput(priceMode, priceValue, parsedQty);
+  const previewLineTotal = computedPreview ? computedPreview.lineTotal : 0;
 
   // Prepend newest items at the top of the Register Tape while preserving original #
   const reversedTape = [...draftItems]
@@ -152,101 +195,114 @@ export const CardStreamView: React.FC = () => {
 
         <div>
           <label className="block text-xs font-semibold text-slate-700 mb-1">
-            Product *
+            Item *
           </label>
           <ProductCombobox
             selectedProductName={productName}
             onSelect={applyProductSelection}
             onClearSelection={() => {
               setSelectedProductId(null);
-              setProductName('');
               setBrandName(undefined);
+              setCategoryName(undefined);
+              setEffectiveTagNames([]);
             }}
             onRequestCreate={initialName => {
               setModalInitialName(initialName);
               setModalOpen(true);
             }}
             inputRef={productInputRef}
-            placeholder="Search or create product..."
+            placeholder="Search or create item..."
             inputClassName="min-h-[44px]"
             onDropdownOpenChange={setComboboxOpen}
             extraCreatedProduct={lastCreatedProduct}
           />
+          {selectedProductId && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
+              <span className="bg-slate-100 px-2 py-0.5 rounded font-medium">
+                {formatPackagingLabel(saleMode, packCount, unitSize, pkgSize, unit)}
+              </span>
+              {categoryName && (
+                <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-medium">
+                  {categoryName}
+                </span>
+              )}
+              {effectiveTagNames.map(tName => (
+                <span key={tName} className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded">
+                  #{tName}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
-        <div className="grid grid-cols-3 gap-2.5">
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Qty</label>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              {saleMode === 'loose_weight' ? `Weight (${unit})` : 'Quantity (packs)'}
+            </label>
             <input
               ref={qtyInputRef}
               type="number"
-              step="any"
-              min="0.001"
+              step={saleMode === 'loose_weight' ? 'any' : '1'}
+              min={saleMode === 'loose_weight' ? '0.001' : '1'}
               value={qty}
               onChange={e => setQty(e.target.value)}
               className="w-full min-h-[44px] px-3 py-2 border border-slate-300 rounded-lg text-sm"
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Unit</label>
-            <select
-              value={unit}
-              onChange={e => setUnit(e.target.value as MeasureUnit)}
-              className="w-full min-h-[44px] px-2.5 py-2 border border-slate-300 rounded-lg text-sm bg-white"
-            >
-              {MEASURE_UNITS.map(u => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Pkg Size
-            </label>
-            <input
-              type="number"
-              step="any"
-              min="0.001"
-              value={pkgSize}
-              onChange={e => setPkgSize(e.target.value)}
-              className="w-full min-h-[44px] px-3 py-2 border border-slate-300 rounded-lg text-sm"
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Paid Price (€) *
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-semibold text-slate-700">
+                {priceMode === 'unit' ? 'Unit Price (€) *' : 'Total Price (€) *'}
+              </label>
+              <div className="inline-flex rounded-md border border-slate-300 bg-slate-50 overflow-hidden text-[10px] font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setPriceMode('unit')}
+                  className={`px-1.5 py-0.5 ${
+                    priceMode === 'unit' ? 'bg-blue-600 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  Unit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPriceMode('total')}
+                  className={`px-1.5 py-0.5 ${
+                    priceMode === 'total' ? 'bg-blue-600 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  Total
+                </button>
+              </div>
+            </div>
             <input
               type="number"
               step="0.01"
               min="0"
               placeholder="0.00"
-              value={paidPrice}
-              onChange={e => setPaidPrice(e.target.value)}
+              value={priceValue}
+              onChange={e => setPriceValue(e.target.value)}
               onKeyDown={handlePriceKeyDown}
               className="w-full min-h-[44px] px-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold"
             />
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Regular Price (€)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              placeholder="Same as paid"
-              value={regularPrice}
-              onChange={e => setRegularPrice(e.target.value)}
-              onKeyDown={handlePriceKeyDown}
-              className="w-full min-h-[44px] px-3 py-2 border border-slate-300 rounded-lg text-sm"
-            />
-          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 mb-1">
+            Regular Shelf Unit Price (€)
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            placeholder="Same as paid"
+            value={regularPrice}
+            onChange={e => setRegularPrice(e.target.value)}
+            onKeyDown={handlePriceKeyDown}
+            className="w-full min-h-[44px] px-3 py-2 border border-slate-300 rounded-lg text-sm"
+          />
         </div>
 
         <label className="flex items-center space-x-2.5 min-h-[44px] px-3 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer">
@@ -307,7 +363,7 @@ export const CardStreamView: React.FC = () => {
 
         {reversedTape.length === 0 ? (
           <div className="py-12 text-center text-xs text-slate-400">
-            No items logged yet. Search a product on the active card and press{' '}
+            No items logged yet. Search an item on the active card and press{' '}
             <strong>Add Line</strong> or <strong>Enter</strong>.
           </div>
         ) : (
@@ -340,9 +396,15 @@ export const CardStreamView: React.FC = () => {
                         )}
                       </div>
                       <div className="text-xs text-slate-500 mt-0.5">
-                        {item.quantity} × €{item.paid_price.toFixed(2)} • {item.package_size}{' '}
-                        {item.unit}
-                        {item.brand_name ? ` • ${item.brand_name}` : ''}
+                        {item.quantity} × €{item.paid_price.toFixed(2)} •{' '}
+                        {formatPackagingLabel(
+                          item.sale_mode,
+                          item.pack_count,
+                          item.unit_size,
+                          item.package_size,
+                          item.unit
+                        )}
+                        {item.firefly_category_name ? ` • ${item.firefly_category_name}` : ''}
                       </div>
                     </div>
                   </div>
@@ -384,11 +446,11 @@ export const CardStreamView: React.FC = () => {
         )}
       </div>
 
-      <InlineProductModal
+      <ItemEditorModal
         isOpen={modalOpen}
         initialName={modalInitialName}
         onClose={() => setModalOpen(false)}
-        onCreated={created => {
+        onSaved={created => {
           setLastCreatedProduct(created);
           applyProductSelection(created);
         }}

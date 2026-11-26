@@ -224,6 +224,135 @@ class FireflyClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def get_transaction_by_id(self, transaction_id: int) -> Optional[dict[str, Any]]:
+        """Fetches a single Firefly III transaction group (including all splits)."""
+        client = self._get_client()
+        resp = await client.get(
+            f"{self.base_url}/api/v1/transactions/{transaction_id}",
+            headers=self.headers,
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json().get("data")
+
+    async def update_transaction(
+        self, transaction_id: int, transaction_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Updates a Firefly III transaction group via PUT /api/v1/transactions/{id}."""
+        client = self._get_client()
+        resp = await client.put(
+            f"{self.base_url}/api/v1/transactions/{transaction_id}",
+            headers=self.headers,
+            json=transaction_data,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def get_transactions(
+        self,
+        tx_type: str = "withdrawal",
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        page: int = 1,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Fetches a single page of Firefly III transactions."""
+        client = self._get_client()
+        params: dict[str, Any] = {"type": tx_type, "page": page, "limit": limit}
+        if start:
+            params["start"] = start
+        if end:
+            params["end"] = end
+        resp = await client.get(
+            f"{self.base_url}/api/v1/transactions",
+            headers=self.headers,
+            params=params,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def _paginate_collection(
+        self,
+        fetch_page,
+        max_pages: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Collects paginated JSON:API items across Firefly III endpoints."""
+        collected: list[dict[str, Any]] = []
+        page = 1
+        while page <= max_pages:
+            data = await fetch_page(page)
+            items = data.get("data", [])
+            if not items:
+                break
+            collected.extend(items)
+            pagination = data.get("meta", {}).get("pagination", {})
+            total_pages = pagination.get("total_pages", 1)
+            if page >= total_pages:
+                break
+            page += 1
+        return collected
+
+    async def get_all_transactions(
+        self,
+        tx_type: str = "withdrawal",
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        max_pages: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Fetches all paginated Firefly III transactions matching the optional window."""
+        return await self._paginate_collection(
+            lambda page: self.get_transactions(
+                tx_type=tx_type, start=start, end=end, page=page, limit=100
+            ),
+            max_pages=max_pages,
+        )
+
+    async def get_categories(self, page: int = 1, limit: int = 100) -> dict[str, Any]:
+        client = self._get_client()
+        resp = await client.get(
+            f"{self.base_url}/api/v1/categories",
+            headers=self.headers,
+            params={"page": page, "limit": limit},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def get_all_categories(self) -> list[dict[str, Any]]:
+        """Fetches all Firefly III categories across paginated responses."""
+        return await self._paginate_collection(
+            lambda page: self.get_categories(page=page, limit=100),
+            max_pages=100,
+        )
+
+    async def get_tags(self, page: int = 1, limit: int = 100) -> dict[str, Any]:
+        client = self._get_client()
+        resp = await client.get(
+            f"{self.base_url}/api/v1/tags",
+            headers=self.headers,
+            params={"page": page, "limit": limit},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def get_all_tags(self) -> list[dict[str, Any]]:
+        """Fetches all Firefly III tags across paginated responses."""
+        return await self._paginate_collection(
+            lambda page: self.get_tags(page=page, limit=100),
+            max_pages=100,
+        )
+
+    async def create_tag(self, tag_name: str) -> dict[str, Any]:
+        """Creates a tag in Firefly III via POST /api/v1/tags."""
+        client = self._get_client()
+        resp = await client.post(
+            f"{self.base_url}/api/v1/tags",
+            headers=self.headers,
+            json={"tag": tag_name},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def delete_transaction(self, transaction_id: int) -> None:
         client = self._get_client()
         resp = await client.delete(

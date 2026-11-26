@@ -208,6 +208,11 @@ class FireflyRevenueAccountBrief(BaseModel):
     name: str
 
 
+class FireflyCategoryBrief(BaseModel):
+    id: int
+    name: str
+
+
 @router.get("/asset-accounts", response_model=List[FireflyAssetAccount])
 async def list_asset_accounts(session: Session = Depends(get_session)):
     try:
@@ -305,6 +310,26 @@ async def list_revenue_accounts():
                         name=attr.get("name") or f"Revenue #{acc_id}",
                     )
                 )
+            except (ValueError, TypeError):
+                continue
+        results.sort(key=lambda x: x.name.lower())
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Firefly API error: {str(e)}")
+
+
+@router.get("/categories", response_model=List[FireflyCategoryBrief])
+async def list_firefly_categories():
+    try:
+        categories = await firefly_client.get_all_categories()
+        results: List[FireflyCategoryBrief] = []
+        for cat in categories:
+            try:
+                cat_id = int(cat.get("id"))
+                name = str(cat.get("attributes", {}).get("name") or "").strip()
+                if not name:
+                    continue
+                results.append(FireflyCategoryBrief(id=cat_id, name=name))
             except (ValueError, TypeError):
                 continue
         results.sort(key=lambda x: x.name.lower())

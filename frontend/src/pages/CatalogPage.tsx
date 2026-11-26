@@ -1,94 +1,216 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  BarChart3,
+  DollarSign,
+  Flame,
+  History,
+  Layers,
+  ListChecks,
+  Package,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  ThumbsUp,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { api } from '../api/client';
-import { Product, Tag, PriceRecord, DealAnalysis } from '../types';
-import { Package, Plus, Flame, ThumbsUp, DollarSign, History } from 'lucide-react';
 import { ProductPriceChart } from '../components/charts/ProductPriceChart';
 import { StoreCombobox } from '../components/common/StoreCombobox';
+import { CatalogAnalyticsTab } from '../components/catalog/CatalogAnalyticsTab';
+import { FireflyBacklogTab } from '../components/catalog/FireflyBacklogTab';
+import { ItemEditorModal } from '../components/catalog/ItemEditorModal';
+import { SyncJobBadge } from '../components/catalog/SyncJobBadge';
+import { TagHierarchyTab } from '../components/catalog/TagHierarchyTab';
+import { formatProductBadge } from '../components/workbench/productUtils';
+import { isSyncJobActive, useFireflySyncJobs } from '../hooks/useFireflySyncJobs';
+import {
+  DealAnalysis,
+  PriceRecord,
+  Product,
+  Tag,
+  TagImplication,
+} from '../types';
+
+type CatalogTab = 'items' | 'backlog' | 'tags' | 'analytics';
 
 export const CatalogPage: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<CatalogTab>('items');
   const [products, setProducts] = useState<Product[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search] = useState('');
-  const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
+  const [implications, setImplications] = useState<TagImplication[]>([]);
+  const [unassociatedCount, setUnassociatedCount] = useState<number>(0);
 
-  // Modals
-  const [showProductModal, setShowProductModal] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [allItemCategories, setAllItemCategories] = useState<string[]>([]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search), 200);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  // Item Create / Edit Modal
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [propagatingId, setPropagatingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [catalogNotice, setCatalogNotice] = useState<string | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+
+  // Price & History Modals
   const [showPriceModal, setShowPriceModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [historyData, setHistoryData] = useState<{ analysis: DealAnalysis | null; records: PriceRecord[] } | null>(null);
+  const [historyData, setHistoryData] = useState<{
+    analysis: DealAnalysis | null;
+    records: PriceRecord[];
+  } | null>(null);
 
-  // New product form
-  const [newProductName, setNewProductName] = useState('');
-  const [newBrandName, setNewBrandName] = useState('');
-  const [newDefaultUnit, setNewDefaultUnit] = useState('g');
-  const [newPackageSize, setNewPackageSize] = useState('500');
-  const [newSelectedTagIds, setNewSelectedTagIds] = useState<number[]>([]);
-
-  // New tag form
-  const [newTagName, setNewTagName] = useState('');
-  const newTagGroup = 'Category';
-
-  // New price log form
   const [priceFireflyAccountId, setPriceFireflyAccountId] = useState<number | null>(null);
-  const [priceStoreName, setPriceStoreName] = useState<string>('');
+  const [priceStoreName, setPriceStoreName] = useState('');
   const [regularPrice, setRegularPrice] = useState('');
   const [paidPrice, setPaidPrice] = useState('');
   const [isDiscount, setIsDiscount] = useState(false);
   const [quantity, setQuantity] = useState('1');
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const [savingPrice, setSavingPrice] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const historySeqRef = useRef(0);
 
-  const loadAll = async () => {
-    setLoading(true);
+  const loadSeqRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const loadAll = useCallback(async (silent: boolean = false) => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const reqId = ++loadSeqRef.current;
+
+    if (!silent) setLoading(true);
     try {
-      const [prods, tgs] = await Promise.all([
-        api.products.list({ search: search || undefined, tag_id: selectedTagId || undefined }),
+      const hasFilters = Boolean(
+        debouncedSearch.trim() || selectedTagId || selectedCategory
+      );
+      const [prods, tgs, imps, syncStatus, ffCategories] = await Promise.all([
+        api.products.list(
+          {
+            search: debouncedSearch.trim() || undefined,
+            tag_id: selectedTagId || undefined,
+            firefly_category_name: selectedCategory || undefined,
+          },
+          { signal: controller.signal }
+        ),
         api.tags.list(),
+        api.tags.listImplications(),
+        api.fireflySync.getStatus(),
+        api.categories.list().catch(() => [] as string[]),
       ]);
+      if (controller.signal.aborted || reqId !== loadSeqRef.current) return;
+
       setProducts(prods);
       setTags(tgs);
+      setImplications(imps);
+      setUnassociatedCount(syncStatus.unassociated_count);
+
+      setAllItemCategories(prev => {
+        const names = new Set<string>(hasFilters ? prev : []);
+        for (const cat of ffCategories) {
+          if (cat) names.add(cat);
+        }
+        for (const p of prods) {
+          if (p.firefly_category_name) names.add(p.firefly_category_name);
+        }
+        return Array.from(names).sort((a, b) => a.localeCompare(b));
+      });
     } catch (err) {
+      if (controller.signal.aborted || reqId !== loadSeqRef.current) return;
       console.error(err);
     } finally {
-      setLoading(false);
+      if (reqId === loadSeqRef.current && !silent) setLoading(false);
     }
-  };
+  }, [debouncedSearch, selectedTagId, selectedCategory]);
+
+  const {
+    jobs,
+    activeJobs,
+    jobsByProductId,
+    registerJob,
+    dismissJob,
+  } = useFireflySyncJobs({
+    onJobsChanged: async () => {
+      await loadAll(true);
+    },
+  });
 
   useEffect(() => {
     loadAll();
-  }, [search, selectedTagId]);
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, [loadAll]);
 
-  const handleCreateProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProductName.trim()) return;
-
-    let brandId: number | undefined = undefined;
-    if (newBrandName.trim()) {
-      const brand = await api.products.createBrand({ name: newBrandName.trim() });
-      brandId = brand.id;
-    }
-
-    await api.products.create({
-      name: newProductName.trim(),
-      brand_id: brandId,
-      default_unit: newDefaultUnit,
-      package_size: parseFloat(newPackageSize) || 1.0,
-      tag_ids: newSelectedTagIds
-    });
-
-    setShowProductModal(false);
-    setNewProductName('');
-    setNewBrandName('');
-    loadAll();
+  const openCreateModal = () => {
+    setEditingProduct(null);
+    setEditorOpen(true);
   };
 
-  const handleCreateTag = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTagName.trim()) return;
-    const tag = await api.tags.create({ name: newTagName.trim(), group: newTagGroup });
-    setTags([...tags, tag]);
-    setNewSelectedTagIds([...newSelectedTagIds, tag.id]);
-    setNewTagName('');
+  const openEditModal = (prod: Product) => {
+    setEditingProduct(prod);
+    setEditorOpen(true);
+  };
+
+  const handlePropagateItem = async (prod: Product) => {
+    if (!prod.affected_firefly_count) return;
+    if (
+      !window.confirm(
+        `Update ${prod.affected_firefly_count} linked transaction(s) in Firefly III for "${prod.name}"?`
+      )
+    ) {
+      return;
+    }
+    setPropagatingId(prod.id);
+    setCatalogNotice(null);
+    setCatalogError(null);
+    try {
+      const job = await api.products.propagateFirefly(prod.id);
+      registerJob(job);
+      await loadAll(true);
+    } catch (err) {
+      setCatalogError(
+        err instanceof Error ? err.message : 'Failed to start Firefly sync job'
+      );
+    } finally {
+      setPropagatingId(null);
+    }
+  };
+
+  const handleDeleteItem = async (prod: Product) => {
+    if (
+      !window.confirm(
+        `Delete "${prod.name}" from the companion app? This does not touch Firefly III; any linked Firefly splits will simply return to the unassociated backlog.`
+      )
+    ) {
+      return;
+    }
+    setDeletingId(prod.id);
+    setCatalogNotice(null);
+    setCatalogError(null);
+    try {
+      await api.products.delete(prod.id);
+      setCatalogNotice(`Deleted "${prod.name}" from catalog.`);
+      await loadAll();
+    } catch (err) {
+      setCatalogError(
+        err instanceof Error ? err.message : 'Failed to delete item from catalog'
+      );
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const openPriceModal = (product: Product) => {
@@ -99,7 +221,26 @@ export const CatalogPage: React.FC = () => {
     setQuantity('1');
     setPriceFireflyAccountId(null);
     setPriceStoreName('');
+    setPriceError(null);
     setShowPriceModal(true);
+  };
+
+  const openHistoryModal = async (product: Product) => {
+    const seq = ++historySeqRef.current;
+    setHistoryData(null);
+    setHistoryError(null);
+    setSelectedProduct(product);
+    setShowHistoryModal(true);
+    try {
+      const hist = await api.prices.getHistory(product.id);
+      if (seq !== historySeqRef.current) return;
+      setHistoryData({ analysis: hist.analysis, records: hist.records });
+    } catch (err) {
+      if (seq !== historySeqRef.current) return;
+      setHistoryError(
+        err instanceof Error ? err.message : 'Failed to load price history'
+      );
+    }
   };
 
   const handleRecordPrice = async (e: React.FormEvent) => {
@@ -108,260 +249,422 @@ export const CatalogPage: React.FC = () => {
 
     const reg = parseFloat(regularPrice) || parseFloat(paidPrice);
     const paid = parseFloat(paidPrice);
+    setSavingPrice(true);
+    setPriceError(null);
 
-    await api.prices.record({
-      product_id: selectedProduct.id,
-      firefly_account_id: priceFireflyAccountId,
-      recorded_date: new Date().toISOString().split('T')[0],
-      regular_price: reg,
-      paid_price: paid,
-      is_discount: isDiscount || paid < reg,
-      quantity: parseFloat(quantity) || 1.0,
-      unit: selectedProduct.default_unit
-    });
+    try {
+      await api.prices.record({
+        product_id: selectedProduct.id,
+        firefly_account_id: priceFireflyAccountId,
+        recorded_date: new Date().toISOString().split('T')[0],
+        regular_price: reg,
+        paid_price: paid,
+        is_discount: isDiscount || paid < reg,
+        quantity: parseFloat(quantity) || 1.0,
+        unit: selectedProduct.default_unit,
+      });
 
-    setShowPriceModal(false);
-    openHistoryModal(selectedProduct);
+      setShowPriceModal(false);
+      await openHistoryModal(selectedProduct);
+    } catch (err) {
+      setPriceError(err instanceof Error ? err.message : 'Failed to record price');
+    } finally {
+      setSavingPrice(false);
+    }
   };
 
-  const openHistoryModal = async (product: Product) => {
-    setHistoryData(null);
-    setSelectedProduct(product);
-    setShowHistoryModal(true);
-    const hist = await api.prices.getHistory(product.id);
-    setHistoryData({ analysis: hist.analysis, records: hist.records });
-  };
+  useEffect(() => {
+    if (!showPriceModal && !showHistoryModal) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowPriceModal(false);
+        setShowHistoryModal(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showPriceModal, showHistoryModal]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-slate-200 gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-5 border-b border-slate-200 gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Products & Price Intelligence</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+            Canonical Items &amp; Firefly Sync
+          </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Track products, brands, multi-dimensional tags (e.g. Organic, Whole, Fruit), and evaluate deals against baseline prices.
+            Manage canonical items with fixed packaging, Firefly categories, and hierarchical
+            tags, and reconcile historical Firefly transactions.
           </p>
         </div>
         <button
-          onClick={() => setShowProductModal(true)}
-          className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-sm"
+          type="button"
+          onClick={openCreateModal}
+          className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-sm shrink-0"
         >
           <Plus className="w-4 h-4 mr-1.5" />
-          Add Product
+          New Item
         </button>
       </div>
 
-      {/* Tag Filter Pills */}
-      <div className="mt-6 flex items-center space-x-2 overflow-x-auto pb-2">
+      {/* Navigation Tabs */}
+      <div className="flex items-center space-x-2 border-b border-slate-200 pb-3 overflow-x-auto">
         <button
-          onClick={() => setSelectedTagId(null)}
-          className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition ${
-            selectedTagId === null ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          type="button"
+          onClick={() => setActiveTab('items')}
+          className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+            activeTab === 'items'
+              ? 'bg-slate-900 text-white'
+              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
           }`}
         >
-          All Items
+          <Package className="w-3.5 h-3.5 mr-1.5" />
+          Catalog Items ({products.length})
         </button>
-        {tags.map(tag => (
-          <button
-            key={tag.id}
-            onClick={() => setSelectedTagId(selectedTagId === tag.id ? null : tag.id)}
-            className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition ${
-              selectedTagId === tag.id ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+        <button
+          type="button"
+          onClick={() => setActiveTab('backlog')}
+          className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+            activeTab === 'backlog'
+              ? 'bg-slate-900 text-white'
+              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+          }`}
+        >
+          <ListChecks className="w-3.5 h-3.5 mr-1.5" />
+          Firefly Backlog
+          <span
+            className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+              activeTab === 'backlog'
+                ? 'bg-blue-500 text-white'
+                : 'bg-blue-100 text-blue-800'
             }`}
           >
-            #{tag.name}
+            {unassociatedCount}
+          </span>
+          {activeJobs.length > 0 && (
+            <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+              <RefreshCw className="w-2.5 h-2.5 mr-1 animate-spin" />
+              {activeJobs.length}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('tags')}
+          className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+            activeTab === 'tags'
+              ? 'bg-slate-900 text-white'
+              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5 mr-1.5" />
+          Tag Hierarchy ({tags.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('analytics')}
+          className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+            activeTab === 'analytics'
+              ? 'bg-slate-900 text-white'
+              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+          }`}
+        >
+          <BarChart3 className="w-3.5 h-3.5 mr-1.5" />
+          Tag Analytics
+        </button>
+      </div>
+
+      {catalogNotice && (
+        <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center justify-between gap-2">
+          <span>{catalogNotice}</span>
+          <button
+            type="button"
+            onClick={() => setCatalogNotice(null)}
+            className="p-0.5 rounded hover:bg-emerald-100 text-emerald-700 shrink-0"
+            aria-label="Dismiss notice"
+          >
+            <X className="w-3.5 h-3.5" />
           </button>
-        ))}
-      </div>
+        </div>
+      )}
 
-      {/* Product Grid */}
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {loading ? (
-          <div className="col-span-full py-12 text-center text-slate-400">Loading catalog...</div>
-        ) : products.length === 0 ? (
-          <div className="col-span-full py-12 text-center text-slate-400">
-            No products in your catalog yet. Click "Add Product" to get started!
-          </div>
-        ) : (
-          products.map(p => (
-            <div key={p.id} className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition">
-              <div className="flex items-start justify-between">
-                <div>
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600">
-                    {p.brand?.name || 'Generic / Brandless'}
-                  </span>
-                  <h3 className="text-base font-semibold text-slate-900 mt-0.5">{p.name}</h3>
-                  <span className="text-xs text-slate-400">
-                    Package: {p.package_size} {p.default_unit}
-                  </span>
-                </div>
-                <div className="p-2 rounded-lg bg-slate-50 text-slate-500">
-                  <Package className="w-5 h-5" />
-                </div>
-              </div>
+      {catalogError && (
+        <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center justify-between gap-2">
+          <span>{catalogError}</span>
+          <button
+            type="button"
+            onClick={() => setCatalogError(null)}
+            className="p-0.5 rounded hover:bg-rose-100 text-rose-700 shrink-0"
+            aria-label="Dismiss error"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
-              {/* Tags */}
-              <div className="mt-3 flex flex-wrap gap-1">
-                {p.tags.map(t => (
-                  <span key={t.id} className="text-[10px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">
-                    {t.name}
-                  </span>
-                ))}
-              </div>
-
-              {/* Actions */}
-              <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
-                <button
-                  onClick={() => openHistoryModal(p)}
-                  className="inline-flex items-center text-xs font-semibold text-slate-600 hover:text-slate-900"
-                >
-                  <History className="w-3.5 h-3.5 mr-1" />
-                  Price History
-                </button>
-                <button
-                  onClick={() => openPriceModal(p)}
-                  className="inline-flex items-center text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                >
-                  <DollarSign className="w-3.5 h-3.5 mr-0.5" />
-                  Log Price
-                </button>
-              </div>
+      {activeTab === 'items' && (
+        <div className="space-y-4">
+          {/* Search & Filters */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search items by name..."
+                className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
-          ))
-        )}
-      </div>
+            {allItemCategories.length > 0 && (
+              <select
+                value={selectedCategory || ''}
+                onChange={e => setSelectedCategory(e.target.value || null)}
+                className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm"
+              >
+                <option value="">All Categories</option>
+                {allItemCategories.map(cat => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
 
-      {/* Add Product Modal */}
-      {showProductModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-bold text-slate-900">Add New Product</h2>
-            <form onSubmit={handleCreateProduct} className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Product Name</label>
-                <input
-                  type="text"
-                  required
-                  value={newProductName}
-                  onChange={e => setNewProductName(e.target.value)}
-                  placeholder="e.g. Spaghetti N.5, Organic Bananas, Bagnoschiuma"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+          {/* Hierarchical Tag Filter Pills */}
+          <div className="flex items-center space-x-2 overflow-x-auto pb-1">
+            <button
+              type="button"
+              onClick={() => setSelectedTagId(null)}
+              className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition ${
+                selectedTagId === null
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              All Tags
+            </button>
+            {tags.map(tag => (
+              <button
+                key={tag.id}
+                type="button"
+                onClick={() =>
+                  setSelectedTagId(selectedTagId === tag.id ? null : tag.id)
+                }
+                className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition ${
+                  selectedTagId === tag.id
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                }`}
+              >
+                #{tag.name}
+              </button>
+            ))}
+          </div>
+
+          {/* Product Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {loading ? (
+              <div className="col-span-full py-12 text-center text-slate-400">
+                Loading catalog...
               </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Brand</label>
-                <input
-                  type="text"
-                  value={newBrandName}
-                  onChange={e => setNewBrandName(e.target.value)}
-                  placeholder="e.g. De Cecco, Barilla, Conad Smart, Chanteclair"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Package Size</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={newPackageSize}
-                    onChange={e => setNewPackageSize(e.target.value)}
-                    placeholder="500"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Unit of Measure</label>
-                  <select
-                    value={newDefaultUnit}
-                    onChange={e => setNewDefaultUnit(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                  >
-                    <option value="g">Grams (g → €/kg)</option>
-                    <option value="kg">Kilograms (kg)</option>
-                    <option value="ml">Milliliters (ml → €/L)</option>
-                    <option value="l">Liters (L)</option>
-                    <option value="pcs">Pieces (pcs)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Tag Picker */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Tags & Classifications</label>
-                <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 rounded-lg border border-slate-200 max-h-28 overflow-y-auto">
-                  {tags.map(t => {
-                    const isSelected = newSelectedTagIds.includes(t.id);
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => {
-                          if (isSelected) {
-                            setNewSelectedTagIds(newSelectedTagIds.filter(id => id !== t.id));
-                          } else {
-                            setNewSelectedTagIds([...newSelectedTagIds, t.id]);
-                          }
-                        }}
-                        className={`text-xs px-2.5 py-1 rounded-md font-medium transition ${
-                          isSelected ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 border border-slate-300'
-                        }`}
-                      >
-                        {t.name}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Quick Add Tag */}
-                <div className="mt-2 flex space-x-2">
-                  <input
-                    type="text"
-                    value={newTagName}
-                    onChange={e => setNewTagName(e.target.value)}
-                    placeholder="New tag (e.g. Organic, Whole Grain)..."
-                    className="flex-1 px-2.5 py-1 text-xs border border-slate-300 rounded-md"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCreateTag}
-                    className="px-2.5 py-1 text-xs bg-slate-200 text-slate-700 rounded-md hover:bg-slate-300 font-medium"
-                  >
-                    + Add Tag
-                  </button>
-                </div>
-              </div>
-
-              <div className="pt-4 flex justify-end space-x-2">
+            ) : products.length === 0 ? (
+              <div className="col-span-full py-12 text-center text-slate-400 text-sm">
+                No items match yet. Click &quot;New Item&quot; or link historical entries from{' '}
                 <button
                   type="button"
-                  onClick={() => setShowProductModal(false)}
-                  className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-medium text-slate-700"
+                  onClick={() => setActiveTab('backlog')}
+                  className="text-blue-600 font-semibold hover:underline"
                 >
-                  Cancel
+                  Firefly Backlog
                 </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold"
-                >
-                  Save Product
-                </button>
+                .
               </div>
-            </form>
+            ) : (
+              products.map(p => {
+                const directIds = new Set(p.tags.map(t => t.id));
+                const effective = p.effective_tags && p.effective_tags.length > 0 ? p.effective_tags : p.tags;
+                const itemJob = jobsByProductId[p.id];
+                const itemJobActive = itemJob ? isSyncJobActive(itemJob) : false;
+                return (
+                  <div
+                    key={p.id}
+                    className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600">
+                              {p.brand?.name || 'Generic'}
+                            </span>
+                            {p.firefly_category_name && (
+                              <span className="text-[10px] font-semibold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">
+                                {p.firefly_category_name}
+                              </span>
+                            )}
+                          </div>
+                          <h3 className="text-base font-semibold text-slate-900 mt-1 truncate">
+                            {p.name}
+                          </h3>
+                          <span className="text-xs text-slate-500 block">
+                            {formatProductBadge(p)}
+                          </span>
+                          {p.firefly_description && (
+                            <span className="text-[11px] text-slate-400 block truncate mt-0.5">
+                              FF: {p.firefly_description}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center space-x-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(p)}
+                            className="p-2 rounded-lg bg-slate-50 hover:bg-blue-50 text-slate-500 hover:text-blue-600"
+                            title="Edit item"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deletingId === p.id || itemJobActive}
+                            onClick={() => handleDeleteItem(p)}
+                            className="p-2 rounded-lg bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-600 disabled:opacity-40"
+                            title={
+                              itemJobActive
+                                ? 'Cannot delete while Firefly sync job is running'
+                                : 'Delete item'
+                            }
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-1">
+                        {effective.map(t => (
+                          <span
+                            key={t.id}
+                            className={`text-[10px] font-medium px-2 py-0.5 rounded-md ${
+                              directIds.has(t.id)
+                                ? 'bg-slate-100 text-slate-700'
+                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            }`}
+                            title={directIds.has(t.id) ? 'Direct tag' : 'Implied by hierarchy'}
+                          >
+                            {directIds.has(t.id) ? `#${t.name}` : `+${t.name}`}
+                          </span>
+                        ))}
+                      </div>
+
+                      {itemJob && (
+                        <div className="mt-3">
+                          <SyncJobBadge job={itemJob} onDismiss={dismissJob} compact />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <div className="flex items-center space-x-3">
+                        <button
+                          type="button"
+                          onClick={() => openHistoryModal(p)}
+                          className="inline-flex items-center text-xs font-semibold text-slate-600 hover:text-slate-900"
+                        >
+                          <History className="w-3.5 h-3.5 mr-1" />
+                          History
+                        </button>
+                        {(p.affected_firefly_count ?? 0) > 0 && (
+                          <button
+                            type="button"
+                            disabled={propagatingId === p.id || itemJobActive}
+                            onClick={() => handlePropagateItem(p)}
+                            className="inline-flex items-center text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                            title="Push current item name, category & tags to linked Firefly transactions"
+                          >
+                            <RefreshCw
+                              className={`w-3 h-3 mr-1 ${
+                                propagatingId === p.id || itemJobActive ? 'animate-spin' : ''
+                              }`}
+                            />
+                            {itemJobActive ? 'Syncing...' : `Sync ${p.affected_firefly_count} FF`}
+                          </button>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openPriceModal(p)}
+                        className="inline-flex items-center text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                      >
+                        <DollarSign className="w-3.5 h-3.5 mr-0.5" />
+                        Log Price
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       )}
 
+      {activeTab === 'backlog' && (
+        <FireflyBacklogTab
+          products={products}
+          jobs={jobs}
+          jobsByProductId={jobsByProductId}
+          onJobStarted={registerJob}
+          onDismissJob={dismissJob}
+          onDataChanged={() => loadAll(true)}
+          onUnassociatedCountChange={setUnassociatedCount}
+        />
+      )}
+
+      {activeTab === 'tags' && (
+        <TagHierarchyTab
+          tags={tags}
+          implications={implications}
+          onRefresh={() => loadAll(true)}
+        />
+      )}
+
+      {activeTab === 'analytics' && (
+        <CatalogAnalyticsTab
+          tags={tags}
+          availableCategories={allItemCategories}
+        />
+      )}
+
+      {/* Create / Edit Item Modal */}
+      <ItemEditorModal
+        isOpen={editorOpen}
+        editingProduct={editingProduct}
+        onClose={() => setEditorOpen(false)}
+        onSaved={() => loadAll(true)}
+        onPropagationJobStarted={registerJob}
+      />
+
       {/* Log Price Modal */}
       {showPriceModal && selectedProduct && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={e => {
+            if (e.target === e.currentTarget) setShowPriceModal(false);
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
+        >
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200">
-            <h2 className="text-lg font-bold text-slate-900">Log Price for {selectedProduct.name}</h2>
+            <h2 className="text-lg font-bold text-slate-900">
+              Log Price for {selectedProduct.name}
+            </h2>
             <form onSubmit={handleRecordPrice} className="mt-4 space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Store / Location</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Store / Location
+                </label>
                 <StoreCombobox
                   required
                   value={priceFireflyAccountId}
@@ -376,7 +679,9 @@ export const CatalogPage: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Price Paid (€)</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Price Paid (€)
+                  </label>
                   <input
                     type="number"
                     step="0.01"
@@ -388,7 +693,9 @@ export const CatalogPage: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Regular Shelf Price (€)</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Regular Shelf Price (€)
+                  </label>
                   <input
                     type="number"
                     step="0.01"
@@ -404,7 +711,10 @@ export const CatalogPage: React.FC = () => {
                 <input
                   type="checkbox"
                   id="is_discount"
-                  checked={isDiscount || (Boolean(regularPrice) && parseFloat(paidPrice) < parseFloat(regularPrice))}
+                  checked={
+                    isDiscount ||
+                    (Boolean(regularPrice) && parseFloat(paidPrice) < parseFloat(regularPrice))
+                  }
                   onChange={e => setIsDiscount(e.target.checked)}
                   className="rounded text-blue-600 focus:ring-blue-500"
                 />
@@ -412,6 +722,12 @@ export const CatalogPage: React.FC = () => {
                   Bought on Discount / Special Offer
                 </label>
               </div>
+
+              {priceError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700">
+                  {priceError}
+                </div>
+              )}
 
               <div className="pt-3 flex justify-end space-x-2">
                 <button
@@ -423,9 +739,10 @@ export const CatalogPage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold"
+                  disabled={savingPrice}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold"
                 >
-                  Save Price
+                  {savingPrice ? 'Saving...' : 'Save Price'}
                 </button>
               </div>
             </form>
@@ -435,33 +752,50 @@ export const CatalogPage: React.FC = () => {
 
       {/* Price History & Deal Analysis Modal */}
       {showHistoryModal && selectedProduct && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={e => {
+            if (e.target === e.currentTarget) setShowHistoryModal(false);
+          }}
+          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
+        >
           <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-xl border border-slate-200 max-h-[85vh] overflow-y-auto">
             <div className="flex items-start justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">{selectedProduct.name}</h2>
-                <p className="text-xs text-slate-500">Price History & Deal Scoring</p>
+                <p className="text-xs text-slate-500">Price History &amp; Deal Scoring</p>
               </div>
               <button
+                type="button"
                 onClick={() => setShowHistoryModal(false)}
                 className="text-slate-400 hover:text-slate-600 text-lg font-bold"
+                aria-label="Close modal"
               >
                 &times;
               </button>
             </div>
 
-            {/* Deal Analysis Card */}
+            {historyError && (
+              <div className="mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
+                {historyError}
+              </div>
+            )}
+
             {historyData?.analysis && (
               <div className="mt-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-600">Deal Quality Score</span>
+                  <span className="text-xs font-semibold text-slate-600">
+                    Deal Quality Score
+                  </span>
                   {historyData.analysis.deal_rating === 'ALL_TIME_LOW' ? (
                     <span className="inline-flex items-center text-xs font-bold text-rose-700 bg-rose-100 px-2.5 py-0.5 rounded-full">
                       <Flame className="w-3.5 h-3.5 mr-1" /> Historic Low Price!
                     </span>
                   ) : historyData.analysis.deal_rating === 'GREAT_DEAL' ? (
                     <span className="inline-flex items-center text-xs font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
-                      <ThumbsUp className="w-3.5 h-3.5 mr-1" /> Great Deal (-{historyData.analysis.discount_pct}%)
+                      <ThumbsUp className="w-3.5 h-3.5 mr-1" /> Great Deal (-
+                      {historyData.analysis.discount_pct}%)
                     </span>
                   ) : (
                     <span className="text-xs font-medium text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
@@ -473,21 +807,26 @@ export const CatalogPage: React.FC = () => {
                 <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
                   <div className="p-2 bg-white rounded-lg border border-slate-200/80">
                     <span className="text-slate-400 block text-[10px]">Latest Paid</span>
-                    <strong className="text-slate-900 text-sm">€{historyData.analysis.current_price.toFixed(2)}</strong>
+                    <strong className="text-slate-900 text-sm">
+                      €{historyData.analysis.current_price.toFixed(2)}
+                    </strong>
                   </div>
                   <div className="p-2 bg-white rounded-lg border border-slate-200/80">
                     <span className="text-slate-400 block text-[10px]">Normal Baseline</span>
-                    <strong className="text-slate-900 text-sm">€{historyData.analysis.baseline_regular_price.toFixed(2)}</strong>
+                    <strong className="text-slate-900 text-sm">
+                      €{historyData.analysis.baseline_regular_price.toFixed(2)}
+                    </strong>
                   </div>
                   <div className="p-2 bg-white rounded-lg border border-slate-200/80">
                     <span className="text-slate-400 block text-[10px]">All-Time Low</span>
-                    <strong className="text-emerald-700 text-sm">€{historyData.analysis.all_time_low.toFixed(2)}</strong>
+                    <strong className="text-emerald-700 text-sm">
+                      €{historyData.analysis.all_time_low.toFixed(2)}
+                    </strong>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Normalized Price Trend Chart */}
             {!historyData ? (
               <div className="mt-4 p-6 rounded-xl bg-slate-50 border border-slate-200 text-center text-xs text-slate-400">
                 Loading price history...
@@ -500,21 +839,31 @@ export const CatalogPage: React.FC = () => {
               />
             )}
 
-            {/* List of price logs */}
             <div className="mt-5 space-y-2">
-              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Recorded Prices</h3>
-              {(!historyData?.records || historyData.records.length === 0) ? (
+              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Recorded Prices
+              </h3>
+              {!historyData?.records || historyData.records.length === 0 ? (
                 <p className="text-xs text-slate-400">No prices recorded yet.</p>
               ) : (
                 [...historyData.records].reverse().map(r => (
-                  <div key={r.id} className="p-3 bg-slate-50 rounded-lg flex items-center justify-between text-xs">
+                  <div
+                    key={r.id}
+                    className="p-3 bg-slate-50 rounded-lg flex items-center justify-between text-xs"
+                  >
                     <div>
-                      <span className="font-semibold text-slate-800">{r.store_name || `Store #${r.firefly_account_id}`}</span>
-                      <span className="block text-slate-400 text-[10px]">{r.recorded_date}</span>
+                      <span className="font-semibold text-slate-800">
+                        {r.store_name || `Store #${r.firefly_account_id}`}
+                      </span>
+                      <span className="block text-slate-400 text-[10px]">
+                        {r.recorded_date}
+                      </span>
                     </div>
                     <div className="text-right">
                       <div className="flex items-center space-x-1.5 justify-end">
-                        <strong className="text-sm text-slate-900">€{r.paid_price.toFixed(2)}</strong>
+                        <strong className="text-sm text-slate-900">
+                          €{r.paid_price.toFixed(2)}
+                        </strong>
                         {r.is_discount && (
                           <span className="text-[10px] text-amber-700 bg-amber-100 font-semibold px-1.5 py-0.2 rounded">
                             SALE
@@ -523,7 +872,12 @@ export const CatalogPage: React.FC = () => {
                       </div>
                       {r.normalized_unit_price && (
                         <span className="text-[10px] text-slate-500 font-medium block">
-                          €{r.normalized_unit_price.toFixed(2)} / {selectedProduct.default_unit === 'g' ? 'kg' : selectedProduct.default_unit === 'ml' ? 'L' : selectedProduct.default_unit}
+                          €{r.normalized_unit_price.toFixed(2)} /{' '}
+                          {selectedProduct.default_unit === 'g'
+                            ? 'kg'
+                            : selectedProduct.default_unit === 'ml'
+                            ? 'L'
+                            : selectedProduct.default_unit}
                         </span>
                       )}
                     </div>

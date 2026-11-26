@@ -13,7 +13,16 @@ from app.models.asset_account import (
     AssetAccountMetadataUpdate,
     AssetAccountMetadataRead,
 )
-from app.models.tag import Tag, TagBase, TagCreate, TagRead, ProductTagLink
+from app.models.tag import (
+    Tag,
+    TagBase,
+    TagCreate,
+    TagRead,
+    ProductTagLink,
+    TagImplication,
+    TagImplicationCreate,
+    TagImplicationRead,
+)
 from app.models.brand import Brand, BrandBase, BrandCreate, BrandRead
 from app.models.company import (
     Company,
@@ -26,8 +35,18 @@ from app.models.company import (
     CompanyAccountLinkRead,
     AccountCompanyAssign,
 )
-from app.models.product import Product, ProductBase, ProductCreate, ProductUpdate, ProductRead
+from app.models.product import (
+    Product,
+    ProductBase,
+    ProductCreate,
+    ProductUpdate,
+    ProductRead,
+    ItemFireflyAlias,
+    ItemFireflyAliasBase,
+    ItemFireflyAliasRead,
+)
 from app.models.price import PriceRecord, PriceRecordBase, PriceRecordCreate, PriceRecordRead
+from app.models.firefly_cache import FireflySyncedSplit, FireflySyncState, FireflySyncJob
 from app.models.receipt import (
     Receipt,
     ReceiptBase,
@@ -48,12 +67,15 @@ __all__ = [
     "AssetAccountType", "AssetAccountMetadata", "AssetAccountMetadataBase",
     "AssetAccountMetadataUpdate", "AssetAccountMetadataRead",
     "Tag", "TagBase", "TagCreate", "TagRead", "ProductTagLink",
+    "TagImplication", "TagImplicationCreate", "TagImplicationRead",
     "Brand", "BrandBase", "BrandCreate", "BrandRead",
     "Company", "CompanyBase", "CompanyCreate", "CompanyRead",
     "CompanyUpdate", "CompanyWithCountRead", "CompanyAccountLink",
     "CompanyAccountLinkRead", "AccountCompanyAssign",
     "Product", "ProductBase", "ProductCreate", "ProductUpdate", "ProductRead",
+    "ItemFireflyAlias", "ItemFireflyAliasBase", "ItemFireflyAliasRead",
     "PriceRecord", "PriceRecordBase", "PriceRecordCreate", "PriceRecordRead",
+    "FireflySyncedSplit", "FireflySyncState", "FireflySyncJob",
     "Receipt", "ReceiptBase", "ReceiptCreate", "ReceiptRead",
     "ReceiptItem", "ReceiptItemBase", "ReceiptItemCreate", "ReceiptItemRead",
     "ReceiptAttachment", "ReceiptAttachmentBase", "ReceiptPushRequest",

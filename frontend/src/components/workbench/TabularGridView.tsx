@@ -1,9 +1,92 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Plus, Tag, Trash2 } from 'lucide-react';
 import { DraftItemInput, useReceiptWorkbench } from '../../context/ReceiptWorkbenchContext';
 import { DraftReceiptItem, MeasureUnit, Product } from '../../types';
-import { InlineProductModal } from './InlineProductModal';
-import { MEASURE_UNITS, ProductCombobox, toMeasureUnit } from './ProductCombobox';
+import { ItemEditorModal } from '../catalog/ItemEditorModal';
+import { ProductCombobox } from './ProductCombobox';
+import {
+  PriceInputMode,
+  computePriceFromInput,
+  formatPackagingLabel,
+  toMeasureUnit,
+} from './productUtils';
+
+interface CommittedNumberInputProps {
+  value: number | undefined;
+  onCommit: (next: number | undefined) => void;
+  allowEmpty?: boolean;
+  integerOnly?: boolean;
+  min?: number;
+  step?: string;
+  placeholder?: string;
+  className?: string;
+  title?: string;
+}
+
+const CommittedNumberInput: React.FC<CommittedNumberInputProps> = ({
+  value,
+  onCommit,
+  allowEmpty = false,
+  integerOnly = false,
+  min = 0,
+  step = '0.01',
+  placeholder,
+  className,
+  title,
+}) => {
+  const [draft, setDraft] = useState(value !== undefined ? String(value) : '');
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) {
+      setDraft(value !== undefined ? String(value) : '');
+    }
+  }, [value, focused]);
+
+  return (
+    <input
+      type="number"
+      step={step}
+      min={min}
+      placeholder={placeholder}
+      title={title}
+      value={draft}
+      onFocus={() => setFocused(true)}
+      onChange={e => {
+        const raw = e.target.value;
+        setDraft(raw);
+        if (raw.trim() === '') {
+          if (allowEmpty) onCommit(undefined);
+          return;
+        }
+        const parsed = parseFloat(raw);
+        if (isNaN(parsed) || parsed < min) return;
+        if (integerOnly && !Number.isInteger(parsed)) return;
+        onCommit(parsed);
+      }}
+      onBlur={() => {
+        setFocused(false);
+        if (draft.trim() === '') {
+          if (allowEmpty) {
+            onCommit(undefined);
+          } else {
+            setDraft(value !== undefined ? String(value) : '');
+          }
+          return;
+        }
+        const parsed = parseFloat(draft);
+        if (
+          isNaN(parsed) ||
+          parsed < min ||
+          (integerOnly && !Number.isInteger(parsed))
+        ) {
+          setDraft(value !== undefined ? String(value) : '');
+        }
+      }}
+      className={className}
+    />
+  );
+};
 
 export const TabularGridView: React.FC = () => {
   const { draftItems, addItem, updateItem, removeItem } = useReceiptWorkbench();
@@ -11,9 +94,8 @@ export const TabularGridView: React.FC = () => {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [productLabel, setProductLabel] = useState('');
   const [qty, setQty] = useState('1');
-  const [unit, setUnit] = useState<MeasureUnit>('pcs');
-  const [pkgSize, setPkgSize] = useState('1');
-  const [paidPrice, setPaidPrice] = useState('');
+  const [priceMode, setPriceMode] = useState<PriceInputMode>('unit');
+  const [priceValue, setPriceValue] = useState('');
   const [regularPrice, setRegularPrice] = useState('');
   const [isDiscount, setIsDiscount] = useState(false);
 
@@ -30,9 +112,8 @@ export const TabularGridView: React.FC = () => {
     setSelectedProduct(null);
     setProductLabel('');
     setQty('1');
-    setUnit('pcs');
-    setPkgSize('1');
-    setPaidPrice('');
+    setPriceMode('unit');
+    setPriceValue('');
     setRegularPrice('');
     setIsDiscount(false);
     setActiveRowError(null);
@@ -41,8 +122,6 @@ export const TabularGridView: React.FC = () => {
   const applyProductToActiveRow = (prod: Product) => {
     setSelectedProduct(prod);
     setProductLabel(prod.name);
-    setUnit(toMeasureUnit(prod.default_unit));
-    setPkgSize(String(prod.package_size > 0 ? prod.package_size : 1));
     setQty('1');
     setActiveRowError(null);
     window.setTimeout(() => qtyInputRef.current?.focus(), 0);
@@ -50,43 +129,54 @@ export const TabularGridView: React.FC = () => {
 
   const commitActiveRow = () => {
     if (!selectedProduct) {
-      setActiveRowError('Select a product first.');
+      setActiveRowError('Select an item first.');
       productInputRef.current?.focus();
       return;
     }
     const parsedQty = parseFloat(qty);
-    const parsedPkg = parseFloat(pkgSize);
-    const parsedPaid = parseFloat(paidPrice);
-    const parsedReg = regularPrice.trim() !== '' ? parseFloat(regularPrice) : undefined;
-
     if (isNaN(parsedQty) || parsedQty <= 0) {
-      setActiveRowError('Qty must be > 0.');
+      setActiveRowError('Quantity / weight must be > 0.');
       return;
     }
-    if (isNaN(parsedPkg) || parsedPkg <= 0) {
-      setActiveRowError('Pkg size must be > 0.');
+    if (selectedProduct.sale_mode !== 'loose_weight' && !Number.isInteger(parsedQty)) {
+      setActiveRowError('Packaged items require a whole pack quantity (1, 2, ...).');
       return;
     }
-    if (isNaN(parsedPaid) || parsedPaid < 0) {
-      setActiveRowError('Enter valid paid price.');
+
+    const computed = computePriceFromInput(priceMode, priceValue, parsedQty);
+    if (!computed) {
+      setActiveRowError('Enter a valid price.');
       return;
     }
+
+    const parsedReg = regularPrice.trim() !== '' ? parseFloat(regularPrice) : undefined;
     if (parsedReg !== undefined && (isNaN(parsedReg) || parsedReg < 0)) {
       setActiveRowError('Regular price must be >= 0.');
       return;
     }
 
+    const effectiveTags =
+      selectedProduct.effective_tags && selectedProduct.effective_tags.length > 0
+        ? selectedProduct.effective_tags
+        : selectedProduct.tags;
+
     const input: DraftItemInput = {
       product_id: selectedProduct.id,
       product_name: selectedProduct.name,
       brand_name: selectedProduct.brand?.name,
+      sale_mode: selectedProduct.sale_mode || 'packaged',
+      pack_count: selectedProduct.pack_count || 1,
+      unit_size: selectedProduct.unit_size || selectedProduct.package_size || 1,
+      firefly_category_name: selectedProduct.firefly_category_name,
+      effective_tag_names: effectiveTags.map(t => t.name),
       quantity: parsedQty,
-      unit,
-      package_size: parsedPkg,
-      paid_price: parsedPaid,
+      unit: toMeasureUnit(selectedProduct.default_unit),
+      package_size: selectedProduct.package_size > 0 ? selectedProduct.package_size : 1,
+      paid_price: computed.paidPrice,
+      total_price: computed.totalPrice,
       regular_price: parsedReg,
       is_discount:
-        isDiscount || (parsedReg !== undefined && parsedPaid < parsedReg),
+        isDiscount || (parsedReg !== undefined && computed.paidPrice < parsedReg),
     };
     addItem(input);
     resetActiveRow();
@@ -100,12 +190,13 @@ export const TabularGridView: React.FC = () => {
     }
   };
 
-  const activeLineTotal =
-    Math.round((parseFloat(qty) || 0) * (parseFloat(paidPrice) || 0) * 100) / 100;
+  const parsedActiveQty = parseFloat(qty) || 0;
+  const activeComputed = computePriceFromInput(priceMode, priceValue, parsedActiveQty);
+  const activeLineTotal = activeComputed ? activeComputed.lineTotal : 0;
 
   const updateExistingNumber = (
     item: DraftReceiptItem,
-    field: 'quantity' | 'package_size' | 'paid_price' | 'regular_price',
+    field: 'quantity' | 'paid_price' | 'regular_price',
     raw: string
   ) => {
     if (field === 'regular_price' && raw.trim() === '') {
@@ -114,10 +205,15 @@ export const TabularGridView: React.FC = () => {
     }
     const parsed = parseFloat(raw);
     if (isNaN(parsed)) return;
-    if ((field === 'quantity' || field === 'package_size') && parsed <= 0) return;
+    if (field === 'quantity') {
+      if (parsed <= 0) return;
+      if (item.sale_mode !== 'loose_weight' && !Number.isInteger(parsed)) return;
+    }
     if ((field === 'paid_price' || field === 'regular_price') && parsed < 0) return;
     updateItem(item.temp_id, { [field]: parsed });
   };
+
+  const activeIsLoose = selectedProduct?.sale_mode === 'loose_weight';
 
   return (
     <div className="space-y-2">
@@ -126,13 +222,11 @@ export const TabularGridView: React.FC = () => {
           <thead className="bg-slate-50 text-slate-600 uppercase tracking-wider text-[11px]">
             <tr>
               <th className="px-3 py-3 text-left font-semibold w-10">#</th>
-              <th className="px-3 py-3 text-left font-semibold min-w-[220px]">Product</th>
-              <th className="px-2 py-3 text-left font-semibold w-20">Qty</th>
-              <th className="px-2 py-3 text-left font-semibold w-20">Unit</th>
-              <th className="px-2 py-3 text-left font-semibold w-24">Pkg Size</th>
-              <th className="px-2 py-3 text-left font-semibold w-28">Paid Price (€)</th>
-              <th className="px-2 py-3 text-left font-semibold w-28">Regular Price (€)</th>
-              <th className="px-2 py-3 text-center font-semibold w-20">Discount</th>
+              <th className="px-3 py-3 text-left font-semibold min-w-[260px]">Item</th>
+              <th className="px-2 py-3 text-left font-semibold w-28">Qty / Weight</th>
+              <th className="px-2 py-3 text-left font-semibold w-44">Price (€)</th>
+              <th className="px-2 py-3 text-left font-semibold w-28">Regular (€)</th>
+              <th className="px-2 py-3 text-center font-semibold w-20">Sale</th>
               <th className="px-3 py-3 text-right font-semibold w-24">Line Total</th>
               <th className="px-3 py-3 text-right font-semibold w-20">Actions</th>
             </tr>
@@ -159,63 +253,72 @@ export const TabularGridView: React.FC = () => {
                 <td className="px-3 py-2 text-slate-400 font-mono">{idx + 1}</td>
                 <td className="px-3 py-2">
                   <div className="font-semibold text-slate-900">{item.product_name}</div>
-                  {item.brand_name && (
-                    <div className="text-[11px] text-slate-400">{item.brand_name}</div>
-                  )}
-                </td>
-                <td className="px-2 py-2">
-                  <input
-                    type="number"
-                    step="any"
-                    min="0.001"
-                    value={item.quantity}
-                    onChange={e => updateExistingNumber(item, 'quantity', e.target.value)}
-                    className="w-full px-2 py-1 border border-slate-200 rounded-md text-xs"
-                  />
-                </td>
-                <td className="px-2 py-2">
-                  <select
-                    value={item.unit}
-                    onChange={e =>
-                      updateItem(item.temp_id, { unit: e.target.value as MeasureUnit })
-                    }
-                    className="w-full px-2 py-1 border border-slate-200 rounded-md text-xs bg-white"
-                  >
-                    {MEASURE_UNITS.map(u => (
-                      <option key={u} value={u}>
-                        {u}
-                      </option>
+                  <div className="flex flex-wrap items-center gap-1 mt-0.5 text-[10px] text-slate-500">
+                    <span className="bg-slate-100 px-1.5 py-0.5 rounded font-medium">
+                      {formatPackagingLabel(
+                        item.sale_mode,
+                        item.pack_count,
+                        item.unit_size,
+                        item.package_size,
+                        item.unit
+                      )}
+                    </span>
+                    {item.firefly_category_name && (
+                      <span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-medium">
+                        {item.firefly_category_name}
+                      </span>
+                    )}
+                    {item.effective_tag_names?.map(tName => (
+                      <span
+                        key={tName}
+                        className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded"
+                      >
+                        #{tName}
+                      </span>
                     ))}
-                  </select>
+                  </div>
                 </td>
                 <td className="px-2 py-2">
-                  <input
-                    type="number"
-                    step="any"
-                    min="0.001"
-                    value={item.package_size}
-                    onChange={e => updateExistingNumber(item, 'package_size', e.target.value)}
-                    className="w-full px-2 py-1 border border-slate-200 rounded-md text-xs"
-                  />
+                  <div className="flex items-center space-x-1">
+                    <CommittedNumberInput
+                      step={item.sale_mode === 'loose_weight' ? 'any' : '1'}
+                      min={item.sale_mode === 'loose_weight' ? 0.001 : 1}
+                      integerOnly={item.sale_mode !== 'loose_weight'}
+                      value={item.quantity}
+                      onCommit={next => {
+                        if (next !== undefined) updateExistingNumber(item, 'quantity', String(next));
+                      }}
+                      className="w-full px-2 py-1 border border-slate-200 rounded-md text-xs"
+                    />
+                    {item.sale_mode === 'loose_weight' && (
+                      <span className="text-[11px] text-slate-500 font-medium">
+                        {item.unit}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-2 py-2">
-                  <input
-                    type="number"
+                  <CommittedNumberInput
                     step="0.01"
-                    min="0"
+                    min={0}
                     value={item.paid_price}
-                    onChange={e => updateExistingNumber(item, 'paid_price', e.target.value)}
+                    onCommit={next => {
+                      if (next !== undefined) updateExistingNumber(item, 'paid_price', String(next));
+                    }}
                     className="w-full px-2 py-1 border border-slate-200 rounded-md text-xs font-semibold"
+                    title="Unit price (€)"
                   />
                 </td>
                 <td className="px-2 py-2">
-                  <input
-                    type="number"
+                  <CommittedNumberInput
                     step="0.01"
-                    min="0"
+                    min={0}
+                    allowEmpty
                     placeholder="Same"
-                    value={item.regular_price ?? ''}
-                    onChange={e => updateExistingNumber(item, 'regular_price', e.target.value)}
+                    value={item.regular_price}
+                    onCommit={next =>
+                      updateExistingNumber(item, 'regular_price', next !== undefined ? String(next) : '')
+                    }
                     className="w-full px-2 py-1 border border-slate-200 rounded-md text-xs"
                   />
                 </td>
@@ -252,7 +355,7 @@ export const TabularGridView: React.FC = () => {
                 if (
                   (e.key === 'Delete' || e.key === 'Backspace') &&
                   !selectedProduct &&
-                  paidPrice === '' &&
+                  priceValue === '' &&
                   productLabel === '' &&
                   (e.target as HTMLElement).tagName !== 'INPUT'
                 ) {
@@ -262,69 +365,106 @@ export const TabularGridView: React.FC = () => {
               }}
             >
               <td className="px-3 py-2.5 text-blue-600 font-bold">+</td>
-              <td className="px-3 py-2.5 overflow-visible">
+              <td className="px-3 py-2.5">
                 <ProductCombobox
                   selectedProductName={productLabel}
                   onSelect={applyProductToActiveRow}
                   onClearSelection={() => {
                     setSelectedProduct(null);
-                    setProductLabel('');
                   }}
                   onRequestCreate={initialName => {
                     setModalInitialName(initialName);
                     setModalOpen(true);
                   }}
                   inputRef={productInputRef}
-                  placeholder="Type product name..."
+                  placeholder="Type item name..."
                   onDropdownOpenChange={setComboboxOpen}
                   extraCreatedProduct={lastCreatedProduct}
                 />
+                {selectedProduct && (
+                  <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
+                    <span className="bg-white border border-slate-200 px-1.5 py-0.5 rounded font-medium">
+                      {formatPackagingLabel(
+                        selectedProduct.sale_mode,
+                        selectedProduct.pack_count,
+                        selectedProduct.unit_size,
+                        selectedProduct.package_size,
+                        selectedProduct.default_unit as MeasureUnit
+                      )}
+                    </span>
+                    {selectedProduct.firefly_category_name && (
+                      <span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-medium">
+                        {selectedProduct.firefly_category_name}
+                      </span>
+                    )}
+                    {(selectedProduct.effective_tags || selectedProduct.tags).map(t => (
+                      <span
+                        key={t.id}
+                        className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded"
+                      >
+                        #{t.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </td>
               <td className="px-2 py-2.5">
-                <input
-                  ref={qtyInputRef}
-                  type="number"
-                  step="any"
-                  min="0.001"
-                  value={qty}
-                  onChange={e => setQty(e.target.value)}
-                  className="w-full px-2 py-1.5 border border-slate-300 rounded-md text-xs bg-white"
-                />
+                <div className="flex items-center space-x-1">
+                  <input
+                    ref={qtyInputRef}
+                    type="number"
+                    step={activeIsLoose ? 'any' : '1'}
+                    min={activeIsLoose ? '0.001' : '1'}
+                    value={qty}
+                    onChange={e => setQty(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded-md text-xs bg-white"
+                  />
+                  {activeIsLoose && (
+                    <span className="text-[11px] font-semibold text-slate-600">
+                      {selectedProduct?.default_unit}
+                    </span>
+                  )}
+                </div>
               </td>
               <td className="px-2 py-2.5">
-                <select
-                  value={unit}
-                  onChange={e => setUnit(e.target.value as MeasureUnit)}
-                  className="w-full px-2 py-1.5 border border-slate-300 rounded-md text-xs bg-white"
-                >
-                  {MEASURE_UNITS.map(u => (
-                    <option key={u} value={u}>
-                      {u}
-                    </option>
-                  ))}
-                </select>
-              </td>
-              <td className="px-2 py-2.5">
-                <input
-                  type="number"
-                  step="any"
-                  min="0.001"
-                  value={pkgSize}
-                  onChange={e => setPkgSize(e.target.value)}
-                  className="w-full px-2 py-1.5 border border-slate-300 rounded-md text-xs bg-white"
-                />
-              </td>
-              <td className="px-2 py-2.5">
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  value={paidPrice}
-                  onChange={e => setPaidPrice(e.target.value)}
-                  onKeyDown={handlePriceKeyDown}
-                  className="w-full px-2 py-1.5 border border-slate-300 rounded-md text-xs font-semibold bg-white"
-                />
+                <div className="flex items-center space-x-1">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    value={priceValue}
+                    onChange={e => setPriceValue(e.target.value)}
+                    onKeyDown={handlePriceKeyDown}
+                    className="w-full min-w-0 px-2 py-1.5 border border-slate-300 rounded-md text-xs font-semibold bg-white"
+                  />
+                  <div className="inline-flex rounded-md border border-slate-300 bg-white overflow-hidden shrink-0 text-[10px] font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setPriceMode('unit')}
+                      className={`px-1.5 py-1 ${
+                        priceMode === 'unit'
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                      title="Enter unit price"
+                    >
+                      Unit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPriceMode('total')}
+                      className={`px-1.5 py-1 ${
+                        priceMode === 'total'
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                      title="Enter total line price"
+                    >
+                      Tot
+                    </button>
+                  </div>
+                </div>
               </td>
               <td className="px-2 py-2.5">
                 <input
@@ -375,15 +515,16 @@ export const TabularGridView: React.FC = () => {
       )}
       <p className="text-[11px] text-slate-400 px-1">
         Keyboard tips: <kbd className="px-1 py-0.5 bg-slate-100 rounded border">Tab</kbd> across
-        cells, press <kbd className="px-1 py-0.5 bg-slate-100 rounded border">Enter</kbd> in Paid or
-        Regular Price to commit the row and jump to the next product.
+        cells, toggle <kbd className="px-1 py-0.5 bg-slate-100 rounded border">Unit / Tot</kbd> as
+        needed, press <kbd className="px-1 py-0.5 bg-slate-100 rounded border">Enter</kbd> in Price
+        to commit the row.
       </p>
 
-      <InlineProductModal
+      <ItemEditorModal
         isOpen={modalOpen}
         initialName={modalInitialName}
         onClose={() => setModalOpen(false)}
-        onCreated={created => {
+        onSaved={created => {
           setLastCreatedProduct(created);
           applyProductToActiveRow(created);
         }}

@@ -1,7 +1,7 @@
 from datetime import datetime, date, time, timezone
 import math
 from typing import Optional, List, Literal
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.product import Product, ProductRead
 
@@ -68,18 +68,25 @@ class ReceiptAttachment(ReceiptAttachmentBase, table=True):
 class ReceiptItemCreate(SQLModel):
     product_id: int
     quantity: float = Field(default=1.0, gt=0)
-    unit: Literal["g", "kg", "ml", "l", "pcs"] = "pcs"
-    package_size: float = Field(default=1.0, gt=0)
-    paid_price: float = Field(ge=0)
+    unit: Optional[Literal["g", "kg", "ml", "l", "pcs"]] = None
+    package_size: Optional[float] = Field(default=None, gt=0)
+    paid_price: Optional[float] = Field(default=None, ge=0)
+    total_price: Optional[float] = Field(default=None, ge=0)
     regular_price: Optional[float] = Field(default=None, ge=0)
     is_discount: bool = False
 
-    @field_validator("quantity", "package_size", "paid_price", "regular_price")
+    @field_validator("quantity", "package_size", "paid_price", "total_price", "regular_price")
     @classmethod
     def _validate_finite_item_float(cls, v: Optional[float]) -> Optional[float]:
         if v is not None and not math.isfinite(v):
             raise ValueError("Item numeric values must be finite numbers")
         return v
+
+    @model_validator(mode="after")
+    def _ensure_price_present(self) -> "ReceiptItemCreate":
+        if self.paid_price is None and self.total_price is None:
+            raise ValueError("Either paid_price or total_price must be provided")
+        return self
 
 
 class ReceiptCreate(SQLModel):

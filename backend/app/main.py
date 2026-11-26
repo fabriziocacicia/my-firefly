@@ -13,6 +13,10 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.core.database import create_db_and_tables, engine, auto_migrate_sqlite_columns
 from app.services.firefly import firefly_client
+from app.services.firefly_sync_jobs import (
+    mark_interrupted_sync_jobs_failed,
+    shutdown_firefly_sync_jobs,
+)
 
 
 def run_db_migrations(target_engine=engine) -> None:
@@ -57,7 +61,9 @@ def run_db_migrations(target_engine=engine) -> None:
 async def lifespan(app: FastAPI):
     # Initialize and migrate SQLite schema on startup
     run_db_migrations(engine)
+    mark_interrupted_sync_jobs_failed(engine)
     yield
+    await shutdown_firefly_sync_jobs(engine)
     await firefly_client.aclose()
 
 

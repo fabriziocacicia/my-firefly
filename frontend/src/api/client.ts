@@ -1,5 +1,7 @@
 import {
-  Company, Product, Brand, Tag, PriceRecord,
+  Company, Product, Brand, Tag, TagImplication, TagSyncResponse, FireflyCategoryBrief,
+  PriceRecord, SaleMode, FireflySyncStatus, SyncTransactionsResponse,
+  BacklogResponse, BacklogStatusFilter, FireflySyncJob, TagAnalyticsResponse,
   FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount, FireflyRevenueAccount,
   AccountMetadata, AccountMetadataUpdate, AssetAccountMetadataUpdate,
   VoucherRechargeRequest, VoucherRechargeResponse,
@@ -31,11 +33,14 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
       message = errorBody.detail;
     } else if (Array.isArray(errorBody?.detail)) {
       message = errorBody.detail
-        .map((e: any) => {
+        .map((e: unknown) => {
           if (!e) return '';
           if (typeof e === 'string') return e;
-          if (typeof e.msg === 'string') return e.msg;
-          if (typeof e.detail === 'string') return e.detail;
+          if (typeof e === 'object') {
+            const obj = e as Record<string, unknown>;
+            if (typeof obj.msg === 'string') return obj.msg;
+            if (typeof obj.detail === 'string') return obj.detail;
+          }
           return JSON.stringify(e);
         })
         .filter(Boolean)
@@ -75,6 +80,7 @@ export const api = {
       request<FireflyExpenseAccount>(`/firefly/expense-accounts/${id}`),
     getAssetAccounts: () => request<FireflyAssetAccount[]>('/firefly/asset-accounts'),
     getRevenueAccounts: () => request<FireflyRevenueAccount[]>('/firefly/revenue-accounts'),
+    getCategories: () => request<FireflyCategoryBrief[]>('/firefly/categories'),
   },
 
   assetAccounts: {
@@ -126,28 +132,159 @@ export const api = {
     list: (group?: string) => request<Tag[]>(group ? `/tags/?group=${group}` : '/tags/'),
     create: (data: { name: string; group?: string; color?: string }) =>
       request<Tag>('/tags/', { method: 'POST', body: JSON.stringify(data) }),
+    syncFirefly: () =>
+      request<TagSyncResponse>('/tags/sync-firefly', { method: 'POST' }),
+    listImplications: () => request<TagImplication[]>('/tags/implications'),
+    createImplication: (child_tag_id: number, parent_tag_id: number) =>
+      request<TagImplication>('/tags/implications', {
+        method: 'POST',
+        body: JSON.stringify({ child_tag_id, parent_tag_id }),
+      }),
+    deleteImplication: (child_tag_id: number, parent_tag_id: number) =>
+      request<void>(`/tags/implications/${child_tag_id}/${parent_tag_id}`, {
+        method: 'DELETE',
+      }),
   },
 
   products: {
-    list: (params?: { search?: string; brand_id?: number; tag_id?: number }) => {
+    list: (
+      params?: {
+        search?: string;
+        brand_id?: number;
+        tag_id?: number;
+        firefly_category_name?: string;
+      },
+      options?: { signal?: AbortSignal }
+    ) => {
       const searchParams = new URLSearchParams();
       if (params?.search) searchParams.append('search', params.search);
       if (params?.brand_id) searchParams.append('brand_id', params.brand_id.toString());
       if (params?.tag_id) searchParams.append('tag_id', params.tag_id.toString());
-      return request<Product[]>(`/products/?${searchParams.toString()}`);
+      if (params?.firefly_category_name) {
+        searchParams.append('firefly_category_name', params.firefly_category_name);
+      }
+      return request<Product[]>(`/products/?${searchParams.toString()}`, {
+        signal: options?.signal,
+      });
     },
+    get: (id: number) => request<Product>(`/products/${id}`),
     create: (data: {
       name: string;
       brand_id?: number;
       barcode?: string;
+      sale_mode?: SaleMode;
+      pack_count?: number;
+      unit_size?: number;
       default_unit: string;
-      package_size: number;
+      package_size?: number;
+      firefly_category_id?: number | null;
+      firefly_category_name?: string | null;
       tag_ids: number[];
       notes?: string;
     }) => request<Product>('/products/', { method: 'POST', body: JSON.stringify(data) }),
+    update: (
+      id: number,
+      data: {
+        name?: string;
+        brand_id?: number | null;
+        barcode?: string | null;
+        sale_mode?: SaleMode;
+        pack_count?: number;
+        unit_size?: number;
+        default_unit?: string;
+        package_size?: number;
+        firefly_category_id?: number | null;
+        firefly_category_name?: string | null;
+        tag_ids?: number[];
+        notes?: string | null;
+      }
+    ) => request<Product>(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    propagateFirefly: (id: number) =>
+      request<FireflySyncJob>(`/products/${id}/propagate-firefly`, {
+        method: 'POST',
+      }),
+    delete: (id: number) => request<void>(`/products/${id}`, { method: 'DELETE' }),
     listBrands: () => request<Brand[]>('/products/brands'),
     createBrand: (data: { name: string; is_private_label?: boolean }) =>
       request<Brand>('/products/brands', { method: 'POST', body: JSON.stringify(data) }),
+  },
+
+  fireflySync: {
+    getStatus: () => request<FireflySyncStatus>('/firefly-sync/status'),
+    syncTransactions: (mode: 'incremental' | 'full' = 'incremental') =>
+      request<SyncTransactionsResponse>(`/firefly-sync/transactions?mode=${mode}`, {
+        method: 'POST',
+      }),
+    getBacklog: (
+      params?: { status?: BacklogStatusFilter; category?: string | null; search?: string },
+      options?: { signal?: AbortSignal }
+    ) => {
+      const searchParams = new URLSearchParams();
+      if (params?.status) {
+        searchParams.append('status', params.status);
+      }
+      if (params?.category !== undefined && params.category !== null) {
+        searchParams.append('category', params.category);
+      }
+      if (params?.search) {
+        searchParams.append('search', params.search);
+      }
+      const qs = searchParams.toString();
+      return request<BacklogResponse>(
+        qs ? `/firefly-sync/backlog?${qs}` : '/firefly-sync/backlog',
+        { signal: options?.signal }
+      );
+    },
+    linkBacklog: (product_id: number, transaction_journal_ids: number[]) =>
+      request<FireflySyncJob>('/firefly-sync/backlog/link', {
+        method: 'POST',
+        body: JSON.stringify({ product_id, transaction_journal_ids }),
+      }),
+    listJobs: (includeDismissed: boolean = false) =>
+      request<FireflySyncJob[]>(
+        `/firefly-sync/jobs?include_dismissed=${includeDismissed ? 'true' : 'false'}`
+      ),
+    getJob: (jobId: number) => request<FireflySyncJob>(`/firefly-sync/jobs/${jobId}`),
+    dismissJob: (jobId: number) =>
+      request<FireflySyncJob>(`/firefly-sync/jobs/${jobId}/dismiss`, {
+        method: 'POST',
+      }),
+    jobsStreamUrl: `${BASE_URL}/firefly-sync/jobs/stream`,
+    ignoreBacklog: (transaction_journal_ids: number[], ignored: boolean = true) =>
+      request<{ updated_count: number; ignored: boolean }>('/firefly-sync/backlog/ignore', {
+        method: 'POST',
+        body: JSON.stringify({ transaction_journal_ids, ignored }),
+      }),
+    unlinkBacklog: (transaction_journal_ids: number[]) =>
+      request<{ updated_count: number }>('/firefly-sync/backlog/unlink', {
+        method: 'POST',
+        body: JSON.stringify({ transaction_journal_ids }),
+      }),
+  },
+
+  analytics: {
+    getTagAnalytics: (params?: {
+      tag_ids?: number[];
+      category_name?: string;
+      start_date?: string;
+      end_date?: string;
+    }) => {
+      const searchParams = new URLSearchParams();
+      for (const tid of params?.tag_ids || []) {
+        searchParams.append('tag_ids', String(tid));
+      }
+      if (params?.category_name) {
+        searchParams.append('category_name', params.category_name);
+      }
+      if (params?.start_date) {
+        searchParams.append('start_date', params.start_date);
+      }
+      if (params?.end_date) {
+        searchParams.append('end_date', params.end_date);
+      }
+      const qs = searchParams.toString();
+      return request<TagAnalyticsResponse>(qs ? `/analytics/tags?${qs}` : '/analytics/tags');
+    },
   },
 
   prices: {

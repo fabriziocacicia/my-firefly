@@ -1,6 +1,8 @@
 from fastapi import APIRouter
 from app.api.v1 import (
+    analytics,
     firefly,
+    firefly_sync,
     companies,
     products,
     prices,
@@ -14,7 +16,9 @@ from app.api.v1 import (
 
 api_router = APIRouter()
 
+api_router.include_router(analytics.router)
 api_router.include_router(firefly.router)
+api_router.include_router(firefly_sync.router)
 api_router.include_router(companies.router)
 api_router.include_router(products.router)
 api_router.include_router(prices.router)
