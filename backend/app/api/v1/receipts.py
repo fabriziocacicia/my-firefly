@@ -55,6 +55,9 @@ def _receipt_loader_options():
         selectinload(Receipt.items)
         .selectinload(ReceiptItem.product)
         .selectinload(Product.tags),
+        selectinload(Receipt.items)
+        .selectinload(ReceiptItem.product)
+        .selectinload(Product.aliases),
         selectinload(Receipt.attachments),
     ]
 
@@ -132,14 +135,6 @@ def _allocate_weighted_cents(weights: List[int], target_cents: int) -> List[int]
     return [1 + q for q in quotients]
 
 
-def _allocate_receipt_cents(
-    billable_items: List[ReceiptItem], target_cents: int
-) -> List[int]:
-    """Allocates `target_cents` across ReceiptItem entries using Largest Remainder Method."""
-    weights = [max(1, round(item.line_total * 100)) for item in billable_items]
-    return _allocate_weighted_cents(weights, target_cents)
-
-
 def _expand_billable_split_units(
     billable_items: List[ReceiptItem],
 ) -> list[tuple[ReceiptItem, int, str]]:
@@ -161,44 +156,6 @@ def _expand_billable_split_units(
             unit_weight = base_cents + (1 if idx < remainder else 0)
             units.append((item, max(1, unit_weight), ""))
     return units
-
-
-def _partition_voucher_and_card_splits(
-    billable_items: List[ReceiptItem],
-    allocated_cents: List[int],
-    voucher_cents: int,
-) -> tuple[list[tuple[ReceiptItem, int, str]], list[tuple[ReceiptItem, int, str]]]:
-    """
-    Sequential Boundary Partitioning:
-    Allocates prorated items sequentially to Transaction 1 (Vouchers) until reaching
-    `voucher_cents`. Only splits a crossover item if cumulative cents exceed `voucher_cents`.
-    """
-    voucher_splits: list[tuple[ReceiptItem, int, str]] = []
-    card_splits: list[tuple[ReceiptItem, int, str]] = []
-    cumulative = 0
-    crossed = False
-
-    for item, item_cents in zip(billable_items, allocated_cents):
-        if crossed:
-            card_splits.append((item, item_cents, ""))
-            continue
-
-        if cumulative + item_cents < voucher_cents:
-            voucher_splits.append((item, item_cents, ""))
-            cumulative += item_cents
-        elif cumulative + item_cents == voucher_cents:
-            voucher_splits.append((item, item_cents, ""))
-            cumulative += item_cents
-            crossed = True
-        else:
-            split_a = voucher_cents - cumulative
-            split_b = item_cents - split_a
-            voucher_splits.append((item, split_a, " [Voucher]"))
-            card_splits.append((item, split_b, " [Card Remainder]"))
-            cumulative = voucher_cents
-            crossed = True
-
-    return voucher_splits, card_splits
 
 
 def _partition_split_units_for_vouchers(

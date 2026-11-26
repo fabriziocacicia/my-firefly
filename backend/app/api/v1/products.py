@@ -3,10 +3,10 @@ from sqlalchemy import or_
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
-from app.api.v1.firefly_sync import (
+from app.services.firefly_sync_jobs import (
     FireflySyncJobResponse,
-    _serialize_job,
     enqueue_firefly_rewrite_job,
+    serialize_sync_job,
 )
 from app.core.database import get_session
 from app.models.brand import Brand, BrandCreate, BrandRead
@@ -44,7 +44,10 @@ def _compute_affected_firefly_counts(
         select(
             FireflySyncedSplit.linked_product_id,
             FireflySyncedSplit.firefly_transaction_id,
-        ).where(FireflySyncedSplit.linked_product_id.in_(product_ids))
+        ).where(
+            FireflySyncedSplit.linked_product_id.in_(product_ids),
+            FireflySyncedSplit.is_ignored.is_(False),
+        )
     ).all()
     for pid, tx_id in synced_rows:
         if pid is not None and tx_id is not None:
@@ -173,6 +176,9 @@ def get_product(product_id: int, session: Session = Depends(get_session)):
 
 @router.post("/", response_model=ProductRead)
 def create_product(product_in: ProductCreate, session: Session = Depends(get_session)):
+    if product_in.brand_id is not None and not session.get(Brand, product_in.brand_id):
+        raise HTTPException(status_code=404, detail="Brand not found")
+
     product = Product(
         name=product_in.name.strip(),
         brand_id=product_in.brand_id,
@@ -191,8 +197,7 @@ def create_product(product_in: ProductCreate, session: Session = Depends(get_ses
         notes=product_in.notes,
     )
     session.add(product)
-    session.commit()
-    session.refresh(product)
+    session.flush()
 
     for tid in dict.fromkeys(product_in.tag_ids):
         tag = session.get(Tag, tid)
@@ -213,6 +218,9 @@ def update_product(
     product = _load_product_or_404(session, product_id)
     updates = product_in.model_dump(exclude_unset=True)
     tag_ids = updates.pop("tag_ids", None)
+
+    if updates.get("brand_id") is not None and not session.get(Brand, updates["brand_id"]):
+        raise HTTPException(status_code=404, detail="Brand not found")
 
     for key, value in updates.items():
         if key == "name" and isinstance(value, str):
@@ -255,19 +263,48 @@ async def propagate_product_to_firefly(
     session: Session = Depends(get_session),
 ):
     """
-    Enqueues a background job to rewrite all linked Firefly III splits for
-    `product_id` so their description, category, and expanded tags match the item.
+    Enqueues a background job to rewrite all linked Firefly III splits (and any
+    unsynced pushed receipt transactions) for `product_id`.
     """
     product = _load_product_or_404(session, product_id)
     linked_splits = session.exec(
         select(FireflySyncedSplit).where(
-            FireflySyncedSplit.linked_product_id == product.id
+            FireflySyncedSplit.linked_product_id == product.id,
+            FireflySyncedSplit.is_ignored.is_(False),
         )
     ).all()
+    synced_tx_ids = {s.firefly_transaction_id for s in linked_splits}
+    receipt_tx_rows = session.exec(
+        select(
+            Receipt.firefly_transaction_id,
+            Receipt.firefly_voucher_transaction_id,
+        )
+        .select_from(Receipt)
+        .join(ReceiptItem, ReceiptItem.receipt_id == Receipt.id)
+        .where(ReceiptItem.product_id == product.id)
+    ).all()
+    extra_tx_ids: set[int] = set()
+    for tx_id, v_tx_id in receipt_tx_rows:
+        if tx_id is not None and tx_id not in synced_tx_ids:
+            extra_tx_ids.add(tx_id)
+        if v_tx_id is not None and v_tx_id not in synced_tx_ids:
+            extra_tx_ids.add(v_tx_id)
+
+    match_descriptions = {
+        format_firefly_description(product).lower(),
+        product.name.strip().lower(),
+        *(a.normalized_description for a in product.aliases),
+    }
+
     job = enqueue_firefly_rewrite_job(
-        session, product, linked_splits, job_type="product_propagate"
+        session,
+        product,
+        linked_splits,
+        job_type="product_propagate",
+        extra_tx_ids=extra_tx_ids,
+        match_descriptions_lower=match_descriptions,
     )
-    return _serialize_job(job)
+    return serialize_sync_job(job)
 
 
 @router.delete("/{product_id}", status_code=204)

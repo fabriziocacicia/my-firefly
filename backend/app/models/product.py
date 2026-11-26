@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional, List, Literal
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.tag import Tag, TagRead, ProductTagLink
 from app.models.brand import Brand, BrandRead
@@ -63,6 +63,14 @@ class ProductCreate(SQLModel):
     notes: Optional[str] = None
     tag_ids: List[int] = []
 
+    @field_validator("name")
+    @classmethod
+    def _validate_non_blank_name(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Item name cannot be blank")
+        return cleaned
+
     @model_validator(mode="after")
     def _sync_packaging_fields(self) -> "ProductCreate":
         if self.sale_mode == "loose_weight":
@@ -94,6 +102,20 @@ class ProductUpdate(SQLModel):
     firefly_category_name: Optional[str] = None
     notes: Optional[str] = None
     tag_ids: Optional[List[int]] = None
+
+    @model_validator(mode="after")
+    def _reject_null_required_fields(self) -> "ProductUpdate":
+        sent = self.model_fields_set
+        non_nullable = ("name", "sale_mode", "pack_count", "unit_size", "default_unit")
+        for field_name in non_nullable:
+            if field_name in sent and getattr(self, field_name) is None:
+                raise ValueError(f"Field '{field_name}' cannot be null")
+        if "name" in sent and isinstance(self.name, str):
+            cleaned = self.name.strip()
+            if not cleaned:
+                raise ValueError("Item name cannot be blank")
+            self.name = cleaned
+        return self
 
 
 class ProductRead(ProductBase):

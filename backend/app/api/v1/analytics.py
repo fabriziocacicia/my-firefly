@@ -104,13 +104,18 @@ def get_tag_analytics(
     count_by_pid: dict[int, int] = {pid: 0 for pid in matched_ids}
 
     # Collect Firefly transaction IDs already owned by companion-app receipts to prevent double counting
-    all_receipts = session.exec(select(Receipt)).all()
+    receipt_tx_rows = session.exec(
+        select(Receipt.firefly_transaction_id, Receipt.firefly_voucher_transaction_id).where(
+            (Receipt.firefly_transaction_id.is_not(None))
+            | (Receipt.firefly_voucher_transaction_id.is_not(None))
+        )
+    ).all()
     pushed_ff_tx_ids: set[int] = set()
-    for r in all_receipts:
-        if r.firefly_transaction_id is not None:
-            pushed_ff_tx_ids.add(r.firefly_transaction_id)
-        if r.firefly_voucher_transaction_id is not None:
-            pushed_ff_tx_ids.add(r.firefly_voucher_transaction_id)
+    for tx_id, v_tx_id in receipt_tx_rows:
+        if tx_id is not None:
+            pushed_ff_tx_ids.add(tx_id)
+        if v_tx_id is not None:
+            pushed_ff_tx_ids.add(v_tx_id)
 
     # 1. Companion ReceiptItem observations
     ri_query = (
@@ -126,9 +131,10 @@ def get_tag_analytics(
         spend_cents_by_pid[ri.product_id] += round(ri.line_total * 100)
         count_by_pid[ri.product_id] += 1
 
-    # 2. Historical linked FireflySyncedSplit observations (excluding pushed receipt tx IDs)
+    # 2. Historical linked FireflySyncedSplit observations (excluding pushed receipt tx IDs and ignored splits)
     split_query = select(FireflySyncedSplit).where(
-        FireflySyncedSplit.linked_product_id.in_(matched_ids)
+        FireflySyncedSplit.linked_product_id.in_(matched_ids),
+        FireflySyncedSplit.is_ignored.is_(False),
     )
     if start_date is not None:
         split_query = split_query.where(FireflySyncedSplit.tx_date >= start_date)

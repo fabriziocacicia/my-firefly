@@ -4,7 +4,7 @@ from datetime import date
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session
+from sqlmodel import SQLModel, Session, select
 
 from app.core.database import configure_sqlite_pragmas, get_session
 from app.main import app
@@ -249,6 +249,29 @@ class TagAnalyticsTests(unittest.TestCase):
         )
         self.assertEqual(bio_resp.status_code, 200)
         self.assertEqual(bio_resp.json()["total_spend"], 8.7)
+
+        # Date window excludes synced split on 2026-11-10, keeps 2026-11-20 receipt (€4.80) + Pasta Bio (€1.50)
+        window_resp = self.client.get(
+            f"/api/v1/analytics/tags?tag_ids={self.tag_ids['Bio']}&start_date=2026-11-15&category_name=Groceries"
+        )
+        self.assertEqual(window_resp.status_code, 200)
+        self.assertEqual(window_resp.json()["total_spend"], 6.3)
+
+        # Ignored split is excluded even if linked_product_id is set
+        with Session(self.engine) as session:
+            s551 = session.exec(
+                select(FireflySyncedSplit).where(FireflySyncedSplit.transaction_journal_id == 551)
+            ).first()
+            s551.is_ignored = True
+            session.add(s551)
+            session.commit()
+        after_ignore = self.client.get(f"/api/v1/analytics/tags?tag_ids={self.tag_ids['Bio']}")
+        self.assertEqual(after_ignore.json()["total_spend"], 6.3)
+
+        # Empty tag_ids returns all catalog items
+        all_resp = self.client.get("/api/v1/analytics/tags")
+        self.assertEqual(all_resp.status_code, 200)
+        self.assertEqual(all_resp.json()["matching_item_count"], 3)
 
 
 if __name__ == "__main__":

@@ -146,8 +146,12 @@ async def create_tag(tag_in: TagCreate, session: Session = Depends(get_session))
             if ff_id is None:
                 created_resp = await firefly_client.create_tag(clean_name)
                 pair = _extract_firefly_tag_pair(created_resp.get("data", {}))
-                if pair:
-                    ff_id, ff_name = pair
+                if not pair:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Firefly III returned an unexpected response when creating the tag.",
+                    )
+                ff_id, ff_name = pair
         except httpx.HTTPError as exc:
             raise HTTPException(
                 status_code=502,

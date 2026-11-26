@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session
+from sqlmodel import SQLModel, Session, select
 
 from app.core.database import configure_sqlite_pragmas, get_session
 from app.main import app
@@ -327,7 +327,9 @@ class CanonicalItemsAndReceiptsTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/v1/products/{p1_id}").status_code, 404)
 
         with Session(self.engine) as session:
-            split = session.get(FireflySyncedSplit, 1)
+            split = session.exec(
+                select(FireflySyncedSplit).where(FireflySyncedSplit.transaction_journal_id == 8801)
+            ).first()
             self.assertIsNotNone(split)
             self.assertIsNone(split.linked_product_id)
 
@@ -352,6 +354,86 @@ class CanonicalItemsAndReceiptsTests(unittest.TestCase):
 
         del_conflict = self.client.delete(f"/api/v1/products/{p2['id']}")
         self.assertEqual(del_conflict.status_code, 409)
+
+    def test_product_validation_rejects_blank_name_null_required_and_missing_brand(self):
+        self.assertEqual(
+            self.client.post("/api/v1/products/", json={"name": "   "}).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.post("/api/v1/products/", json={"name": "Valid", "brand_id": 99999}).status_code,
+            404,
+        )
+        created = self.client.post("/api/v1/products/", json={"name": "Valid Item"}).json()
+        self.assertEqual(
+            self.client.patch(f"/api/v1/products/{created['id']}", json={"pack_count": None}).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.patch(f"/api/v1/products/{created['id']}", json={"name": "  "}).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.patch(f"/api/v1/products/{created['id']}", json={"brand_id": 99999}).status_code,
+            404,
+        )
+
+    def test_push_receipt_split_vouchers_with_multipack_expansion(self):
+        p = self.client.post(
+            "/api/v1/products/",
+            json={"name": "Succo", "sale_mode": "packaged", "pack_count": 1, "unit_size": 1, "default_unit": "l"},
+        ).json()
+        mock_expense = AsyncMock(
+            return_value={"id": "50", "attributes": {"name": "Conad", "type": "expense", "active": True}}
+        )
+        mock_assets = AsyncMock(
+            return_value=[
+                {"id": "1", "attributes": {"type": "asset", "name": "Carta", "current_balance": "500.00"}},
+                {"id": "2", "attributes": {"type": "asset", "name": "Buoni", "current_balance": "100.00"}},
+            ]
+        )
+        with (
+            patch("app.api.v1.receipts.firefly_client.get_expense_account", new=mock_expense),
+            patch("app.api.v1.receipts.firefly_client.get_all_asset_accounts", new=mock_assets),
+        ):
+            rec_resp = self.client.post(
+                "/api/v1/receipts/",
+                json={
+                    "firefly_account_id": 50,
+                    "source_account_id": 1,
+                    "voucher_account_id": 2,
+                    "payment_mode": "split_vouchers",
+                    "voucher_count": 1,
+                    "voucher_unit_value": 5.0,
+                    "purchase_date": "2026-11-26",
+                    "purchase_time": "12:00:00",
+                    "items": [{"product_id": p["id"], "quantity": 3, "paid_price": 3.00}],
+                },
+            )
+            self.assertEqual(rec_resp.status_code, 200)
+            rec_id = rec_resp.json()["id"]
+
+        captured = []
+        tx_seq = 2000
+
+        async def mock_create_tx(payload):
+            nonlocal tx_seq
+            tx_seq += 1
+            captured.append(payload)
+            return {"data": {"id": str(tx_seq)}}
+
+        with (
+            patch("app.api.v1.receipts.firefly_client.get_expense_account", new=mock_expense),
+            patch("app.api.v1.receipts.firefly_client.get_all_asset_accounts", new=mock_assets),
+            patch("app.api.v1.receipts.firefly_client.create_transaction", side_effect=mock_create_tx),
+        ):
+            push_resp = self.client.post(f"/api/v1/receipts/{rec_id}/push-to-firefly")
+        self.assertEqual(push_resp.status_code, 200)
+        self.assertEqual(len(captured), 2)
+        voucher_sum = sum(round(float(s["amount"]) * 100) for s in captured[0]["transactions"])
+        card_sum = sum(round(float(s["amount"]) * 100) for s in captured[1]["transactions"])
+        self.assertEqual(voucher_sum, 500)
+        self.assertEqual(card_sum, 400)
 
 
 if __name__ == "__main__":

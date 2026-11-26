@@ -16,8 +16,9 @@ from sqlalchemy import create_engine, inspect, pool, text
 from sqlmodel import Session, SQLModel
 
 from app.api.v1.receipts import (
-    _allocate_receipt_cents,
-    _partition_voucher_and_card_splits,
+    _allocate_weighted_cents,
+    _expand_billable_split_units,
+    _partition_split_units_for_vouchers,
 )
 from app.core.config import settings
 from app.core.database import get_session
@@ -62,8 +63,8 @@ class PricingAndSplitMathTests(unittest.TestCase):
                 package_size=1, paid_price=0.05, regular_price=0.05, line_total=0.05,
             ),
         ]
-        # With €9.00 basket discount, total_cents = 105 cents across 2 items -> each >= 1 cent
-        allocated = _allocate_receipt_cents(items, 105)
+        units = _expand_billable_split_units(items)
+        allocated = _allocate_weighted_cents([w for _, w, _ in units], 105)
         self.assertEqual(sum(allocated), 105)
         self.assertTrue(all(c >= 1 for c in allocated))
 
@@ -82,19 +83,20 @@ class PricingAndSplitMathTests(unittest.TestCase):
                 package_size=1, paid_price=4.00, line_total=4.00,
             ),
         ]
+        units = [(i, w, "") for i, w in zip(items, [600, 800, 400])]
         allocated = [600, 800, 400]
 
         # Crossover case: voucher covers 10.32 -> item 2 splits 4.32 + 3.68
-        v_splits, c_splits = _partition_voucher_and_card_splits(items, allocated, 1032)
+        v_splits, c_splits = _partition_split_units_for_vouchers(units, allocated, 1032)
         self.assertEqual(sum(c for _, c, _ in v_splits), 1032)
         self.assertEqual(sum(c for _, c, _ in c_splits), 768)
         self.assertEqual(v_splits[-1][0].product_id, 2)
-        self.assertEqual(v_splits[-1][2], " [Voucher]")
+        self.assertIn("[Voucher]", v_splits[-1][2])
         self.assertEqual(c_splits[0][0].product_id, 2)
-        self.assertEqual(c_splits[0][2], " [Card Remainder]")
+        self.assertIn("[Card Remainder]", c_splits[0][2])
 
         # Exact boundary case: voucher covers 14.00 -> item 2 stays whole on voucher, no €0.00 split on card
-        v_exact, c_exact = _partition_voucher_and_card_splits(items, allocated, 1400)
+        v_exact, c_exact = _partition_split_units_for_vouchers(units, allocated, 1400)
         self.assertEqual([i.product_id for i, _, _ in v_exact], [1, 2])
         self.assertEqual([i.product_id for i, _, _ in c_exact], [3])
         self.assertEqual(v_exact[-1][2], "")
