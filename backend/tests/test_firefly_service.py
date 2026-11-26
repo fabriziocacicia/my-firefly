@@ -295,6 +295,120 @@ class FireflyServiceTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await client.aclose()
 
+    async def test_get_all_categories_and_tags_paginated_and_create_tag(self):
+        import json as json_mod
+
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if "/api/v1/categories" in url:
+                page = request.url.params.get("page", "1")
+                if page == "1":
+                    return httpx.Response(
+                        200,
+                        json={
+                            "data": [{"id": "1", "attributes": {"name": "Groceries"}}],
+                            "meta": {"pagination": {"total_pages": 2}},
+                        },
+                    )
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [{"id": "2", "attributes": {"name": "Utilities"}}],
+                        "meta": {"pagination": {"total_pages": 2}},
+                    },
+                )
+            if request.method == "GET" and "/api/v1/tags" in url:
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [{"id": "11", "attributes": {"tag": "Mele"}}],
+                        "meta": {"pagination": {"total_pages": 1}},
+                    },
+                )
+            if request.method == "POST" and "/api/v1/tags" in url:
+                captured["tag_body"] = json_mod.loads(request.content.decode("utf-8"))
+                return httpx.Response(
+                    200,
+                    json={"data": {"id": "12", "attributes": {"tag": "Bio"}}},
+                )
+            return httpx.Response(404)
+
+        client = FireflyClient(
+            base_url="http://mock-firefly",
+            token="mock-token",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            cats = await client.get_all_categories()
+            self.assertEqual([c["attributes"]["name"] for c in cats], ["Groceries", "Utilities"])
+
+            tags = await client.get_all_tags()
+            self.assertEqual([t["attributes"]["tag"] for t in tags], ["Mele"])
+
+            created = await client.create_tag("Bio")
+            self.assertEqual(created["data"]["id"], "12")
+            self.assertEqual(captured["tag_body"], {"tag": "Bio"})
+        finally:
+            await client.aclose()
+
+    async def test_get_and_update_transactions(self):
+        import json as json_mod
+
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = str(request.url)
+            if request.method == "GET" and "/api/v1/transactions/55" in url:
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "id": "55",
+                            "attributes": {
+                                "transactions": [
+                                    {"transaction_journal_id": "551", "description": "mele rosse bioo 600g"},
+                                    {"transaction_journal_id": "552", "description": "Latte"},
+                                ]
+                            },
+                        }
+                    },
+                )
+            if request.method == "PUT" and "/api/v1/transactions/55" in url:
+                captured["put_body"] = json_mod.loads(request.content.decode("utf-8"))
+                return httpx.Response(200, json={"data": {"id": "55"}})
+            if request.method == "GET" and "/api/v1/transactions" in url:
+                captured["tx_params"] = dict(request.url.params)
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [{"id": "55", "attributes": {"transactions": []}}],
+                        "meta": {"pagination": {"total_pages": 1}},
+                    },
+                )
+            return httpx.Response(404)
+
+        client = FireflyClient(
+            base_url="http://mock-firefly",
+            token="mock-token",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+        try:
+            txs = await client.get_all_transactions(tx_type="withdrawal", start="2026-11-01")
+            self.assertEqual(len(txs), 1)
+            self.assertEqual(captured["tx_params"]["type"], "withdrawal")
+            self.assertEqual(captured["tx_params"]["start"], "2026-11-01")
+
+            single = await client.get_transaction_by_id(55)
+            self.assertIsNotNone(single)
+            self.assertEqual(len(single["attributes"]["transactions"]), 2)
+
+            await client.update_transaction(55, {"apply_rules": False, "transactions": []})
+            self.assertEqual(captured["put_body"]["apply_rules"], False)
+        finally:
+            await client.aclose()
+
 
 if __name__ == "__main__":
     unittest.main()
