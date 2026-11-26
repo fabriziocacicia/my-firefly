@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowRight, CheckCircle2, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { api } from '../../api/client';
 import { Tag, TagImplication } from '../../types';
+import { TagCombobox } from '../common/TagCombobox';
 import { getEffectiveTagsForIds } from '../workbench/productUtils';
 
 interface TagHierarchyTabProps {
@@ -19,8 +20,8 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
   const [newTagName, setNewTagName] = useState('');
   const [creatingTag, setCreatingTag] = useState(false);
 
-  const [childTagId, setChildTagId] = useState<string>('');
-  const [parentTagId, setParentTagId] = useState<string>('');
+  const [childTagId, setChildTagId] = useState<number | null>(null);
+  const [parentTagId, setParentTagId] = useState<number | null>(null);
   const [savingEdge, setSavingEdge] = useState(false);
 
   const [banner, setBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(
@@ -74,13 +75,13 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
 
   const handleAddImplication = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!childTagId || !parentTagId) return;
+    if (childTagId == null || parentTagId == null) return;
     setSavingEdge(true);
     setBanner(null);
     try {
-      await api.tags.createImplication(Number(childTagId), Number(parentTagId));
-      setChildTagId('');
-      setParentTagId('');
+      await api.tags.createImplication(childTagId, parentTagId);
+      setChildTagId(null);
+      setParentTagId(null);
       await onRefresh();
       setBanner({
         type: 'success',
@@ -136,14 +137,28 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
 
       {banner && (
         <div
-          className={`p-3 rounded-xl border text-xs flex items-center ${
+          className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2 ${
             banner.type === 'success'
               ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
               : 'bg-rose-50 border-rose-200 text-rose-700'
           }`}
         >
-          {banner.type === 'success' && <CheckCircle2 className="w-4 h-4 mr-2 shrink-0" />}
-          <span>{banner.text}</span>
+          <span className="inline-flex items-center min-w-0">
+            {banner.type === 'success' && <CheckCircle2 className="w-4 h-4 mr-2 shrink-0" />}
+            <span>{banner.text}</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setBanner(null)}
+            className={`p-0.5 rounded shrink-0 ${
+              banner.type === 'success'
+                ? 'hover:bg-emerald-100 text-emerald-700'
+                : 'hover:bg-rose-100 text-rose-700'
+            }`}
+            aria-label="Dismiss banner"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
@@ -158,39 +173,37 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
               Add Implication Rule (Child → Parent)
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-11 gap-2 items-center">
-              <select
+              <TagCombobox
+                tags={tags}
                 value={childTagId}
-                onChange={e => setChildTagId(e.target.value)}
-                className="sm:col-span-5 px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
-                required
-              >
-                <option value="">Child tag (e.g. Mele)...</option>
-                {tags.map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
+                excludeTagId={parentTagId}
+                onChange={setChildTagId}
+                onTagCreated={() => {
+                  onRefresh();
+                }}
+                placeholder="Child tag (e.g. Mele)..."
+                ariaLabel="Child tag"
+                className="sm:col-span-5"
+              />
               <div className="sm:col-span-1 flex justify-center text-slate-400">
                 <ArrowRight className="w-4 h-4" />
               </div>
-              <select
+              <TagCombobox
+                tags={tags}
                 value={parentTagId}
-                onChange={e => setParentTagId(e.target.value)}
-                className="sm:col-span-5 px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
-                required
-              >
-                <option value="">Implies parent (e.g. Frutta)...</option>
-                {tags.map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
+                excludeTagId={childTagId}
+                onChange={setParentTagId}
+                onTagCreated={() => {
+                  onRefresh();
+                }}
+                placeholder="Implies parent (e.g. Frutta)..."
+                ariaLabel="Parent tag"
+                className="sm:col-span-5"
+              />
             </div>
             <button
               type="submit"
-              disabled={savingEdge || !childTagId || !parentTagId}
+              disabled={savingEdge || childTagId == null || parentTagId == null}
               className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg text-xs font-semibold"
             >
               {savingEdge ? 'Saving...' : 'Add Implication'}
