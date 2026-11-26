@@ -2,6 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
+from app.api.v1.firefly_sync import (
+    RewriteResultResponse,
+    rewrite_firefly_splits_for_product,
+)
 from app.core.database import get_session
 from app.models.brand import Brand, BrandCreate, BrandRead
 from app.models.firefly_cache import FireflySyncedSplit
@@ -232,3 +236,29 @@ def update_product(
     session.commit()
     loaded = _load_product_or_404(session, product.id)
     return serialize_products(session, [loaded])[0]
+
+
+@router.post("/{product_id}/propagate-firefly", response_model=RewriteResultResponse)
+async def propagate_product_to_firefly(
+    product_id: int,
+    session: Session = Depends(get_session),
+):
+    """
+    Explicitly rewrites all linked Firefly III splits for `product_id` so their
+    description, category, and expanded tags match the item's current card.
+    """
+    product = _load_product_or_404(session, product_id)
+    linked_splits = session.exec(
+        select(FireflySyncedSplit).where(
+            FireflySyncedSplit.linked_product_id == product.id
+        )
+    ).all()
+    updated_txs, updated_splits, failures, succeeded = (
+        await rewrite_firefly_splits_for_product(session, product, linked_splits)
+    )
+    return RewriteResultResponse(
+        linked_splits=len(succeeded),
+        updated_transactions=updated_txs,
+        updated_splits=updated_splits,
+        failed_transactions=failures,
+    )
