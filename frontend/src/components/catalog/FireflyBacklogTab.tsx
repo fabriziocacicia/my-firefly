@@ -232,6 +232,7 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     setLinkingGroup(group);
     setLinkSearch('');
     setModalProducts(null);
+    setLoadingModalProducts(true);
     setSelectedLinkProductId(group.suggested_product_id ?? null);
     setLinkError(null);
   };
@@ -296,10 +297,9 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     }
   };
 
-  const filteredModalProducts = filterLinkModalProducts(
-    modalProducts ?? products,
-    linkSearch
-  );
+  const filteredModalProducts = linkingGroup
+    ? filterLinkModalProducts(modalProducts ?? products, linkSearch)
+    : [];
 
   const visibleLinkedProductIds = new Set(
     (statusFilter === 'linked' ? backlog?.groups || [] : [])
@@ -704,6 +704,7 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
               value={linkSearch}
               onChange={e => setLinkSearch(e.target.value)}
               placeholder="Search items by name or brand..."
+              aria-label="Search items by name or brand"
               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
             />
 
