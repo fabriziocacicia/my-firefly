@@ -672,6 +672,7 @@ export const CatalogPage: React.FC = () => {
           tags={tags}
           implications={implications}
           onRefresh={() => loadAll(true)}
+          onJobsStarted={startedJobs => startedJobs.forEach(registerJob)}
         />
       )}
 

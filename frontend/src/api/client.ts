@@ -1,5 +1,6 @@
 import {
   Company, Product, Brand, Tag, TagImplication, TagSyncResponse, FireflyCategoryBrief,
+  ImplicationImpactAction, ImplicationImpactResponse, BatchPropagateResponse,
   PriceRecord, SaleMode, FireflySyncStatus, SyncTransactionsResponse,
   BacklogResponse, BacklogStatusFilter, FireflySyncJob, TagAnalyticsResponse,
   FireflyExpenseAccount, FireflyExpenseAccountBrief, FireflyAssetAccount, FireflyRevenueAccount,
@@ -135,6 +136,20 @@ export const api = {
     syncFirefly: () =>
       request<TagSyncResponse>('/tags/sync-firefly', { method: 'POST' }),
     listImplications: () => request<TagImplication[]>('/tags/implications'),
+    previewImplicationImpact: (
+      action: ImplicationImpactAction,
+      child_tag_id: number,
+      parent_tag_id: number
+    ) => {
+      const searchParams = new URLSearchParams({
+        action,
+        child_tag_id: String(child_tag_id),
+        parent_tag_id: String(parent_tag_id),
+      });
+      return request<ImplicationImpactResponse>(
+        `/tags/implications/impact?${searchParams.toString()}`
+      );
+    },
     createImplication: (child_tag_id: number, parent_tag_id: number) =>
       request<TagImplication>('/tags/implications', {
         method: 'POST',
@@ -202,6 +217,11 @@ export const api = {
     propagateFirefly: (id: number) =>
       request<FireflySyncJob>(`/products/${id}/propagate-firefly`, {
         method: 'POST',
+      }),
+    propagateFireflyBatch: (product_ids: number[]) =>
+      request<BatchPropagateResponse>('/products/propagate-firefly-batch', {
+        method: 'POST',
+        body: JSON.stringify({ product_ids }),
       }),
     delete: (id: number) => request<void>(`/products/${id}`, { method: 'DELETE' }),
     listBrands: () => request<Brand[]>('/products/brands'),
