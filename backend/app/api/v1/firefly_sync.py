@@ -7,17 +7,31 @@ from typing import List, Literal, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import case, func
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.core.database import get_session
 from app.models.firefly_cache import FireflySyncJob, FireflySyncState, FireflySyncedSplit
-from app.models.price import PriceRecord
-from app.models.product import ItemFireflyAlias, Product, format_firefly_description
+from app.models.product import Product, format_firefly_description
 from app.models.receipt import Receipt, ReceiptItem
 from app.services.firefly import firefly_client
+from app.services.firefly_backlog import (
+    AttentionQueueResponse,
+    BacklogIgnoreRequest,
+    BacklogLinkRequest,
+    BacklogResponse,
+    BacklogSplitsResponse,
+    BacklogUnlinkRequest,
+    count_needs_attention,
+    fetch_prices_by_journal_ids,
+    fetch_splits_by_journal_ids,
+    query_attention_queue,
+    query_backlog,
+    query_backlog_group_splits,
+    record_scoped_aliases_for_link,
+)
 from app.services.firefly_sync_jobs import (
     FireflySyncJobResponse,
     SSE_HEARTBEAT_SECONDS,
@@ -48,7 +62,9 @@ class SyncStatusResponse(BaseModel):
     high_watermark_date: Optional[date] = None
     total_cached_splits: int = 0
     unassociated_count: int = 0
+    linked_count: int = 0
     ignored_count: int = 0
+    needs_attention_count: int = 0
 
 
 class SyncTransactionsResponse(BaseModel):
@@ -60,47 +76,8 @@ class SyncTransactionsResponse(BaseModel):
     high_watermark_date: Optional[date] = None
 
 
-class CategoryBacklogCount(BaseModel):
-    category_name: Optional[str] = None
-    count: int
-
-
-class BacklogGroup(BaseModel):
-    normalized_description: str
-    sample_description: str
-    category_name: Optional[str] = None
-    occurrence_count: int
-    total_amount: float
-    latest_date: date
-    sample_stores: List[str] = []
-    sample_tags: List[str] = []
-    journal_ids: List[int] = []
-    suggested_product_id: Optional[int] = None
-    suggested_product_name: Optional[str] = None
-    linked_product_id: Optional[int] = None
-    linked_product_name: Optional[str] = None
-
-
-class BacklogResponse(BaseModel):
-    total_unassociated: int
-    linked_count: int = 0
-    ignored_count: int
-    category_counts: List[CategoryBacklogCount]
-    groups: List[BacklogGroup]
-
-
-class BacklogLinkRequest(BaseModel):
-    product_id: int
-    transaction_journal_ids: List[int] = Field(min_length=1)
-
-
-class BacklogIgnoreRequest(BaseModel):
-    transaction_journal_ids: List[int] = Field(min_length=1)
-    ignored: bool = True
-
-
-class BacklogUnlinkRequest(BaseModel):
-    transaction_journal_ids: List[int] = Field(min_length=1)
+class DismissAllSyncJobsResponse(BaseModel):
+    dismissed_count: int
 
 
 def _parse_tx_date(raw_date: object) -> date:
@@ -140,19 +117,39 @@ def get_sync_status(session: Session = Depends(get_session)):
                 0,
             ),
             func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            FireflySyncedSplit.linked_product_id.is_not(None)
+                            & FireflySyncedSplit.is_ignored.is_(False),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+            func.coalesce(
                 func.sum(case((FireflySyncedSplit.is_ignored.is_(True), 1), else_=0)),
                 0,
             ),
         )
     ).one()
-    total_cached, unassociated, ignored = (int(counts[0] or 0), int(counts[1] or 0), int(counts[2] or 0))
+    total_cached, unassociated, linked, ignored = (
+        int(counts[0] or 0),
+        int(counts[1] or 0),
+        int(counts[2] or 0),
+        int(counts[3] or 0),
+    )
     return SyncStatusResponse(
         last_full_sync_at=state.last_full_sync_at if state else None,
         last_incremental_sync_at=state.last_incremental_sync_at if state else None,
         high_watermark_date=state.high_watermark_date if state else None,
         total_cached_splits=total_cached,
         unassociated_count=unassociated,
+        linked_count=linked,
         ignored_count=ignored,
+        needs_attention_count=count_needs_attention(session),
     )
 
 
@@ -209,7 +206,6 @@ async def sync_firefly_transactions(
                 detail=f"Unable to reach Firefly III to sync transactions: {exc}",
             ) from exc
 
-        # Map pushed companion receipts -> {ff_tx_id: {product_name_lower: product_id}}
         pushed_receipts = session.exec(
             select(Receipt)
             .where(
@@ -242,16 +238,10 @@ async def sync_firefly_transactions(
                 except (TypeError, ValueError):
                     continue
 
-        existing_by_jid: dict[int, FireflySyncedSplit] = {}
-        jid_list = list(incoming_jids)
-        for offset in range(0, len(jid_list), 500):
-            chunk = jid_list[offset : offset + 500]
-            for row in session.exec(
-                select(FireflySyncedSplit).where(
-                    FireflySyncedSplit.transaction_journal_id.in_(chunk)
-                )
-            ).all():
-                existing_by_jid[row.transaction_journal_id] = row
+        existing_by_jid = {
+            row.transaction_journal_id: row
+            for row in fetch_splits_by_journal_ids(session, list(incoming_jids))
+        }
 
         upserted = 0
         max_date = state.high_watermark_date
@@ -361,124 +351,57 @@ def get_firefly_backlog(
         description="Filter by Firefly category name, or '__uncategorized__' for null category",
     ),
     search: Optional[str] = Query(None),
+    company_id: Optional[int] = Query(None),
+    account_id: Optional[int] = Query(None),
     session: Session = Depends(get_session),
 ):
-    all_splits = session.exec(select(FireflySyncedSplit)).all()
-    ignored_splits = [s for s in all_splits if s.is_ignored]
-    linked_splits = [
-        s for s in all_splits if s.linked_product_id is not None and not s.is_ignored
-    ]
-    unassociated = [
-        s for s in all_splits if s.linked_product_id is None and not s.is_ignored
-    ]
+    return query_backlog(
+        session,
+        status=status,
+        category=category,
+        search=search,
+        company_id=company_id,
+        account_id=account_id,
+    )
 
-    if status == "linked":
-        target_pool = linked_splits
-    elif status == "ignored":
-        target_pool = ignored_splits
-    else:
-        target_pool = unassociated
 
-    cat_counter: dict[Optional[str], int] = {}
-    for s in target_pool:
-        cat_counter[s.firefly_category_name] = cat_counter.get(s.firefly_category_name, 0) + 1
+@router.get("/backlog/attention", response_model=AttentionQueueResponse)
+async def get_backlog_attention_queue(
+    company_id: Optional[int] = Query(None),
+    account_id: Optional[int] = Query(None),
+    category: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    verification_status: Optional[Literal["missing", "needs_review"]] = Query(None),
+    session: Session = Depends(get_session),
+):
+    return await query_attention_queue(
+        session,
+        company_id=company_id,
+        account_id=account_id,
+        category=category,
+        search=search,
+        verification_status=verification_status,
+    )
 
-    category_counts = [
-        CategoryBacklogCount(category_name=cat, count=cnt)
-        for cat, cnt in sorted(
-            cat_counter.items(),
-            key=lambda kv: (-kv[1], (kv[0] or "").lower()),
-        )
-    ]
 
-    filtered = target_pool
-    if category == "__uncategorized__":
-        filtered = [s for s in filtered if not s.firefly_category_name]
-    elif category is not None and category != "":
-        filtered = [s for s in filtered if s.firefly_category_name == category]
-
-    if search and search.strip():
-        needle = search.strip().lower()
-        filtered = [s for s in filtered if needle in s.normalized_description]
-
-    # Lookup hints from aliases and canonical product names
-    aliases = session.exec(
-        select(ItemFireflyAlias).options(selectinload(ItemFireflyAlias.product))
-    ).all()
-    hint_map: dict[str, tuple[int, str]] = {
-        a.normalized_description: (a.product_id, a.product.name)
-        for a in aliases
-        if a.product is not None
-    }
-    products = session.exec(select(Product).options(selectinload(Product.brand))).all()
-    product_name_by_id: dict[int, str] = {}
-    for p in products:
-        if p.id is not None:
-            product_name_by_id[p.id] = p.name
-            hint_map.setdefault(format_firefly_description(p).lower(), (p.id, p.name))
-            hint_map.setdefault(p.name.strip().lower(), (p.id, p.name))
-
-    grouped: dict[tuple[str, Optional[str], Optional[int]], list[FireflySyncedSplit]] = {}
-    for s in filtered:
-        key = (
-            s.normalized_description,
-            s.firefly_category_name,
-            s.linked_product_id if status == "linked" else None,
-        )
-        grouped.setdefault(key, []).append(s)
-
-    groups: List[BacklogGroup] = []
-    for (norm_desc, cat_name, linked_pid), rows in grouped.items():
-        rows_sorted = sorted(rows, key=lambda r: (r.tx_date, r.id or 0), reverse=True)
-        stores = sorted(
-            {
-                r.firefly_expense_account_name
-                for r in rows_sorted
-                if r.firefly_expense_account_name
-            }
-        )[:3]
-        tag_map: dict[str, str] = {}
-        for r in rows_sorted:
-            try:
-                parsed_tags = json.loads(r.tags_json or "[]")
-            except Exception:
-                parsed_tags = []
-            if isinstance(parsed_tags, list):
-                for raw_t in parsed_tags:
-                    clean_t = str(raw_t).strip()
-                    if clean_t and clean_t.lower() not in tag_map:
-                        tag_map[clean_t.lower()] = clean_t
-        sample_tags = sorted(tag_map.values(), key=lambda s: s.lower())
-
-        hint = hint_map.get(norm_desc) if status == "unassociated" else None
-        groups.append(
-            BacklogGroup(
-                normalized_description=norm_desc,
-                sample_description=rows_sorted[0].description,
-                category_name=cat_name,
-                occurrence_count=len(rows_sorted),
-                total_amount=round(sum(r.amount_cents for r in rows_sorted) / 100.0, 2),
-                latest_date=rows_sorted[0].tx_date,
-                sample_stores=stores,
-                sample_tags=sample_tags,
-                journal_ids=[r.transaction_journal_id for r in rows_sorted],
-                suggested_product_id=hint[0] if hint else None,
-                suggested_product_name=hint[1] if hint else None,
-                linked_product_id=linked_pid,
-                linked_product_name=(
-                    product_name_by_id.get(linked_pid) if linked_pid is not None else None
-                ),
-            )
-        )
-
-    groups.sort(key=lambda g: (-g.occurrence_count, -g.latest_date.toordinal(), g.normalized_description))
-
-    return BacklogResponse(
-        total_unassociated=len(unassociated),
-        linked_count=len(linked_splits),
-        ignored_count=len(ignored_splits),
-        category_counts=category_counts,
-        groups=groups,
+@router.get("/backlog/splits", response_model=BacklogSplitsResponse)
+def get_backlog_group_splits(
+    normalized_description: str = Query(...),
+    category_name: Optional[str] = Query(None),
+    status: Literal["unassociated", "linked", "ignored"] = Query("unassociated"),
+    linked_product_id: Optional[int] = Query(None),
+    company_id: Optional[int] = Query(None),
+    account_id: Optional[int] = Query(None),
+    session: Session = Depends(get_session),
+):
+    return query_backlog_group_splits(
+        session,
+        normalized_description=normalized_description,
+        category_name=category_name,
+        status=status,
+        linked_product_id=linked_product_id,
+        company_id=company_id,
+        account_id=account_id,
     )
 
 
@@ -487,11 +410,7 @@ def ignore_backlog_splits(
     req: BacklogIgnoreRequest,
     session: Session = Depends(get_session),
 ):
-    splits = session.exec(
-        select(FireflySyncedSplit).where(
-            FireflySyncedSplit.transaction_journal_id.in_(req.transaction_journal_ids)
-        )
-    ).all()
+    splits = fetch_splits_by_journal_ids(session, req.transaction_journal_ids)
     for s in splits:
         s.is_ignored = req.ignored
         if req.ignored:
@@ -507,27 +426,55 @@ def unlink_backlog_splits(
     session: Session = Depends(get_session),
 ):
     """Unlinks cached Firefly splits back to the unassociated backlog locally without touching Firefly III."""
-    splits = session.exec(
-        select(FireflySyncedSplit).where(
-            FireflySyncedSplit.transaction_journal_id.in_(req.transaction_journal_ids)
-        )
-    ).all()
+    splits = fetch_splits_by_journal_ids(session, req.transaction_journal_ids)
     for s in splits:
         s.linked_product_id = None
         s.is_ignored = False
         session.add(s)
 
-    synced_prices = session.exec(
-        select(PriceRecord).where(
-            PriceRecord.transaction_journal_id.in_(req.transaction_journal_ids),
-            PriceRecord.source_type == "firefly_sync",
-        )
-    ).all()
+    synced_prices = fetch_prices_by_journal_ids(
+        session, req.transaction_journal_ids, source_type="firefly_sync"
+    )
     for pr in synced_prices:
         session.delete(pr)
 
     session.commit()
     return {"updated_count": len(splits)}
+
+
+@router.post("/backlog/link", status_code=202, response_model=FireflySyncJobResponse)
+async def link_backlog_splits_to_product(
+    req: BacklogLinkRequest,
+    session: Session = Depends(get_session),
+):
+    product = session.exec(
+        select(Product)
+        .where(Product.id == req.product_id)
+        .options(selectinload(Product.brand), selectinload(Product.tags))
+    ).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    assert product.id is not None
+    ensure_no_active_sync_job(session, product.id)
+
+    splits = fetch_splits_by_journal_ids(session, req.transaction_journal_ids)
+    if not splits:
+        raise HTTPException(
+            status_code=404, detail="No matching cached Firefly splits found"
+        )
+
+    record_scoped_aliases_for_link(
+        session,
+        product_id=product.id,
+        splits=splits,
+        alias_scope=req.alias_scope,
+    )
+
+    job = enqueue_firefly_rewrite_job(
+        session, product, splits, job_type="backlog_link"
+    )
+    return serialize_sync_job(job)
 
 
 @router.get("/jobs", response_model=List[FireflySyncJobResponse])
@@ -606,10 +553,6 @@ async def stream_sync_jobs(
     )
 
 
-class DismissAllSyncJobsResponse(BaseModel):
-    dismissed_count: int
-
-
 @router.post("/jobs/dismiss-all", response_model=DismissAllSyncJobsResponse)
 def dismiss_all_sync_jobs(session: Session = Depends(get_session)):
     dismissed_count = dismiss_all_finished_sync_jobs(session)
@@ -638,62 +581,4 @@ def dismiss_sync_job(job_id: int, session: Session = Depends(get_session)):
     session.commit()
     session.refresh(job)
     broadcast_jobs_snapshot(session)
-    return serialize_sync_job(job)
-
-
-@router.post("/backlog/link", status_code=202, response_model=FireflySyncJobResponse)
-async def link_backlog_splits_to_product(
-    req: BacklogLinkRequest,
-    session: Session = Depends(get_session),
-):
-    product = session.exec(
-        select(Product)
-        .where(Product.id == req.product_id)
-        .options(selectinload(Product.brand), selectinload(Product.tags))
-    ).first()
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-
-    assert product.id is not None
-    ensure_no_active_sync_job(session, product.id)
-
-    splits = session.exec(
-        select(FireflySyncedSplit).where(
-            FireflySyncedSplit.transaction_journal_id.in_(req.transaction_journal_ids)
-        )
-    ).all()
-    if not splits:
-        raise HTTPException(
-            status_code=404, detail="No matching cached Firefly splits found"
-        )
-
-    # Record distinct normalized descriptions as ItemFireflyAlias atomically with job creation
-    seen_aliases: dict[str, str] = {}
-    for s in splits:
-        if s.normalized_description not in seen_aliases:
-            seen_aliases[s.normalized_description] = s.description
-
-    for norm_desc, raw_desc in seen_aliases.items():
-        existing_alias = session.exec(
-            select(ItemFireflyAlias).where(
-                ItemFireflyAlias.normalized_description == norm_desc
-            )
-        ).first()
-        if existing_alias:
-            if existing_alias.product_id != product.id:
-                existing_alias.product_id = product.id
-                existing_alias.raw_description = raw_desc
-                session.add(existing_alias)
-        else:
-            session.add(
-                ItemFireflyAlias(
-                    product_id=product.id,
-                    raw_description=raw_desc,
-                    normalized_description=norm_desc,
-                )
-            )
-
-    job = enqueue_firefly_rewrite_job(
-        session, product, splits, job_type="backlog_link"
-    )
     return serialize_sync_job(job)

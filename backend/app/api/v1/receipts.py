@@ -474,6 +474,7 @@ async def create_receipt(
             normalized_unit_price=norm_paid,
             normalized_regular_price=norm_reg,
             source_type="receipt",
+            verification_status="verified",
             notes=receipt.notes,
         )
         session.add(price_record)

@@ -22,6 +22,7 @@ import { StoreCombobox } from '../components/common/StoreCombobox';
 import { CatalogAnalyticsTab } from '../components/catalog/CatalogAnalyticsTab';
 import { FireflyBacklogTab } from '../components/catalog/FireflyBacklogTab';
 import { ItemEditorModal } from '../components/catalog/ItemEditorModal';
+import { SplitPriceEditor } from '../components/catalog/SplitPriceEditor';
 import { SyncHistoryDrawer } from '../components/catalog/SyncHistoryDrawer';
 import { SyncJobBadge } from '../components/catalog/SyncJobBadge';
 import { TagHierarchyTab } from '../components/catalog/TagHierarchyTab';
@@ -236,7 +237,10 @@ export const CatalogPage: React.FC = () => {
 
   const openHistoryModal = async (product: Product) => {
     const seq = ++historySeqRef.current;
-    setHistoryData(null);
+    const isSameProductRefresh = showHistoryModal && selectedProduct?.id === product.id;
+    if (!isSameProductRefresh) {
+      setHistoryData(null);
+    }
     setHistoryError(null);
     setSelectedProduct(product);
     setShowHistoryModal(true);
@@ -906,38 +910,42 @@ export const CatalogPage: React.FC = () => {
                 [...historyData.records].reverse().map(r => (
                   <div
                     key={r.id}
-                    className="p-3 bg-slate-50 rounded-lg flex items-center justify-between text-xs"
+                    className="p-3 bg-slate-50 rounded-lg space-y-2 text-xs"
                   >
-                    <div>
-                      <span className="font-semibold text-slate-800">
-                        {r.store_name || `Store #${r.firefly_account_id}`}
-                      </span>
-                      <span className="block text-slate-400 text-[10px]">
-                        {r.recorded_date}
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <div className="flex items-center space-x-1.5 justify-end">
-                        <strong className="text-sm text-slate-900">
-                          €{r.paid_price.toFixed(2)}
-                        </strong>
-                        {r.is_discount && (
-                          <span className="text-[10px] text-amber-700 bg-amber-100 font-semibold px-1.5 py-0.2 rounded">
-                            SALE
-                          </span>
-                        )}
-                      </div>
-                      {r.normalized_unit_price && (
-                        <span className="text-[10px] text-slate-500 font-medium block">
-                          €{r.normalized_unit_price.toFixed(2)} /{' '}
-                          {selectedProduct.default_unit === 'g'
-                            ? 'kg'
-                            : selectedProduct.default_unit === 'ml'
-                            ? 'L'
-                            : selectedProduct.default_unit}
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="font-semibold text-slate-800">
+                          {r.store_name || `Store #${r.firefly_account_id}`}
                         </span>
-                      )}
+                        <span className="block text-slate-400 text-[10px]">
+                          {r.recorded_date}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <div className="flex items-center space-x-1.5 justify-end">
+                          <strong className="text-sm text-slate-900">
+                            €{r.paid_price.toFixed(2)}
+                          </strong>
+                          {r.is_discount && (
+                            <span className="text-[10px] text-amber-700 bg-amber-100 font-semibold px-1.5 py-0.2 rounded">
+                              SALE{r.regular_price > r.paid_price ? ` (reg €${r.regular_price.toFixed(2)})` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
+                    <SplitPriceEditor
+                      priceRecordId={r.id}
+                      paidPrice={r.paid_price}
+                      regularPrice={r.regular_price}
+                      isDiscount={r.is_discount}
+                      quantity={r.quantity}
+                      unit={r.unit}
+                      packageSize={r.package_size ?? selectedProduct.package_size}
+                      normalizedUnitPrice={r.normalized_unit_price}
+                      verificationStatus={r.verification_status ?? 'verified'}
+                      onSaved={() => openHistoryModal(selectedProduct)}
+                    />
                   </div>
                 ))
               )}

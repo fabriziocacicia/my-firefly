@@ -22,7 +22,8 @@ A companion web application for **Firefly III** to track SKU-level product price
 3. **Canonical Items, Hierarchical Firefly Tags & Historical Sync**:
    - Track canonical items (`packaged` multipacks like `6×330ml` or `loose_weight`) with brands, Firefly III categories, and Firefly-ID-backed tags.
    - Model hierarchical tag implications (`Mele → Frutta`) in the companion app, automatically expanding flat tags onto Firefly III splits and powering multi-tag intersection analytics (`Frutta + Bio`).
-   - Reconcile historical Firefly transactions via incremental + full sync cache (`Firefly Backlog`), with segmented `To Associate` / `Associated` / `Ignored` views, local `Unlink`, category filter counts, and async SSE background rewrite jobs (`firefly_sync_job`).
+   - Reconcile historical Firefly transactions via incremental + full sync cache (`Firefly Backlog`), with Chain/Store filters, lazy 3-level `Chain → Store → Individual Splits` drill-down (subset `Link`, `Unlink`, and `Ignore`), scoped alias hints (`store > chain > global`), category & attention counts, and async SSE background rewrite jobs (`firefly_sync_job`).
+   - Edit historical purchase quantity, unit (`g`/`kg`/`ml`/`l`/`pcs`), discount flag, and regular price strictly locally via `SplitPriceEditor` (`PATCH /api/v1/prices/{id}`) with a bidirectional `Quantity ↔ €/unit` calculator across both the `Missing & To Review` backlog queue and Catalog Item Price History (`missing` / `needs_review` / `verified` lifecycle preventing sync overwrites of verified rows).
    - Automatic unit price normalization (€/kg, €/L, €/pc) and **Deal Scoring** against historical baselines.
 
 4. **Smart Workflows**:
@@ -39,8 +40,8 @@ my-firefly/
 │   ├── app/
 │   │   ├── api/v1/           # REST endpoints (companies, products, prices, firefly, firefly_sync, analytics, workflows, receipts, accounts, asset_accounts, categories)
 │   │   ├── core/             # Configuration & SQLite connection
-│   │   ├── models/           # SQLModel domain models (Company, AccountMetadata, AssetAccountMetadata, Product, Price, Tag, TagImplication, FireflySyncedSplit, FireflySyncJob, Receipt)
-│   │   ├── services/         # Firefly III client, async Firefly sync job worker, taxonomy DAG, voucher math & price normalization
+│   │   ├── models/           # SQLModel domain models (Company, AccountMetadata, AssetAccountMetadata, Product, Price, Tag, TagImplication, ItemFireflyAlias, FireflySyncedSplit, FireflySyncJob, Receipt)
+│   │   ├── services/         # Firefly III client, backlog & async Firefly sync job workers, taxonomy DAG, voucher math & price normalization
 │   │   └── main.py           # FastAPI entrypoint
 │   ├── pyproject.toml
 │   ├── uv.lock
@@ -79,6 +80,7 @@ All significant architecture decisions, domain models, and RFCs are maintained i
 - [Canonical Items, Hierarchical Firefly Tags & Historical Sync](docs/designs/canonical_items_hierarchical_tags_and_firefly_sync.md)
 - [Asynchronous Firefly Sync Jobs & Progress Tracking](docs/designs/firefly_sync_async_jobs.md)
 - [Sync Job Banner Auto-Expiry, Bulk Dismiss & Sync History Drawer](docs/designs/firefly_sync_job_visibility_and_history.md)
+- [Granular Firefly Backlog Reconciliation & Verified Split Pricing](docs/designs/granular_firefly_split_reconciliation.md)
 - [ADR-001: Multi-Type Business Modeling and Dynamic Category Tagging](docs/decisions/ADR-001-multi-type-business-modeling-and-dynamic-categories.md)
 
 ---
