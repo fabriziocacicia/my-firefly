@@ -26,6 +26,7 @@ from app.services.taxonomy import (
     expand_tags_ordered,
     get_descendant_tag_ids,
     get_implication_map,
+    prune_redundant_ancestor_tag_ids,
 )
 
 router = APIRouter(prefix="/products", tags=["Products & Brands"])
@@ -174,6 +175,29 @@ def get_product(product_id: int, session: Session = Depends(get_session)):
     return serialize_products(session, [product])[0]
 
 
+def _sync_product_tag_links(
+    session: Session, product_id: int, raw_tag_ids: list[int], replace: bool = False
+) -> None:
+    """Resolves valid tag IDs, prunes redundant implied ancestors, and writes ProductTagLink rows."""
+    if replace:
+        existing_links = session.exec(
+            select(ProductTagLink).where(ProductTagLink.product_id == product_id)
+        ).all()
+        for link in existing_links:
+            session.delete(link)
+        session.flush()
+
+    valid_ids = [
+        tid
+        for tid in dict.fromkeys(raw_tag_ids)
+        if session.get(Tag, tid) is not None
+    ]
+    implications = get_implication_map(session)
+    minimal_ids = prune_redundant_ancestor_tag_ids(valid_ids, implications)
+    for tid in minimal_ids:
+        session.add(ProductTagLink(product_id=product_id, tag_id=tid))
+
+
 @router.post("/", response_model=ProductRead)
 def create_product(product_in: ProductCreate, session: Session = Depends(get_session)):
     if product_in.brand_id is not None and not session.get(Brand, product_in.brand_id):
@@ -199,10 +223,7 @@ def create_product(product_in: ProductCreate, session: Session = Depends(get_ses
     session.add(product)
     session.flush()
 
-    for tid in dict.fromkeys(product_in.tag_ids):
-        tag = session.get(Tag, tid)
-        if tag:
-            session.add(ProductTagLink(product_id=product.id, tag_id=tag.id))
+    _sync_product_tag_links(session, product.id, product_in.tag_ids, replace=False)
     session.commit()
 
     loaded = _load_product_or_404(session, product.id)
@@ -241,16 +262,7 @@ def update_product(
     session.add(product)
 
     if tag_ids is not None:
-        existing_links = session.exec(
-            select(ProductTagLink).where(ProductTagLink.product_id == product.id)
-        ).all()
-        for link in existing_links:
-            session.delete(link)
-        session.flush()
-        for tid in dict.fromkeys(tag_ids):
-            tag = session.get(Tag, tid)
-            if tag:
-                session.add(ProductTagLink(product_id=product.id, tag_id=tag.id))
+        _sync_product_tag_links(session, product.id, tag_ids, replace=True)
 
     session.commit()
     loaded = _load_product_or_404(session, product.id)

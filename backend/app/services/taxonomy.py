@@ -1,6 +1,6 @@
 from typing import Iterable
 from sqlmodel import Session, select
-from app.models.tag import Tag, TagImplication
+from app.models.tag import ProductTagLink, Tag, TagImplication
 
 
 def build_implication_map(implications: Iterable[TagImplication]) -> dict[int, set[int]]:
@@ -110,3 +110,63 @@ def expand_tags_ordered(
             seen.add(tag.id)
             ordered.append(tag)
     return ordered
+
+
+def prune_redundant_ancestor_tag_ids(
+    tag_ids: Iterable[int],
+    implications: dict[int, set[int]],
+) -> list[int]:
+    """
+    Removes tag IDs that are strictly implied ancestors of another tag in `tag_ids`,
+    preserving original order and deduplicating.
+    """
+    ordered = list(dict.fromkeys(tag_ids))
+    if len(ordered) <= 1:
+        return ordered
+
+    redundant_ancestors: set[int] = set()
+    for tid in ordered:
+        stack = list(implications.get(tid, ()))
+        visited: set[int] = set()
+        while stack:
+            current = stack.pop()
+            if current in visited or current == tid:
+                continue
+            visited.add(current)
+            redundant_ancestors.add(current)
+            stack.extend(implications.get(current, ()))
+
+    return [tid for tid in ordered if tid not in redundant_ancestors]
+
+
+def sanitize_product_tag_links(
+    session: Session,
+    implications: dict[int, set[int]] | None = None,
+) -> int:
+    """
+    Removes redundant direct ProductTagLink rows where the linked tag is already an
+    implied ancestor of another direct tag on the same product. Returns rows removed.
+    """
+    imp_map = implications if implications is not None else get_implication_map(session)
+    if not imp_map:
+        return 0
+
+    links = session.exec(select(ProductTagLink)).all()
+    by_product: dict[int, list[ProductTagLink]] = {}
+    for link in links:
+        if link.product_id is not None and link.tag_id is not None:
+            by_product.setdefault(link.product_id, []).append(link)
+
+    removed = 0
+    for prod_links in by_product.values():
+        keep_ids = set(
+            prune_redundant_ancestor_tag_ids(
+                [l.tag_id for l in prod_links if l.tag_id is not None],
+                imp_map,
+            )
+        )
+        for link in prod_links:
+            if link.tag_id not in keep_ids:
+                session.delete(link)
+                removed += 1
+    return removed

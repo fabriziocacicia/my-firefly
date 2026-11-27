@@ -14,7 +14,11 @@ from app.models.tag import (
     TagRead,
 )
 from app.services.firefly import firefly_client
-from app.services.taxonomy import get_implication_map, would_create_cycle
+from app.services.taxonomy import (
+    get_implication_map,
+    sanitize_product_tag_links,
+    would_create_cycle,
+)
 
 router = APIRouter(prefix="/tags", tags=["Tags & Classification"])
 
@@ -210,6 +214,8 @@ def create_tag_implication(
         parent_tag_id=imp_in.parent_tag_id,
     )
     session.add(implication)
+    session.flush()
+    sanitize_product_tag_links(session)
     session.commit()
     return implication
 
