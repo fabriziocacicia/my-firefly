@@ -54,6 +54,7 @@ my-firefly/
 │   │   ├── pages/            # ReceiptWorkbenchPage, AccountsAndChainsPage, CatalogPage, WorkflowsPage
 │   │   └── types/            # TypeScript interfaces
 │   ├── package.json
+│   ├── bun.lock
 │   ├── vite.config.ts
 │   └── Dockerfile
 ├── docs/
@@ -110,10 +111,10 @@ uv sync
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-#### 2. Frontend (Node/TypeScript):
+#### 2. Frontend (Bun + TypeScript):
 ```bash
 cd frontend
-npm install
-npm run dev
+bun install
+bun --bun run dev
 ```
 Open [http://localhost:5173](http://localhost:5173).
