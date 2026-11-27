@@ -48,6 +48,8 @@ export const SplitPriceEditor: React.FC<SplitPriceEditorProps> = ({
     formatQuantityInput(quantity, initialUnit)
   );
   const [unitInput, setUnitInput] = useState<MeasureUnit>(initialUnit);
+  const effectivePkgSize = unitInput !== initialUnit && pkgSize > 1 ? 1 : pkgSize;
+
   const [unitPriceInput, setUnitPriceInput] = useState<string>(() => {
     if (normalizedUnitPrice != null) {
       return String(normalizedUnitPrice);
@@ -81,6 +83,7 @@ export const SplitPriceEditor: React.FC<SplitPriceEditorProps> = ({
     }
     setDiscountChecked(isDiscount);
     setRegularInput(isDiscount && regularPrice > 0 ? String(regularPrice) : String(paidPrice));
+    setError(null);
   }, [priceRecordId, paidPrice, regularPrice, isDiscount, quantity, unit, pkgSize, normalizedUnitPrice]);
 
   const handleQtyChange = (val: string) => {
@@ -88,7 +91,7 @@ export const SplitPriceEditor: React.FC<SplitPriceEditorProps> = ({
     setError(null);
     const num = parseFloat(val);
     if (Number.isFinite(num) && num > 0) {
-      const up = computeNormalizedUnitPrice(paidPrice, num, unitInput, pkgSize);
+      const up = computeNormalizedUnitPrice(paidPrice, num, unitInput, effectivePkgSize);
       setUnitPriceInput(up != null ? String(up) : '');
     } else {
       setUnitPriceInput('');
@@ -98,9 +101,10 @@ export const SplitPriceEditor: React.FC<SplitPriceEditorProps> = ({
   const handleUnitChange = (nextUnit: MeasureUnit) => {
     setUnitInput(nextUnit);
     setError(null);
+    const nextPkg = nextUnit !== initialUnit && pkgSize > 1 ? 1 : pkgSize;
     const num = parseFloat(qtyInput);
     if (Number.isFinite(num) && num > 0) {
-      const up = computeNormalizedUnitPrice(paidPrice, num, nextUnit, pkgSize);
+      const up = computeNormalizedUnitPrice(paidPrice, num, nextUnit, nextPkg);
       setUnitPriceInput(up != null ? String(up) : '');
     }
   };
@@ -110,7 +114,7 @@ export const SplitPriceEditor: React.FC<SplitPriceEditorProps> = ({
     setError(null);
     const up = parseFloat(val);
     if (Number.isFinite(up) && up > 0) {
-      const computedQty = computeQuantityFromUnitPrice(paidPrice, up, unitInput, pkgSize);
+      const computedQty = computeQuantityFromUnitPrice(paidPrice, up, unitInput, effectivePkgSize);
       setQtyInput(computedQty != null ? formatQuantityInput(computedQty, unitInput) : '');
     }
   };
@@ -163,6 +167,12 @@ export const SplitPriceEditor: React.FC<SplitPriceEditorProps> = ({
   };
 
   const unitSuffix = getNormalizedUnitSuffix(unitInput);
+  const summaryQtyLabel =
+    quantity == null
+      ? '—'
+      : pkgSize > 1
+      ? `${formatQuantityInput(quantity, initialUnit)} × ${pkgSize}${initialUnit}`
+      : `${formatQuantityInput(quantity, initialUnit)} ${initialUnit}`;
 
   return (
     <div className="space-y-1.5">
@@ -201,7 +211,7 @@ export const SplitPriceEditor: React.FC<SplitPriceEditorProps> = ({
         )}
 
         <span className="text-[11px] text-slate-600 font-medium tabular-nums">
-          {quantity != null ? `${formatQuantityInput(quantity, unitInput)} ${unitInput}` : '—'}
+          {summaryQtyLabel}
           {normalizedUnitPrice != null ? ` · €${normalizedUnitPrice.toFixed(2)} ${unitSuffix}` : ''}
         </span>
 
@@ -226,7 +236,9 @@ export const SplitPriceEditor: React.FC<SplitPriceEditorProps> = ({
         >
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1">
-              <label className="text-[11px] font-semibold text-slate-600">Qty</label>
+              <label className="text-[11px] font-semibold text-slate-600">
+                {effectivePkgSize > 1 ? `Packs (×${effectivePkgSize}${unitInput})` : 'Qty'}
+              </label>
               <input
                 type="number"
                 step="any"

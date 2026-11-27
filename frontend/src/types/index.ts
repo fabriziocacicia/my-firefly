@@ -383,6 +383,7 @@ export interface FireflySyncStatus {
   high_watermark_date?: string | null;
   total_cached_splits: number;
   unassociated_count: number;
+  linked_count?: number;
   ignored_count: number;
   needs_attention_count?: number;
 }
@@ -487,6 +488,7 @@ export interface SplitPriceSummary {
   id: number;
   quantity: number | null;
   unit: string;
+  package_size?: number | null;
   regular_price: number;
   paid_price: number;
   is_discount: boolean;

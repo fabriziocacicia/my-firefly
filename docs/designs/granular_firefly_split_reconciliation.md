@@ -1,6 +1,6 @@
 # Spec: Granular Firefly Backlog Reconciliation & Verified Split Pricing — V1
 
-* **Status:** Proposed
+* **Status:** Implemented
 * **Date:** 2026-11-27
 * **Issue:** [#41 — feat: granular Firefly backlog reconciliation (chain/store/split) and verified split pricing](https://github.com/fabriziocacicia/my-firefly/issues/41)
 * **Base Specs:**
@@ -48,28 +48,35 @@ Specifically, this solves two real-world gaps in the current Firefly Backlog & P
 backend/
 ├── app/
 │   ├── api/v1/
-│   │   ├── firefly_sync.py       # Chain/Store filters, lazy split drill-down, attention queue, scoped alias link
+│   │   ├── firefly_sync.py       # Sync endpoints, SSE jobs, and thin /backlog* routes
 │   │   ├── prices.py             # PATCH /prices/{id} local split quantity/discount/verification editing
 │   │   └── analytics.py          # Excludes null normalized_unit_price; keeps spend/count accurate
 │   ├── models/
+│   │   ├── firefly_backlog_schemas.py  # Pydantic schemas for backlog, attention queue, and drill-down
 │   │   ├── price.py              # Nullable quantity + verification_status ('missing' | 'needs_review' | 'verified')
 │   │   └── product.py            # ItemFireflyAlias scoped by (normalized_description, scope_key)
 │   └── services/
+│       ├── firefly_backlog.py    # Scoped alias resolution, chain/store filters, attention & drill-down queries
 │       └── firefly_sync_jobs.py  # Respects verified PriceRecords during propagate; creates missing on loose_weight
 ├── migrations/versions/
 │   └── 0012_granular_split_pricing_and_scoped_aliases.py
 └── tests/
+    ├── test_canonical_schema_migration.py
     └── test_firefly_backlog_sync.py
 frontend/
 ├── src/
 │   ├── api/client.ts             # Typed API methods for drill-down, attention queue, PATCH /prices/{id}
-│   ├── types/index.ts            # Updated BacklogGroup, BacklogSplitsBreakdown, PriceRecord types
+│   ├── types/index.ts            # Updated BacklogGroup, BacklogSplitsResponse, AttentionQueue, PriceRecord types
 │   ├── components/catalog/
-│   │   ├── FireflyBacklogTab.tsx # Chain/Store filter, Missing & To Review tab, 3-level lazy drill-down
-│   │   └── SplitPriceEditor.tsx  # Shared inline Qty <-> €/unit calculator, discount & verify controls
+│   │   ├── FireflyBacklogTab.tsx     # Orchestrates Backlog tabs, lazy split drill-down, and modals
+│   │   ├── BacklogFiltersBar.tsx     # Status segmentation, Chain/Store filters, and Category pills
+│   │   ├── BacklogLinkModal.tsx      # Scoped Link-to-Existing-Item modal
+│   │   ├── BacklogSplitDrilldown.tsx # 3-level Chain -> Store -> Split tree with multi-select & SplitPriceEditor
+│   │   ├── BacklogAttentionQueue.tsx # Missing & To Review queue view
+│   │   ├── SplitPriceEditor.tsx      # Shared inline Qty <-> €/unit calculator, discount & verify controls
+│   │   └── splitPriceUtils.ts        # Pure bidirectional unit-price helpers + splitPriceUtils.test.ts
 │   └── pages/
 │       └── CatalogPage.tsx       # Integrates SplitPriceEditor inside Price History & Deal Analysis modal
-└── src/components/catalog/*.test.ts
 ```
 
 ---

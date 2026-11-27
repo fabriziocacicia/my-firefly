@@ -237,7 +237,10 @@ export const CatalogPage: React.FC = () => {
 
   const openHistoryModal = async (product: Product) => {
     const seq = ++historySeqRef.current;
-    setHistoryData(null);
+    const isSameProductRefresh = showHistoryModal && selectedProduct?.id === product.id;
+    if (!isSameProductRefresh) {
+      setHistoryData(null);
+    }
     setHistoryError(null);
     setSelectedProduct(product);
     setShowHistoryModal(true);

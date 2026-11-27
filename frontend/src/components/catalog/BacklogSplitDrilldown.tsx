@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Building2,
   ChevronDown,
@@ -81,6 +81,28 @@ export const BacklogSplitDrilldown: React.FC<BacklogSplitDrilldownProps> = ({
   });
   const [expandedStores, setExpandedStores] = useState<Record<string, boolean>>({});
   const [selectedJids, setSelectedJids] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    const validJids = new Set<number>();
+    for (const chain of data.chains) {
+      for (const store of chain.stores) {
+        for (const jid of store.journal_ids) validJids.add(jid);
+      }
+    }
+    for (const store of data.unchained_stores) {
+      for (const jid of store.journal_ids) validJids.add(jid);
+    }
+    setSelectedJids(prev => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Set<number>();
+      for (const jid of prev) {
+        if (validJids.has(jid)) next.add(jid);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [data]);
 
   const toggleChain = (companyId: number) =>
     setExpandedChains(prev => ({ ...prev, [companyId]: !prev[companyId] }));
@@ -353,6 +375,7 @@ export const BacklogSplitDrilldown: React.FC<BacklogSplitDrilldownProps> = ({
                         isDiscount={sp.price_record.is_discount}
                         quantity={sp.price_record.quantity}
                         unit={sp.price_record.unit}
+                        packageSize={sp.price_record.package_size}
                         normalizedUnitPrice={sp.price_record.normalized_unit_price}
                         verificationStatus={sp.price_record.verification_status}
                         onSaved={onPriceUpdated}

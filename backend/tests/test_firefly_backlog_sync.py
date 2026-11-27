@@ -1485,6 +1485,7 @@ class FireflyBacklogSyncTests(unittest.TestCase):
                         paid_price=2.80,
                         quantity=0.9,
                         unit="kg",
+                        package_size=1.0,
                         normalized_unit_price=3.111,
                         firefly_transaction_id=933,
                         transaction_journal_id=9304,
@@ -1532,6 +1533,279 @@ class FireflyBacklogSyncTests(unittest.TestCase):
         self.assertIsNotNone(linked_split["price_record"])
         self.assertEqual(linked_split["price_record"]["quantity"], 0.9)
         self.assertEqual(linked_split["price_record"]["verification_status"], "verified")
+        self.assertEqual(linked_split["price_record"]["package_size"], 1.0)
+
+    def test_relink_to_different_product_resets_verified_price_and_patch_edge_cases(self):
+        from app.services.firefly_sync_jobs import _upsert_price_record_for_split_values
+
+        with Session(self.engine) as session:
+            diesel = Product(
+                name="Diesel Standard",
+                sale_mode="loose_weight",
+                default_unit="l",
+                package_size=1.0,
+            )
+            session.add(diesel)
+            session.commit()
+            session.refresh(diesel)
+            diesel_id = diesel.id
+
+            split = FireflySyncedSplit(
+                transaction_journal_id=9401,
+                firefly_transaction_id=940,
+                tx_type="withdrawal",
+                tx_date=date(2026, 11, 20),
+                amount_cents=120,
+                description="Spaghetti 500g",
+                normalized_description="spaghetti 500g",
+                firefly_expense_account_id=20,
+                firefly_expense_account_name="Conad",
+            )
+            pr = PriceRecord(
+                product_id=self.product_id,
+                firefly_account_id=20,
+                recorded_date=date(2026, 11, 20),
+                regular_price=1.80,
+                paid_price=1.20,
+                is_discount=True,
+                quantity=1.0,
+                unit="g",
+                package_size=500.0,
+                normalized_unit_price=2.4,
+                normalized_regular_price=3.6,
+                firefly_transaction_id=940,
+                transaction_journal_id=9401,
+                source_type="firefly_sync",
+                verification_status="verified",
+            )
+            session.add_all([split, pr])
+            session.commit()
+            session.refresh(pr)
+            pr_id = pr.id
+
+        with patch("app.api.v1.prices.firefly_client.resolve_expense_account_names", new=AsyncMock(return_value={20: "Conad"})):
+            # 404 on unknown ID
+            self.assertEqual(self.client.patch("/api/v1/prices/999999", json={"quantity": 1.0}).status_code, 404)
+            # Reject explicit null field
+            self.assertEqual(self.client.patch(f"/api/v1/prices/{pr_id}", json={"quantity": None}).status_code, 422)
+
+            # Turning off discount resets regular_price = paid_price; changing unit resets package_size=1.0
+            res = self.client.patch(
+                f"/api/v1/prices/{pr_id}",
+                json={"quantity": 0.5, "unit": "kg", "is_discount": False},
+            )
+            self.assertEqual(res.status_code, 200)
+            updated = res.json()
+            self.assertFalse(updated["is_discount"])
+            self.assertEqual(updated["regular_price"], 1.20)
+            self.assertEqual(updated["package_size"], 1.0)
+            self.assertEqual(updated["normalized_unit_price"], 2.4)
+
+        # Re-linking to a different (loose_weight) product resets verification_status to missing
+        with Session(self.engine) as session:
+            split = session.exec(
+                select(FireflySyncedSplit).where(FireflySyncedSplit.transaction_journal_id == 9401)
+            ).first()
+            _upsert_price_record_for_split_values(
+                session,
+                product_id=diesel_id,
+                default_unit="l",
+                package_size=1.0,
+                sale_mode="loose_weight",
+                split=split,
+            )
+            session.commit()
+            reset_pr = session.get(PriceRecord, pr_id)
+            self.assertEqual(reset_pr.product_id, diesel_id)
+            self.assertIsNone(reset_pr.quantity)
+            self.assertIsNone(reset_pr.normalized_unit_price)
+            self.assertFalse(reset_pr.is_discount)
+            self.assertEqual(reset_pr.verification_status, "missing")
+
+    def test_alias_scopes_and_drilldown_uncategorized_ignored_and_attention_scoped_counts(self):
+        from app.models.company import AccountMetadata, AccountRole, Company
+
+        with Session(self.engine) as session:
+            lidl = Company(name="Lidl")
+            session.add(lidl)
+            session.commit()
+            session.refresh(lidl)
+            session.add(AccountMetadata(firefly_account_id=401, role=AccountRole.CHAIN, company_id=lidl.id))
+
+            p_a = Product(name="Diesel Standard", sale_mode="loose_weight", default_unit="l")
+            p_b = Product(name="Diesel Premium", sale_mode="loose_weight", default_unit="l")
+            session.add_all([p_a, p_b])
+            session.commit()
+            session.refresh(p_a)
+            session.refresh(p_b)
+
+            session.add_all(
+                [
+                    FireflySyncedSplit(
+                        transaction_journal_id=9501,
+                        firefly_transaction_id=950,
+                        tx_date=date(2026, 11, 20),
+                        amount_cents=5000,
+                        description="Carburante",
+                        normalized_description="carburante",
+                        firefly_expense_account_id=401,
+                        firefly_expense_account_name="Lidl Fuel",
+                        firefly_category_name=None,
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=9502,
+                        firefly_transaction_id=951,
+                        tx_date=date(2026, 11, 21),
+                        amount_cents=4000,
+                        description="Carburante",
+                        normalized_description="carburante",
+                        firefly_expense_account_id=402,
+                        firefly_expense_account_name="Unchained Gas",
+                        firefly_category_name=None,
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=9504,
+                        firefly_transaction_id=953,
+                        tx_date=date(2026, 11, 21),
+                        amount_cents=4500,
+                        description="Carburante",
+                        normalized_description="carburante",
+                        firefly_expense_account_id=401,
+                        firefly_expense_account_name="Lidl Fuel",
+                        firefly_category_name=None,
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=9503,
+                        firefly_transaction_id=952,
+                        tx_date=date(2026, 11, 22),
+                        amount_cents=1000,
+                        description="Carburante",
+                        normalized_description="carburante",
+                        firefly_expense_account_id=402,
+                        firefly_expense_account_name="Unchained Gas",
+                        firefly_category_name=None,
+                        is_ignored=True,
+                    ),
+                    # Ignored split with PriceRecord must be excluded from attention queue
+                    PriceRecord(
+                        product_id=p_a.id,
+                        firefly_account_id=402,
+                        recorded_date=date(2026, 11, 22),
+                        regular_price=10.0,
+                        paid_price=10.0,
+                        quantity=None,
+                        unit="l",
+                        firefly_transaction_id=952,
+                        transaction_journal_id=9503,
+                        source_type="firefly_sync",
+                        verification_status="missing",
+                    ),
+                    # Active attention items across two stores
+                    PriceRecord(
+                        product_id=p_a.id,
+                        firefly_account_id=401,
+                        recorded_date=date(2026, 11, 20),
+                        regular_price=50.0,
+                        paid_price=50.0,
+                        quantity=None,
+                        unit="l",
+                        verification_status="missing",
+                    ),
+                    PriceRecord(
+                        product_id=p_b.id,
+                        firefly_account_id=402,
+                        recorded_date=date(2026, 11, 21),
+                        regular_price=40.0,
+                        paid_price=40.0,
+                        quantity=1.0,
+                        unit="l",
+                        normalized_unit_price=40.0,
+                        verification_status="needs_review",
+                    ),
+                ]
+            )
+            session.commit()
+            lidl_id, pa_id, pb_id = lidl.id, p_a.id, p_b.id
+
+        # Uncategorized drilldown + company_id/account_id/ignored filtering
+        uncat = self.client.get(
+            "/api/v1/firefly-sync/backlog/splits?normalized_description=carburante&category_name=__uncategorized__&status=unassociated"
+        ).json()
+        self.assertEqual(uncat["occurrence_count"], 3)
+        self.assertEqual(len(uncat["chains"]), 1)
+        self.assertEqual(len(uncat["unchained_stores"]), 1)
+
+        ign = self.client.get(
+            "/api/v1/firefly-sync/backlog/splits?normalized_description=carburante&category_name=__uncategorized__&status=ignored"
+        ).json()
+        self.assertEqual(ign["occurrence_count"], 1)
+        self.assertEqual(ign["unchained_stores"][0]["journal_ids"], [9503])
+
+        # Scoped attention counts reflect active filters and exclude ignored split 9503
+        with patch("app.services.firefly_backlog.firefly_client.resolve_expense_account_names", new=AsyncMock(return_value={401: "Lidl Fuel", 402: "Unchained Gas"})):
+            att_all = self.client.get("/api/v1/firefly-sync/backlog/attention").json()
+            self.assertEqual(att_all["missing_count"], 1)
+            self.assertEqual(att_all["needs_review_count"], 1)
+
+            att_lidl = self.client.get(f"/api/v1/firefly-sync/backlog/attention?company_id={lidl_id}").json()
+            self.assertEqual(att_lidl["missing_count"], 1)
+            self.assertEqual(att_lidl["needs_review_count"], 0)
+            self.assertEqual(len(att_lidl["items"]), 1)
+
+        # Test alias_scope="none", "store", and "auto" across mixed chain/unchained splits
+        async def mock_get_tx(tx_id):
+            jid_map = {950: "9501", 951: "9502", 953: "9504"}
+            return {"id": str(tx_id), "attributes": {"group_title": "Gas", "transactions": [{"transaction_journal_id": jid_map[tx_id], "description": "Carburante"}]}}
+
+        async def mock_put_tx(tx_id, payload):
+            return {"data": {"id": str(tx_id)}}
+
+        with (
+            patch("app.services.firefly_sync_jobs.firefly_client.get_transaction_by_id", side_effect=mock_get_tx),
+            patch("app.services.firefly_sync_jobs.firefly_client.update_transaction", side_effect=mock_put_tx),
+        ):
+            r_none = self.client.post(
+                "/api/v1/firefly-sync/backlog/link",
+                json={"product_id": pa_id, "transaction_journal_ids": [9501], "alias_scope": "none"},
+            )
+            self.assertEqual(r_none.status_code, 202)
+            self._wait_for_job(r_none.json()["id"])
+            with Session(self.engine) as session:
+                self.assertEqual(
+                    session.exec(select(ItemFireflyAlias).where(ItemFireflyAlias.normalized_description == "carburante")).all(),
+                    [],
+                )
+
+            r_store = self.client.post(
+                "/api/v1/firefly-sync/backlog/link",
+                json={"product_id": pa_id, "transaction_journal_ids": [9504], "alias_scope": "store"},
+            )
+            self.assertEqual(r_store.status_code, 202)
+            self._wait_for_job(r_store.json()["id"])
+
+            # Reset 9504 description back to "Carburante" before auto-mixed link or use 9502 + fresh 9504
+            with Session(self.engine) as session:
+                sp9504 = session.exec(
+                    select(FireflySyncedSplit).where(FireflySyncedSplit.transaction_journal_id == 9504)
+                ).first()
+                sp9504.description = "Carburante"
+                sp9504.normalized_description = "carburante"
+                session.add(sp9504)
+                session.commit()
+
+            r_auto_mixed = self.client.post(
+                "/api/v1/firefly-sync/backlog/link",
+                json={"product_id": pb_id, "transaction_journal_ids": [9504, 9502], "alias_scope": "auto"},
+            )
+            self.assertEqual(r_auto_mixed.status_code, 202)
+            self._wait_for_job(r_auto_mixed.json()["id"])
+
+            with Session(self.engine) as session:
+                aliases = session.exec(
+                    select(ItemFireflyAlias).where(ItemFireflyAlias.normalized_description == "carburante")
+                ).all()
+                by_scope = {a.scope_key: a.product_id for a in aliases}
+                self.assertEqual(by_scope, {"store:401": pa_id, "global": pb_id})
 
 
 if __name__ == "__main__":

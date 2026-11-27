@@ -241,6 +241,8 @@ async def update_price_record(
     if "quantity" in sent and payload.quantity is not None:
         record.quantity = payload.quantity
     if "unit" in sent and payload.unit is not None:
+        if payload.unit != record.unit and record.package_size is not None and record.package_size > 1:
+            record.package_size = 1.0
         record.unit = payload.unit
     if "notes" in sent:
         record.notes = payload.notes
@@ -287,7 +289,6 @@ async def update_price_record(
 
     session.add(record)
     session.commit()
-    session.refresh(record)
 
     loaded = session.exec(
         select(PriceRecord)

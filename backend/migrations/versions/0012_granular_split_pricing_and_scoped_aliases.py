@@ -59,7 +59,7 @@ def upgrade() -> None:
                 unique=False,
             )
 
-        if "product" in tables:
+        if needs_status_col and "product" in tables:
             bind.execute(
                 sa.text(
                     "UPDATE pricerecord "
