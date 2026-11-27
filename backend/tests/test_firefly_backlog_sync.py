@@ -980,6 +980,178 @@ class FireflyBacklogSyncTests(unittest.TestCase):
                 session.commit()
             session.rollback()
 
+    def test_loose_weight_backlog_link_starts_missing_and_patch_price_verifies_locally(self):
+        with Session(self.engine) as session:
+            bananas = Product(
+                name="Banane Bio",
+                sale_mode="loose_weight",
+                pack_count=1,
+                unit_size=1.0,
+                default_unit="kg",
+                package_size=1.0,
+                firefly_category_id=1,
+                firefly_category_name="Groceries",
+            )
+            session.add(bananas)
+            session.commit()
+            session.refresh(bananas)
+            session.add(ProductTagLink(product_id=bananas.id, tag_id=self.tag_ids["Bio"]))
+            session.add(
+                FireflySyncedSplit(
+                    transaction_journal_id=8801,
+                    firefly_transaction_id=880,
+                    tx_type="withdrawal",
+                    tx_date=date(2026, 11, 24),
+                    amount_cents=240,
+                    description="Banane Bio",
+                    normalized_description="banane bio",
+                    firefly_expense_account_id=20,
+                    firefly_expense_account_name="Lidl",
+                    firefly_category_name="Groceries",
+                    tags_json="[]",
+                )
+            )
+            session.commit()
+            bananas_id = bananas.id
+
+        async def mock_get_tx(tx_id):
+            return {
+                "id": str(tx_id),
+                "attributes": {
+                    "group_title": "Lidl",
+                    "transactions": [
+                        {
+                            "transaction_journal_id": "8801",
+                            "description": "Banane Bio",
+                            "category_name": "Groceries",
+                            "tags": [],
+                        }
+                    ],
+                },
+            }
+
+        async def mock_put_tx(tx_id, payload):
+            return {"data": {"id": str(tx_id)}}
+
+        with (
+            patch("app.services.firefly_sync_jobs.firefly_client.get_transaction_by_id", side_effect=mock_get_tx),
+            patch("app.services.firefly_sync_jobs.firefly_client.update_transaction", side_effect=mock_put_tx),
+            patch("app.api.v1.prices.firefly_client.resolve_expense_account_names", new=AsyncMock(return_value={20: "Lidl"})),
+        ):
+            link_resp = self.client.post(
+                "/api/v1/firefly-sync/backlog/link",
+                json={"product_id": bananas_id, "transaction_journal_ids": [8801]},
+            )
+            self.assertEqual(link_resp.status_code, 202)
+            self._wait_for_job(link_resp.json()["id"])
+
+            with Session(self.engine) as session:
+                pr = session.exec(
+                    select(PriceRecord).where(PriceRecord.transaction_journal_id == 8801)
+                ).first()
+                self.assertIsNotNone(pr)
+                self.assertIsNone(pr.quantity)
+                self.assertIsNone(pr.normalized_unit_price)
+                self.assertIsNone(pr.normalized_regular_price)
+                self.assertEqual(pr.verification_status, "missing")
+                pr_id = pr.id
+
+            # Analytics and history must not fabricate a 2.40 €/kg unit price while missing
+            analytics_before = self.client.get(
+                f"/api/v1/analytics/tags?tag_ids={self.tag_ids['Bio']}"
+            ).json()
+            banana_row = next(i for i in analytics_before["items"] if i["product_id"] == bananas_id)
+            self.assertEqual(banana_row["total_spend"], 2.40)
+            self.assertEqual(banana_row["purchase_count"], 1)
+            self.assertIsNone(banana_row["median_unit_price"])
+
+            history_before = self.client.get(f"/api/v1/prices/history/{bananas_id}").json()
+            self.assertIsNone(history_before["analysis"]["normalized_current_price"])
+            self.assertIsNone(history_before["analysis"]["normalized_baseline_regular_price"])
+
+            # Cannot verify without a quantity
+            bad_verify = self.client.patch(
+                f"/api/v1/prices/{pr_id}",
+                json={"confirm_verified": True},
+            )
+            self.assertEqual(bad_verify.status_code, 422)
+
+            # Enrich locally with 800g on discount (regular_price 3.00) -> 3.00 €/kg paid, 3.75 €/kg regular
+            with patch("app.api.v1.prices.firefly_client.update_transaction", side_effect=AssertionError("Must not call Firefly")) as _:
+                patch_resp = self.client.patch(
+                    f"/api/v1/prices/{pr_id}",
+                    json={
+                        "quantity": 800.0,
+                        "unit": "g",
+                        "is_discount": True,
+                        "regular_price": 3.00,
+                        "confirm_verified": True,
+                    },
+                )
+            self.assertEqual(patch_resp.status_code, 200)
+            updated = patch_resp.json()
+            self.assertEqual(updated["quantity"], 800.0)
+            self.assertEqual(updated["unit"], "g")
+            self.assertTrue(updated["is_discount"])
+            self.assertEqual(updated["regular_price"], 3.00)
+            self.assertEqual(updated["normalized_unit_price"], 3.0)
+            self.assertEqual(updated["normalized_regular_price"], 3.75)
+            self.assertEqual(updated["verification_status"], "verified")
+
+            # Same-product sync/upsert preserves verified edits; different-product re-link resets
+            from app.services.firefly_sync_jobs import _upsert_price_record_for_split_values
+
+            with Session(self.engine) as session:
+                split = session.exec(
+                    select(FireflySyncedSplit).where(FireflySyncedSplit.transaction_journal_id == 8801)
+                ).first()
+                _upsert_price_record_for_split_values(
+                    session,
+                    product_id=bananas_id,
+                    default_unit="kg",
+                    package_size=1.0,
+                    sale_mode="loose_weight",
+                    split=split,
+                )
+                session.commit()
+                preserved = session.get(PriceRecord, pr_id)
+                self.assertEqual(preserved.quantity, 800.0)
+                self.assertEqual(preserved.unit, "g")
+                self.assertTrue(preserved.is_discount)
+                self.assertEqual(preserved.regular_price, 3.00)
+                self.assertEqual(preserved.verification_status, "verified")
+
+    def test_patch_price_one_click_confirms_needs_review_record(self):
+        with Session(self.engine) as session:
+            pr = PriceRecord(
+                product_id=self.product_id,
+                firefly_account_id=20,
+                recorded_date=date(2026, 11, 18),
+                regular_price=2.40,
+                paid_price=2.40,
+                quantity=1.0,
+                unit="g",
+                package_size=600.0,
+                normalized_unit_price=4.0,
+                normalized_regular_price=4.0,
+                source_type="firefly_sync",
+                verification_status="needs_review",
+            )
+            session.add(pr)
+            session.commit()
+            session.refresh(pr)
+            pr_id = pr.id
+
+        with patch("app.api.v1.prices.firefly_client.resolve_expense_account_names", new=AsyncMock(return_value={20: "Conad"})):
+            resp = self.client.patch(
+                f"/api/v1/prices/{pr_id}",
+                json={"confirm_verified": True},
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["verification_status"], "verified")
+        self.assertEqual(resp.json()["quantity"], 1.0)
+        self.assertEqual(resp.json()["normalized_unit_price"], 4.0)
+
 
 if __name__ == "__main__":
     unittest.main()

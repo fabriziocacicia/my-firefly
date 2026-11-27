@@ -45,7 +45,13 @@ from app.models.product import (
     ItemFireflyAliasBase,
     ItemFireflyAliasRead,
 )
-from app.models.price import PriceRecord, PriceRecordBase, PriceRecordCreate, PriceRecordRead
+from app.models.price import (
+    PriceRecord,
+    PriceRecordBase,
+    PriceRecordCreate,
+    PriceRecordUpdate,
+    PriceRecordRead,
+)
 from app.models.firefly_cache import FireflySyncedSplit, FireflySyncState, FireflySyncJob
 from app.models.receipt import (
     Receipt,
@@ -74,7 +80,7 @@ __all__ = [
     "CompanyAccountLinkRead", "AccountCompanyAssign",
     "Product", "ProductBase", "ProductCreate", "ProductUpdate", "ProductRead",
     "ItemFireflyAlias", "ItemFireflyAliasBase", "ItemFireflyAliasRead",
-    "PriceRecord", "PriceRecordBase", "PriceRecordCreate", "PriceRecordRead",
+    "PriceRecord", "PriceRecordBase", "PriceRecordCreate", "PriceRecordUpdate", "PriceRecordRead",
     "FireflySyncedSplit", "FireflySyncState", "FireflySyncJob",
     "Receipt", "ReceiptBase", "ReceiptCreate", "ReceiptRead",
     "ReceiptItem", "ReceiptItemBase", "ReceiptItemCreate", "ReceiptItemRead",

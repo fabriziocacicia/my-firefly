@@ -1,5 +1,6 @@
 from datetime import datetime, date, timezone
-from typing import Optional
+from typing import Literal, Optional
+from pydantic import model_validator
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.product import Product, ProductRead
 
@@ -40,6 +41,23 @@ class PriceRecord(PriceRecordBase, table=True):
 
 class PriceRecordCreate(PriceRecordBase):
     quantity: float = Field(default=1.0, gt=0)
+
+
+class PriceRecordUpdate(SQLModel):
+    quantity: Optional[float] = Field(default=None, gt=0)
+    unit: Optional[Literal["g", "kg", "ml", "l", "pcs"]] = None
+    is_discount: Optional[bool] = None
+    regular_price: Optional[float] = Field(default=None, gt=0)
+    notes: Optional[str] = None
+    confirm_verified: bool = True
+
+    @model_validator(mode="after")
+    def _reject_null_required_fields(self) -> "PriceRecordUpdate":
+        sent = self.model_fields_set
+        for field_name in ("quantity", "unit", "is_discount", "regular_price", "confirm_verified"):
+            if field_name in sent and getattr(self, field_name) is None:
+                raise ValueError(f"Field '{field_name}' cannot be null")
+        return self
 
 
 class PriceRecordRead(PriceRecordBase):

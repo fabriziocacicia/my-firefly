@@ -302,34 +302,87 @@ def _upsert_price_record_for_split_values(
     default_unit: str,
     package_size: Optional[float],
     split: FireflySyncedSplit,
+    sale_mode: str = "packaged",
 ) -> None:
     if not split.firefly_expense_account_id:
         return
     paid_price = round(split.amount_cents / 100.0, 2)
-    norm_price = normalize_unit_price(
-        price=paid_price,
-        quantity=1.0,
-        unit=default_unit,
-        package_size=package_size,
-    )
+    is_loose = sale_mode == "loose_weight"
+    eff_pkg_size = package_size if package_size and package_size > 0 else 1.0
+
     existing = session.exec(
         select(PriceRecord).where(
             PriceRecord.transaction_journal_id == split.transaction_journal_id
         )
     ).first()
     if existing:
-        existing.product_id = product_id
         existing.firefly_account_id = split.firefly_expense_account_id
         existing.recorded_date = split.tx_date
         existing.paid_price = paid_price
-        existing.regular_price = paid_price
-        existing.unit = default_unit
-        existing.package_size = package_size
-        existing.normalized_unit_price = norm_price
-        existing.normalized_regular_price = norm_price
         existing.firefly_transaction_id = split.firefly_transaction_id
+
+        if existing.product_id == product_id:
+            if not existing.is_discount:
+                existing.regular_price = paid_price
+            if existing.quantity is not None and existing.quantity > 0:
+                pkg = (
+                    existing.package_size
+                    if existing.package_size is not None and existing.package_size > 0
+                    else eff_pkg_size
+                )
+                existing.normalized_unit_price = normalize_unit_price(
+                    price=paid_price,
+                    quantity=existing.quantity,
+                    unit=existing.unit or default_unit,
+                    package_size=pkg,
+                )
+                existing.normalized_regular_price = normalize_unit_price(
+                    price=existing.regular_price,
+                    quantity=existing.quantity,
+                    unit=existing.unit or default_unit,
+                    package_size=pkg,
+                )
+            else:
+                existing.normalized_unit_price = None
+                existing.normalized_regular_price = None
+        else:
+            existing.product_id = product_id
+            existing.regular_price = paid_price
+            existing.is_discount = False
+            existing.unit = default_unit
+            existing.package_size = package_size
+            if is_loose:
+                existing.quantity = None
+                existing.normalized_unit_price = None
+                existing.normalized_regular_price = None
+                existing.verification_status = "missing"
+            else:
+                norm_price = normalize_unit_price(
+                    price=paid_price,
+                    quantity=1.0,
+                    unit=default_unit,
+                    package_size=eff_pkg_size,
+                )
+                existing.quantity = 1.0
+                existing.normalized_unit_price = norm_price
+                existing.normalized_regular_price = norm_price
+                existing.verification_status = "verified"
         session.add(existing)
     else:
+        if is_loose:
+            qty: Optional[float] = None
+            norm_price = None
+            ver_status = "missing"
+        else:
+            qty = 1.0
+            norm_price = normalize_unit_price(
+                price=paid_price,
+                quantity=1.0,
+                unit=default_unit,
+                package_size=eff_pkg_size,
+            )
+            ver_status = "verified"
+
         session.add(
             PriceRecord(
                 product_id=product_id,
@@ -338,7 +391,7 @@ def _upsert_price_record_for_split_values(
                 regular_price=paid_price,
                 paid_price=paid_price,
                 is_discount=False,
-                quantity=1.0,
+                quantity=qty,
                 unit=default_unit,
                 package_size=package_size,
                 normalized_unit_price=norm_price,
@@ -346,6 +399,7 @@ def _upsert_price_record_for_split_values(
                 firefly_transaction_id=split.firefly_transaction_id,
                 transaction_journal_id=split.transaction_journal_id,
                 source_type="firefly_sync",
+                verification_status=ver_status,
             )
         )
 
@@ -460,6 +514,7 @@ async def _run_firefly_sync_job(
     expanded_tag_names: List[str],
     grouped_tx_jids: dict[int, List[int]],
     match_descriptions_lower: Optional[set[str]] = None,
+    sale_mode: str = "packaged",
 ) -> None:
     sem = asyncio.Semaphore(FIREFLY_REWRITE_CONCURRENCY)
     norm_product_name = ff_description.strip().lower()
@@ -526,6 +581,7 @@ async def _run_firefly_sync_job(
                             default_unit=default_unit,
                             package_size=package_size,
                             split=split_row,
+                            sale_mode=sale_mode,
                         )
 
             db_session.add(job)
@@ -641,6 +697,7 @@ def enqueue_firefly_rewrite_job(
                 expanded_tag_names=expanded_tag_names,
                 grouped_tx_jids=grouped_tx_jids,
                 match_descriptions_lower=match_descriptions_lower,
+                sale_mode=product.sale_mode,
             )
         )
         _active_job_tasks.add(task)

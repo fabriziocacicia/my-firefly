@@ -5,7 +5,12 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.core.database import get_session
-from app.models.price import PriceRecord, PriceRecordCreate, PriceRecordRead
+from app.models.price import (
+    PriceRecord,
+    PriceRecordCreate,
+    PriceRecordRead,
+    PriceRecordUpdate,
+)
 from app.models.product import Product
 from app.services.firefly import firefly_client
 from app.services.pricing import compute_deal_analysis, normalize_unit_price
@@ -23,6 +28,8 @@ def _resolve_normalized_regular_price(
             record.regular_price * (record.normalized_unit_price / record.paid_price),
             3,
         )
+    if record.quantity is None or record.quantity <= 0:
+        return None
     pkg_size = (
         record.package_size
         if record.package_size is not None
@@ -30,10 +37,24 @@ def _resolve_normalized_regular_price(
     )
     return normalize_unit_price(
         price=record.regular_price,
-        quantity=1.0,
+        quantity=record.quantity,
         unit=record.unit or product.default_unit,
         package_size=pkg_size,
     )
+
+
+async def _serialize_price_record(record: PriceRecord) -> PriceRecordRead:
+    resolved_names = await firefly_client.resolve_expense_account_names(
+        {record.firefly_account_id}
+    )
+    store_name = resolved_names.get(
+        record.firefly_account_id,
+        f"Account #{record.firefly_account_id}",
+    )
+    data = record.model_dump()
+    data["product"] = record.product
+    data["store_name"] = store_name
+    return PriceRecordRead(**data)
 
 
 @router.get("/history/{product_id}")
@@ -195,16 +216,85 @@ async def record_price(
             selectinload(PriceRecord.product).selectinload(Product.tags),
         )
     ).first()
+    return await _serialize_price_record(loaded)
 
-    resolved_names = await firefly_client.resolve_expense_account_names(
-        {price_record.firefly_account_id}
-    )
-    store_name = resolved_names.get(
-        price_record.firefly_account_id,
-        f"Account #{price_record.firefly_account_id}",
-    )
 
-    data = loaded.model_dump()
-    data["product"] = loaded.product
-    data["store_name"] = store_name
-    return PriceRecordRead(**data)
+@router.patch("/{price_record_id}", response_model=PriceRecordRead)
+async def update_price_record(
+    price_record_id: int,
+    payload: PriceRecordUpdate,
+    session: Session = Depends(get_session),
+):
+    """Locally updates quantity, unit, discount metadata, and verification status without touching Firefly III."""
+    record = session.exec(
+        select(PriceRecord)
+        .where(PriceRecord.id == price_record_id)
+        .options(
+            selectinload(PriceRecord.product).selectinload(Product.brand),
+            selectinload(PriceRecord.product).selectinload(Product.tags),
+        )
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Price record not found")
+
+    sent = payload.model_fields_set
+    if "quantity" in sent and payload.quantity is not None:
+        record.quantity = payload.quantity
+    if "unit" in sent and payload.unit is not None:
+        record.unit = payload.unit
+    if "notes" in sent:
+        record.notes = payload.notes
+
+    if "is_discount" in sent and payload.is_discount is not None:
+        record.is_discount = payload.is_discount
+        if not payload.is_discount and "regular_price" not in sent:
+            record.regular_price = record.paid_price
+
+    if "regular_price" in sent and payload.regular_price is not None:
+        record.regular_price = payload.regular_price
+        if "is_discount" not in sent:
+            record.is_discount = payload.regular_price > record.paid_price
+
+    if record.quantity is None or record.quantity <= 0:
+        if payload.confirm_verified:
+            raise HTTPException(
+                status_code=422,
+                detail="Cannot verify a price record without a valid quantity",
+            )
+        record.normalized_unit_price = None
+        record.normalized_regular_price = None
+    else:
+        eff_pkg_size = (
+            record.package_size
+            if record.package_size is not None and record.package_size > 0
+            else (record.product.package_size if record.product else 1.0)
+        )
+        eff_unit = record.unit or (record.product.default_unit if record.product else "pcs")
+        record.normalized_unit_price = normalize_unit_price(
+            price=record.paid_price,
+            quantity=record.quantity,
+            unit=eff_unit,
+            package_size=eff_pkg_size,
+        )
+        record.normalized_regular_price = normalize_unit_price(
+            price=record.regular_price,
+            quantity=record.quantity,
+            unit=eff_unit,
+            package_size=eff_pkg_size,
+        )
+        if payload.confirm_verified:
+            record.verification_status = "verified"
+
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+
+    loaded = session.exec(
+        select(PriceRecord)
+        .where(PriceRecord.id == record.id)
+        .options(
+            selectinload(PriceRecord.product).selectinload(Product.brand),
+            selectinload(PriceRecord.product).selectinload(Product.tags),
+        )
+    ).first()
+    return await _serialize_price_record(loaded)
