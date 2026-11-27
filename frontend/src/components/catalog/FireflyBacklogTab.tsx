@@ -98,7 +98,7 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
           api.fireflySync.getStatus(),
           api.fireflySync.getBacklog(
             {
-              status: statusFilter,
+              status: statusFilter === 'needs_attention' ? 'linked' : statusFilter,
               category: selectedCategory,
               search: debouncedSearch.trim() || undefined,
             },

@@ -89,6 +89,9 @@ export interface ItemFireflyAlias {
   product_id: number;
   raw_description: string;
   normalized_description: string;
+  company_id?: number | null;
+  firefly_account_id?: number | null;
+  scope_key?: string;
   created_at: string;
 }
 
@@ -129,6 +132,8 @@ export interface Product {
   firefly_description?: string;
 }
 
+export type VerificationStatus = 'missing' | 'needs_review' | 'verified';
+
 export interface PriceRecord {
   id: number;
   product_id: number;
@@ -140,13 +145,16 @@ export interface PriceRecord {
   is_discount: boolean;
   discount_type?: string;
   discount_note?: string;
-  quantity: number;
+  quantity: number | null;
   unit: string;
-  package_size?: number;
-  normalized_unit_price?: number;
-  normalized_regular_price?: number;
-  firefly_transaction_id?: number;
-  notes?: string;
+  package_size?: number | null;
+  normalized_unit_price?: number | null;
+  normalized_regular_price?: number | null;
+  firefly_transaction_id?: number | null;
+  transaction_journal_id?: number | null;
+  source_type?: string;
+  verification_status?: VerificationStatus;
+  notes?: string | null;
   product?: Product;
 }
 
@@ -376,6 +384,7 @@ export interface FireflySyncStatus {
   total_cached_splits: number;
   unassociated_count: number;
   ignored_count: number;
+  needs_attention_count?: number;
 }
 
 export interface SyncTransactionsResponse {
@@ -392,7 +401,21 @@ export interface CategoryBacklogCount {
   count: number;
 }
 
-export type BacklogStatusFilter = 'unassociated' | 'linked' | 'ignored';
+export interface ChainFilterOption {
+  id: number;
+  name: string;
+  count: number;
+}
+
+export interface StoreFilterOption {
+  account_id: number;
+  name: string;
+  company_id?: number | null;
+  count: number;
+}
+
+export type BacklogStatusFilter = 'unassociated' | 'needs_attention' | 'linked' | 'ignored';
+export type AliasScope = 'auto' | 'global' | 'chain' | 'store' | 'none';
 
 export interface BacklogGroup {
   normalized_description: string;
@@ -406,16 +429,119 @@ export interface BacklogGroup {
   journal_ids: number[];
   suggested_product_id?: number | null;
   suggested_product_name?: string | null;
+  suggested_scope?: string | null;
   linked_product_id?: number | null;
   linked_product_name?: string | null;
+  chain_count?: number;
+  store_count?: number;
 }
 
 export interface BacklogResponse {
   total_unassociated: number;
   linked_count: number;
   ignored_count: number;
+  needs_attention_count?: number;
   category_counts: CategoryBacklogCount[];
+  available_chains?: ChainFilterOption[];
+  available_stores?: StoreFilterOption[];
   groups: BacklogGroup[];
+}
+
+export interface AttentionSplitItem {
+  price_record_id: number;
+  product_id: number;
+  product_name: string;
+  brand_name?: string | null;
+  sale_mode: SaleMode;
+  default_unit: string;
+  transaction_journal_id?: number | null;
+  firefly_transaction_id?: number | null;
+  split_description?: string | null;
+  category_name?: string | null;
+  firefly_account_id: number;
+  store_name: string;
+  company_id?: number | null;
+  company_name?: string | null;
+  recorded_date: string;
+  paid_price: number;
+  regular_price: number;
+  is_discount: boolean;
+  quantity: number | null;
+  unit: string;
+  package_size?: number | null;
+  normalized_unit_price?: number | null;
+  normalized_regular_price?: number | null;
+  verification_status: VerificationStatus;
+  notes?: string | null;
+}
+
+export interface AttentionQueueResponse {
+  missing_count: number;
+  needs_review_count: number;
+  available_chains: ChainFilterOption[];
+  available_stores: StoreFilterOption[];
+  items: AttentionSplitItem[];
+}
+
+export interface SplitPriceSummary {
+  id: number;
+  quantity: number | null;
+  unit: string;
+  regular_price: number;
+  paid_price: number;
+  is_discount: boolean;
+  normalized_unit_price?: number | null;
+  normalized_regular_price?: number | null;
+  verification_status: VerificationStatus;
+  notes?: string | null;
+}
+
+export interface BacklogSplitDetail {
+  transaction_journal_id: number;
+  firefly_transaction_id: number;
+  tx_date: string;
+  amount: number;
+  description: string;
+  tags: string[];
+  linked_product_id?: number | null;
+  linked_product_name?: string | null;
+  is_ignored: boolean;
+  price_record?: SplitPriceSummary | null;
+}
+
+export interface BacklogStoreBucket {
+  firefly_account_id?: number | null;
+  store_name: string;
+  company_id?: number | null;
+  occurrence_count: number;
+  total_amount: number;
+  journal_ids: number[];
+  suggested_product_id?: number | null;
+  suggested_product_name?: string | null;
+  suggested_scope?: string | null;
+  splits: BacklogSplitDetail[];
+}
+
+export interface BacklogChainBucket {
+  company_id: number;
+  company_name: string;
+  occurrence_count: number;
+  total_amount: number;
+  journal_ids: number[];
+  suggested_product_id?: number | null;
+  suggested_product_name?: string | null;
+  suggested_scope?: string | null;
+  stores: BacklogStoreBucket[];
+}
+
+export interface BacklogSplitsResponse {
+  normalized_description: string;
+  category_name?: string | null;
+  status: 'unassociated' | 'linked' | 'ignored';
+  occurrence_count: number;
+  total_amount: number;
+  chains: BacklogChainBucket[];
+  unchained_stores: BacklogStoreBucket[];
 }
 
 export interface FailedTransactionRewrite {
