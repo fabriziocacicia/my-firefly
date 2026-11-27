@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, List, Literal, Optional
 
 import httpx
@@ -24,6 +24,8 @@ FIREFLY_REWRITE_CONCURRENCY = 4
 SSE_HEARTBEAT_SECONDS = 15.0
 MAX_STORED_JOB_ERRORS = 50
 SSE_QUEUE_MAXSIZE = 8
+COMPLETED_BANNER_TTL_SECONDS = 300
+ACTIVE_JOB_STATUSES = ("queued", "running")
 
 _job_subscribers: set[tuple[asyncio.AbstractEventLoop, asyncio.Queue[str]]] = set()
 _active_job_tasks: set[asyncio.Task] = set()
@@ -111,20 +113,63 @@ def serialize_sync_job(job: FireflySyncJob) -> FireflySyncJobResponse:
     )
 
 
+def is_sync_job_banner_visible(
+    job: FireflySyncJob, now: Optional[datetime] = None
+) -> bool:
+    """Returns whether a sync job should still render as an inline banner."""
+    if job.status in ACTIVE_JOB_STATUSES:
+        return True
+    if job.dismissed_at is not None:
+        return False
+    if job.status == "completed":
+        current_now = now or datetime.now(timezone.utc)
+        ref_dt = ensure_aware_utc(job.finished_at) or ensure_aware_utc(job.created_at)
+        if ref_dt is None:
+            return False
+        return (current_now - ref_dt) <= timedelta(seconds=COMPLETED_BANNER_TTL_SECONDS)
+    return True
+
+
 def list_visible_sync_jobs(
     session: Session, include_dismissed: bool = False, limit: int = 20
 ) -> List[FireflySyncJobResponse]:
-    stmt = select(FireflySyncJob)
-    if not include_dismissed:
-        stmt = stmt.where(
+    stmt = select(FireflySyncJob).order_by(
+        FireflySyncJob.created_at.desc(), FireflySyncJob.id.desc()
+    )
+    if include_dismissed:
+        rows = session.exec(stmt.limit(limit)).all()
+        return [serialize_sync_job(r) for r in rows]
+
+    candidates = session.exec(
+        stmt.where(
             or_(
                 FireflySyncJob.dismissed_at.is_(None),
-                FireflySyncJob.status.in_(["queued", "running"]),
+                FireflySyncJob.status.in_(list(ACTIVE_JOB_STATUSES)),
             )
         )
-    stmt = stmt.order_by(FireflySyncJob.created_at.desc(), FireflySyncJob.id.desc()).limit(limit)
-    rows = session.exec(stmt).all()
-    return [serialize_sync_job(r) for r in rows]
+    ).all()
+    now = datetime.now(timezone.utc)
+    visible = [r for r in candidates if is_sync_job_banner_visible(r, now)][:limit]
+    return [serialize_sync_job(r) for r in visible]
+
+
+def dismiss_all_finished_sync_jobs(session: Session) -> int:
+    """Marks all non-dismissed finished jobs as dismissed without touching active jobs."""
+    now = datetime.now(timezone.utc)
+    rows = session.exec(
+        select(FireflySyncJob).where(
+            FireflySyncJob.dismissed_at.is_(None),
+            FireflySyncJob.status.notin_(list(ACTIVE_JOB_STATUSES)),
+        )
+    ).all()
+    if not rows:
+        return 0
+    for job in rows:
+        job.dismissed_at = now
+        session.add(job)
+    session.commit()
+    broadcast_jobs_snapshot(session)
+    return len(rows)
 
 
 def jobs_snapshot_json(session: Session) -> str:
