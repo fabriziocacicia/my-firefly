@@ -365,24 +365,32 @@ async def propagate_products_batch_to_firefly(
     active_pids = set(active_rows)
     stats = compute_affected_firefly_stats(session, unique_ids)
 
-    jobs: list[FireflySyncJobResponse] = []
+    eligible_ids: list[int] = []
     skipped_active: list[int] = []
     for pid in unique_ids:
         if pid in active_pids:
             skipped_active.append(pid)
             continue
         tx_ids, _ = stats.get(pid, (set(), 0))
-        if not tx_ids:
-            continue
-        product = session.exec(
+        if tx_ids:
+            eligible_ids.append(pid)
+
+    products_by_id: dict[int, Product] = {}
+    if eligible_ids:
+        loaded_products = session.exec(
             select(Product)
-            .where(Product.id == pid)
+            .where(Product.id.in_(eligible_ids))
             .options(
                 selectinload(Product.brand),
                 selectinload(Product.tags),
                 selectinload(Product.aliases),
             )
-        ).first()
+        ).all()
+        products_by_id = {p.id: p for p in loaded_products if p.id is not None}
+
+    jobs: list[FireflySyncJobResponse] = []
+    for pid in eligible_ids:
+        product = products_by_id.get(pid)
         if not product:
             continue
         job = _collect_and_enqueue_propagation_job(session, product)

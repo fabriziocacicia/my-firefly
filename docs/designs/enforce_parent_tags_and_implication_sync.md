@@ -1,6 +1,6 @@
 # Spec Delta: Enforce Parent Tags on Items & Implication Impact Sync
 
-* **Status:** Proposed
+* **Status:** Implemented
 * **Date:** 2026-11-27
 * **Issue:** [#30 — feat: child tags on items must enforce parent ones](https://github.com/fabriziocacicia/my-firefly/issues/30)
 * **Base Spec:** [`canonical_items_hierarchical_tags_and_firefly_sync.md`](./canonical_items_hierarchical_tags_and_firefly_sync.md)
@@ -60,7 +60,7 @@ Per [`canonical_items_hierarchical_tags_and_firefly_sync.md`](./canonical_items_
 3. **Implication creation ([`tags.py`](file:///Users/fabriziocacicia/Projects/Personal/my-firefly/backend/app/api/v1/tags.py)):**
    - After committing a new `TagImplication(child_tag_id, parent_tag_id)`, prune any redundant `ProductTagLink` rows across existing products whose direct tags now contain redundant implied ancestors (e.g., products having both `Mele` and `Frutta` drop direct `ProductTagLink(Frutta)` while keeping `Mele`).
 4. **Alembic data migration (`backend/migrations/versions/0011_sanitize_redundant_product_tags.py`):**
-   - One-time idempotent data migration (`down_revision = "0010_firefly_sync_jobs"`): scans `tag_implication` and `product_tag_link`, removes any `product_tag_link` row whose `tag_id` is an implied ancestor of another `tag_id` on the same `product_id`. Leaves `effective_tags` unchanged and performs no Firefly API calls.
+   - One-time idempotent data migration (`down_revision = "0010_firefly_sync_jobs"`): scans `tag_implication` and `producttaglink`, removes any `producttaglink` row whose `tag_id` is an implied ancestor of another `tag_id` on the same `product_id`. Leaves `effective_tags` unchanged and performs no Firefly API calls.
 
 ### 5.2 Implication Impact Preview & Immediate Batch Sync (Backend)
 

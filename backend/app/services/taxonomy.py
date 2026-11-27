@@ -161,7 +161,7 @@ def sanitize_product_tag_links(
     for prod_links in by_product.values():
         keep_ids = set(
             prune_redundant_ancestor_tag_ids(
-                [l.tag_id for l in prod_links if l.tag_id is not None],
+                [link.tag_id for link in prod_links if link.tag_id is not None],
                 imp_map,
             )
         )

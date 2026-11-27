@@ -42,6 +42,7 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
   const [savingEdge, setSavingEdge] = useState(false);
   const [deletingEdgeKey, setDeletingEdgeKey] = useState<string | null>(null);
   const [pendingImpact, setPendingImpact] = useState<ImplicationImpactResponse | null>(null);
+  const [ruleApplied, setRuleApplied] = useState(false);
   const [applyingImpact, setApplyingImpact] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
@@ -107,17 +108,27 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
 
   const applyImplicationChange = async (
     impact: ImplicationImpactResponse,
-    syncFirefly: boolean
+    syncFirefly: boolean,
+    fromModal: boolean
   ) => {
     setApplyingImpact(true);
     setBanner(null);
+    setModalError(null);
+    let appliedLocally = fromModal ? ruleApplied : false;
     try {
-      if (impact.action === 'add') {
-        await api.tags.createImplication(impact.child_tag_id, impact.parent_tag_id);
-        setChildTagId(null);
-        setParentTagId(null);
-      } else {
-        await api.tags.deleteImplication(impact.child_tag_id, impact.parent_tag_id);
+      if (!appliedLocally) {
+        if (impact.action === 'add') {
+          await api.tags.createImplication(impact.child_tag_id, impact.parent_tag_id);
+          setChildTagId(null);
+          setParentTagId(null);
+        } else {
+          await api.tags.deleteImplication(impact.child_tag_id, impact.parent_tag_id);
+        }
+        appliedLocally = true;
+        if (fromModal) {
+          setRuleApplied(true);
+        }
+        await onRefresh();
       }
 
       let startedCount = 0;
@@ -137,7 +148,7 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
       }
 
       setPendingImpact(null);
-      await onRefresh();
+      setRuleApplied(false);
 
       const actionLabel =
         impact.action === 'add'
@@ -168,9 +179,12 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
       }
       setModalError(null);
     } catch (err) {
-      const message =
+      const rawMessage =
         err instanceof Error ? err.message : 'Failed to apply implication change';
-      if (pendingImpact) {
+      const message = appliedLocally
+        ? `Rule change was saved locally, but starting Firefly sync failed: ${rawMessage}`
+        : rawMessage;
+      if (fromModal) {
         setModalError(message);
       } else {
         setBanner({ type: 'error', text: message });
@@ -187,9 +201,10 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
   ) => {
     setBanner(null);
     setModalError(null);
+    setRuleApplied(false);
     const impact = await api.tags.previewImplicationImpact(action, childId, parentId);
     if (impact.total_affected_items === 0) {
-      await applyImplicationChange(impact, false);
+      await applyImplicationChange(impact, false, false);
     } else {
       setPendingImpact(impact);
     }
@@ -530,26 +545,31 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
               <button
                 type="button"
                 disabled={applyingImpact}
-                onClick={() => setPendingImpact(null)}
+                onClick={() => {
+                  setPendingImpact(null);
+                  setRuleApplied(false);
+                }}
                 className="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-40"
               >
-                Cancel
+                {ruleApplied ? 'Close' : 'Cancel'}
               </button>
 
               {pendingImpact.total_affected_splits > 0 ? (
                 <>
+                  {!ruleApplied && (
+                    <button
+                      type="button"
+                      disabled={applyingImpact}
+                      onClick={() => applyImplicationChange(pendingImpact, false, true)}
+                      className="px-3.5 py-2 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      Save Rule Only
+                    </button>
+                  )}
                   <button
                     type="button"
                     disabled={applyingImpact}
-                    onClick={() => applyImplicationChange(pendingImpact, false)}
-                    className="px-3.5 py-2 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                  >
-                    Save Rule Only
-                  </button>
-                  <button
-                    type="button"
-                    disabled={applyingImpact}
-                    onClick={() => applyImplicationChange(pendingImpact, true)}
+                    onClick={() => applyImplicationChange(pendingImpact, true, true)}
                     className="inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white"
                   >
                     <RefreshCw
@@ -557,14 +577,16 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
                     />
                     {applyingImpact
                       ? 'Syncing...'
-                      : `Confirm & Sync ${pendingImpact.total_affected_splits} Split(s)`}
+                      : ruleApplied
+                        ? `Retry Sync ${pendingImpact.total_affected_splits} Split(s)`
+                        : `Confirm & Sync ${pendingImpact.total_affected_splits} Split(s)`}
                   </button>
                 </>
               ) : (
                 <button
                   type="button"
                   disabled={applyingImpact}
-                  onClick={() => applyImplicationChange(pendingImpact, false)}
+                  onClick={() => applyImplicationChange(pendingImpact, false, true)}
                   className="px-4 py-2 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white"
                 >
                   {applyingImpact ? 'Applying...' : 'Confirm'}
