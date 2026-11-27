@@ -467,6 +467,72 @@ class ImplicationImpactAndBatchSyncTests(unittest.TestCase):
         self.assertEqual(rem_names, ["Mele Fuji", "Mele Renette"])
         self.assertEqual(rem_body["affected_items"][0]["after_tags"], ["Mele"])
 
+    def test_implication_impact_detects_out_of_sync_firefly_splits_when_parent_already_direct(self):
+        with Session(self.engine) as session:
+            lenticchie = Tag(name="Lenticchie", firefly_tag_id=10)
+            legumi = Tag(name="Legumi", firefly_tag_id=11)
+            bio = Tag(name="Bio", firefly_tag_id=12)
+            p_unsynced = Product(
+                name="Lenticchie Lessate Bio", default_unit="g", sale_mode="packaged"
+            )
+            p_synced = Product(
+                name="Lenticchie Rosse", default_unit="g", sale_mode="packaged"
+            )
+            session.add_all([lenticchie, legumi, bio, p_unsynced, p_synced])
+            session.commit()
+            for obj in (lenticchie, legumi, bio, p_unsynced, p_synced):
+                session.refresh(obj)
+            session.add_all(
+                [
+                    # Both products already had Legumi directly in local ProductTagLink
+                    ProductTagLink(product_id=p_unsynced.id, tag_id=bio.id),
+                    ProductTagLink(product_id=p_unsynced.id, tag_id=lenticchie.id),
+                    ProductTagLink(product_id=p_unsynced.id, tag_id=legumi.id),
+                    ProductTagLink(product_id=p_synced.id, tag_id=lenticchie.id),
+                    ProductTagLink(product_id=p_synced.id, tag_id=legumi.id),
+                    # p_unsynced split on Firefly is still missing "Legumi"
+                    FireflySyncedSplit(
+                        transaction_journal_id=3001,
+                        firefly_transaction_id=300,
+                        tx_type="withdrawal",
+                        tx_date=date(2026, 11, 20),
+                        amount_cents=180,
+                        description="Lenticchie Lessate Bio",
+                        normalized_description="lenticchie lessate bio",
+                        tags_json='["Bio", "Lenticchie"]',
+                        linked_product_id=p_unsynced.id,
+                    ),
+                    # p_synced split on Firefly already has "Legumi"
+                    FireflySyncedSplit(
+                        transaction_journal_id=3002,
+                        firefly_transaction_id=301,
+                        tx_type="withdrawal",
+                        tx_date=date(2026, 11, 20),
+                        amount_cents=220,
+                        description="Lenticchie Rosse",
+                        normalized_description="lenticchie rosse",
+                        tags_json='["Lenticchie", "Legumi"]',
+                        linked_product_id=p_synced.id,
+                    ),
+                ]
+            )
+            session.commit()
+            lenticchie_id, legumi_id = lenticchie.id, legumi.id
+            p_unsynced_id = p_unsynced.id
+
+        resp = self.client.get(
+            "/api/v1/tags/implications/impact",
+            params={"action": "add", "child_tag_id": lenticchie_id, "parent_tag_id": legumi_id},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["total_affected_items"], 1)
+        self.assertEqual(body["total_affected_splits"], 1)
+        self.assertEqual(body["affected_items"][0]["product_id"], p_unsynced_id)
+        self.assertEqual(
+            set(body["affected_items"][0]["after_tags"]), {"Bio", "Lenticchie", "Legumi"}
+        )
+
     def test_propagate_firefly_batch_enqueues_jobs_and_skips_zero_or_active(self):
         with Session(self.engine) as session:
             mele = Tag(name="Mele", firefly_tag_id=1)

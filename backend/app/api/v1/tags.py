@@ -1,3 +1,4 @@
+import json
 from typing import List, Literal
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -7,7 +8,7 @@ from sqlmodel import Session, select
 
 from app.api.v1.products import compute_affected_firefly_stats
 from app.core.database import get_session
-from app.models.firefly_cache import FireflySyncJob
+from app.models.firefly_cache import FireflySyncJob, FireflySyncedSplit
 from app.models.product import Product
 from app.models.tag import (
     ProductTagLink,
@@ -217,6 +218,19 @@ def list_tag_implications(session: Session = Depends(get_session)):
     return session.exec(select(TagImplication)).all()
 
 
+def _split_missing_expected_tags(raw_tags_json: str, expected_lower: set[str]) -> bool:
+    if not expected_lower:
+        return False
+    try:
+        parsed = json.loads(raw_tags_json or "[]")
+    except Exception:
+        parsed = []
+    if not isinstance(parsed, list):
+        return True
+    present_lower = {str(t).strip().lower() for t in parsed if str(t).strip()}
+    return not expected_lower.issubset(present_lower)
+
+
 @router.get("/implications/impact", response_model=ImplicationImpactResponse)
 def preview_tag_implication_impact(
     action: Literal["add", "remove"] = Query(...),
@@ -261,6 +275,7 @@ def preview_tag_implication_impact(
     all_tags_by_id = {t.id: t for t in all_tags if t.id is not None}
 
     impacted: list[tuple[Product, list[str], list[str]]] = []
+    unchanged_candidates: list[tuple[Product, list[Tag], list[Tag]]] = []
     for product in candidates:
         before_eff = expand_tags_ordered(product.tags, all_tags_by_id, before_imp)
         if action == "add":
@@ -285,6 +300,51 @@ def preview_tag_implication_impact(
                     [t.name for t in after_eff],
                 )
             )
+        else:
+            unchanged_candidates.append((product, before_eff, after_eff))
+
+    if unchanged_candidates:
+        unchanged_pids = [p.id for p, _, _ in unchanged_candidates if p.id is not None]
+        split_tag_rows = (
+            session.exec(
+                select(
+                    FireflySyncedSplit.linked_product_id,
+                    FireflySyncedSplit.tags_json,
+                ).where(
+                    FireflySyncedSplit.linked_product_id.in_(unchanged_pids),
+                    FireflySyncedSplit.is_ignored.is_(False),
+                )
+            ).all()
+            if unchanged_pids
+            else []
+        )
+        tags_by_pid: dict[int, list[str]] = {}
+        for pid, tags_json in split_tag_rows:
+            if pid is not None:
+                tags_by_pid.setdefault(pid, []).append(tags_json)
+
+        for product, before_eff, after_eff in unchanged_candidates:
+            if product.id is None:
+                continue
+            raw_splits = tags_by_pid.get(product.id, [])
+            if not raw_splits:
+                continue
+            expected_lower = {
+                t.name.strip().lower() for t in after_eff if t.name.strip()
+            }
+            if any(
+                _split_missing_expected_tags(raw_json, expected_lower)
+                for raw_json in raw_splits
+            ):
+                impacted.append(
+                    (
+                        product,
+                        [t.name for t in before_eff],
+                        [t.name for t in after_eff],
+                    )
+                )
+
+    impacted.sort(key=lambda entry: entry[0].name.lower())
 
     impacted_pids = [p.id for p, _, _ in impacted if p.id is not None]
     stats = compute_affected_firefly_stats(session, impacted_pids)

@@ -68,7 +68,7 @@ Per [`canonical_items_hierarchical_tags_and_firefly_sync.md`](./canonical_items_
    - Query params: `action: Literal["add", "remove"]`, `child_tag_id: int`, `parent_tag_id: int`.
    - Validates both tags exist (`404` otherwise). For `action="add"`, validates no cycle via `would_create_cycle` (`422` if cyclic).
    - Simulates the implication graph *before* and *after* applying/removing `(child_tag_id, parent_tag_id)` (including redundant-ancestor pruning for `add`).
-   - Identifies all `Product` rows whose direct tags contain `child_tag_id` or any descendant of `child_tag_id` (`get_descendant_tag_ids`).
+   - Identifies all `Product` rows whose direct tags contain `child_tag_id` or any descendant of `child_tag_id` (`get_descendant_tag_ids`), including items whose local `effective_tags` did not change (e.g., parent tag was already directly on the item) whenever any linked `FireflySyncedSplit.tags_json` is missing an expected tag from `after_tags`.
    - For each impacted product, computes:
      - `product_id`, `product_name`
      - `before_tags: list[str]` and `after_tags: list[str]` (resolved `effective_tags` names)
