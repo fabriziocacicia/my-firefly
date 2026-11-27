@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
+  Building2,
   CheckCheck,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   EyeOff,
   Link2,
   Plus,
@@ -9,6 +13,7 @@ import {
   RotateCcw,
   Search,
   Sparkles,
+  Store,
   Unlink,
   X,
 } from 'lucide-react';
@@ -16,15 +21,20 @@ import { api } from '../../api/client';
 import { hasDismissibleFinishedJobs } from '../../hooks/syncJobVisibility';
 import { isSyncJobActive } from '../../hooks/useFireflySyncJobs';
 import {
+  AliasScope,
+  AttentionQueueResponse,
   BacklogGroup,
   BacklogResponse,
+  BacklogSplitsResponse,
   BacklogStatusFilter,
   FireflySyncJob,
   FireflySyncStatus,
   Product,
 } from '../../types';
 import { formatProductBadge } from '../workbench/productUtils';
+import { BacklogAttentionQueue } from './BacklogAttentionQueue';
 import { filterLinkModalProducts } from './backlogProductSearch';
+import { BacklogSplitDrilldown, SubsetActionRequest } from './BacklogSplitDrilldown';
 import { ItemEditorModal } from './ItemEditorModal';
 import { SyncJobBadge } from './SyncJobBadge';
 
@@ -40,6 +50,35 @@ interface FireflyBacklogTabProps {
   onUnassociatedCountChange?: (count: number) => void;
 }
 
+interface LinkTarget {
+  label: string;
+  occurrenceCount: number;
+  journalIds: number[];
+  suggestedProductId: number | null;
+  aliasScope: AliasScope;
+}
+
+interface CreateTarget {
+  initialName: string;
+  categoryName: string | null;
+  sampleTags: string[];
+  journalIds: number[];
+  aliasScope: AliasScope;
+}
+
+interface ExpandedGroupState {
+  loading: boolean;
+  error: string | null;
+  data: BacklogSplitsResponse | null;
+  group: BacklogGroup;
+}
+
+function makeGroupKey(group: BacklogGroup): string {
+  return `${group.normalized_description}::${group.category_name ?? ''}::${
+    group.linked_product_id ?? ''
+  }`;
+}
+
 export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
   products,
   jobs,
@@ -53,19 +92,30 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
 }) => {
   const [status, setStatus] = useState<FireflySyncStatus | null>(null);
   const [backlog, setBacklog] = useState<BacklogResponse | null>(null);
+  const [attentionData, setAttentionData] = useState<AttentionQueueResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncingMode, setSyncingMode] = useState<'incremental' | 'full' | null>(null);
   const [requiresInitialFullSync, setRequiresInitialFullSync] = useState(false);
 
   const [statusFilter, setStatusFilter] = useState<BacklogStatusFilter>('unassociated');
+  const [attentionSubFilter, setAttentionSubFilter] = useState<'all' | 'missing' | 'needs_review'>(
+    'all'
+  );
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [banner, setBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
 
+  // Lazy 3-level drill-down state
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, ExpandedGroupState>>({});
+  const expandedGroupsRef = useRef(expandedGroups);
+  expandedGroupsRef.current = expandedGroups;
+
   // Link-to-existing modal state
-  const [linkingGroup, setLinkingGroup] = useState<BacklogGroup | null>(null);
+  const [linkTarget, setLinkTarget] = useState<LinkTarget | null>(null);
   const [linkSearch, setLinkSearch] = useState('');
   const [modalProducts, setModalProducts] = useState<Product[] | null>(null);
   const [loadingModalProducts, setLoadingModalProducts] = useState(false);
@@ -74,7 +124,7 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
   const [linkError, setLinkError] = useState<string | null>(null);
 
   // Create-new-item-and-link modal state
-  const [creatingFromGroup, setCreatingFromGroup] = useState<BacklogGroup | null>(null);
+  const [createTarget, setCreateTarget] = useState<CreateTarget | null>(null);
 
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   useEffect(() => {
@@ -85,6 +135,57 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
   const loadSeqRef = useRef(0);
   const activeAbortRef = useRef<AbortController | null>(null);
 
+  const fetchGroupSplits = useCallback(
+    async (
+      group: BacklogGroup,
+      targetStatus: Exclude<BacklogStatusFilter, 'needs_attention'>,
+      companyId: number | null,
+      accountId: number | null
+    ) => {
+      const key = makeGroupKey(group);
+      setExpandedGroups(prev => ({
+        ...prev,
+        [key]: {
+          loading: true,
+          error: null,
+          data: prev[key]?.data ?? null,
+          group,
+        },
+      }));
+      try {
+        const res = await api.fireflySync.getBacklogSplits({
+          normalized_description: group.normalized_description,
+          category_name: group.category_name,
+          status: targetStatus,
+          linked_product_id: group.linked_product_id ?? null,
+          company_id: companyId,
+          account_id: accountId,
+        });
+        setExpandedGroups(prev => {
+          if (!prev[key]) return prev;
+          return {
+            ...prev,
+            [key]: { loading: false, error: null, data: res, group },
+          };
+        });
+      } catch (err) {
+        setExpandedGroups(prev => {
+          if (!prev[key]) return prev;
+          return {
+            ...prev,
+            [key]: {
+              loading: false,
+              error: err instanceof Error ? err.message : 'Failed to load splits',
+              data: prev[key]?.data ?? null,
+              group,
+            },
+          };
+        });
+      }
+    },
+    []
+  );
+
   const loadStatusAndBacklog = useCallback(
     async (silent: boolean = false) => {
       activeAbortRef.current?.abort();
@@ -94,22 +195,66 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
 
       if (!silent) setLoading(true);
       try {
-        const [statusData, backlogData] = await Promise.all([
+        const effectiveBacklogStatus: Exclude<BacklogStatusFilter, 'needs_attention'> =
+          statusFilter === 'needs_attention' ? 'linked' : statusFilter;
+
+        const [statusData, backlogData, attentionRes] = await Promise.all([
           api.fireflySync.getStatus(),
           api.fireflySync.getBacklog(
             {
-              status: statusFilter === 'needs_attention' ? 'linked' : statusFilter,
+              status: effectiveBacklogStatus,
               category: selectedCategory,
               search: debouncedSearch.trim() || undefined,
+              company_id: selectedCompanyId,
+              account_id: selectedAccountId,
             },
             { signal: controller.signal }
           ),
+          statusFilter === 'needs_attention'
+            ? api.fireflySync.getAttentionQueue(
+                {
+                  company_id: selectedCompanyId,
+                  account_id: selectedAccountId,
+                  category: selectedCategory,
+                  search: debouncedSearch.trim() || undefined,
+                  verification_status:
+                    attentionSubFilter === 'all' ? undefined : attentionSubFilter,
+                },
+                { signal: controller.signal }
+              )
+            : Promise.resolve(null),
         ]);
         if (controller.signal.aborted || reqId !== loadSeqRef.current) return;
         setStatus(statusData);
         setBacklog(backlogData);
+        if (attentionRes !== null) {
+          setAttentionData(attentionRes);
+        }
         setRequiresInitialFullSync(!statusData.last_full_sync_at);
         onUnassociatedCountChange?.(backlogData.total_unassociated);
+
+        // Refresh currently expanded group drill-downs cleanly
+        if (statusFilter !== 'needs_attention') {
+          const openEntries = Object.entries(expandedGroupsRef.current);
+          const nextByKey = new Map(backlogData.groups.map(g => [makeGroupKey(g), g]));
+          for (const [k, entry] of openEntries) {
+            const matchedGroup = nextByKey.get(k);
+            if (matchedGroup) {
+              void fetchGroupSplits(
+                matchedGroup,
+                effectiveBacklogStatus,
+                selectedCompanyId,
+                selectedAccountId
+              );
+            } else if (!entry.loading) {
+              setExpandedGroups(prev => {
+                const copy = { ...prev };
+                delete copy[k];
+                return copy;
+              });
+            }
+          }
+        }
       } catch (err) {
         if (controller.signal.aborted || reqId !== loadSeqRef.current) return;
         if (!silent) {
@@ -122,7 +267,16 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
         if (reqId === loadSeqRef.current && !silent) setLoading(false);
       }
     },
-    [statusFilter, selectedCategory, debouncedSearch, onUnassociatedCountChange]
+    [
+      statusFilter,
+      attentionSubFilter,
+      selectedCategory,
+      selectedCompanyId,
+      selectedAccountId,
+      debouncedSearch,
+      onUnassociatedCountChange,
+      fetchGroupSplits,
+    ]
   );
 
   const loadStatusAndBacklogRef = useRef(loadStatusAndBacklog);
@@ -135,7 +289,12 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     };
   }, [loadStatusAndBacklog]);
 
-  // Keep To Associate / Associated counts & rows fresh while SSE jobs run or finish
+  // Collapse stale group expansions when switching primary status tab or filters
+  useEffect(() => {
+    setExpandedGroups({});
+  }, [statusFilter, selectedCompanyId, selectedAccountId]);
+
+  // Keep counts & rows fresh while SSE jobs run or finish
   const prevJobSignatureRef = useRef<string>('');
   const lastBacklogSilentRefreshRef = useRef<number>(0);
   useEffect(() => {
@@ -201,10 +360,10 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     }
   };
 
-  const handleIgnoreGroup = async (group: BacklogGroup, ignored: boolean = true) => {
+  const handleIgnoreSplits = async (journalIds: number[], ignored: boolean = true) => {
     setBanner(null);
     try {
-      await api.fireflySync.ignoreBacklog(group.journal_ids, ignored);
+      await api.fireflySync.ignoreBacklog(journalIds, ignored);
       await loadStatusAndBacklog();
     } catch (err) {
       setBanner({
@@ -214,14 +373,14 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     }
   };
 
-  const handleUnlinkGroup = async (group: BacklogGroup) => {
+  const handleUnlinkSplits = async (journalIds: number[], label: string) => {
     setBanner(null);
     try {
-      await api.fireflySync.unlinkBacklog(group.journal_ids);
+      await api.fireflySync.unlinkBacklog(journalIds);
       await Promise.all([loadStatusAndBacklog(), Promise.resolve(onDataChanged())]);
       setBanner({
         type: 'success',
-        text: `Unlinked "${group.sample_description}" back to the unassociated queue.`,
+        text: `Unlinked "${label}" back to the unassociated queue.`,
       });
     } catch (err) {
       setBanner({
@@ -231,11 +390,54 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     }
   };
 
+  const handleQuickLink = async (
+    productId: number,
+    journalIds: number[],
+    aliasScope: AliasScope,
+    label: string
+  ) => {
+    setBanner(null);
+    try {
+      const job = await api.fireflySync.linkBacklog(productId, journalIds, aliasScope);
+      onJobStarted(job);
+      await Promise.all([loadStatusAndBacklog(true), Promise.resolve(onDataChanged())]);
+      setBanner({
+        type: 'success',
+        text: `Started Firefly link job for "${label}" (${journalIds.length} split(s)).`,
+      });
+    } catch (err) {
+      setBanner({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to link transactions',
+      });
+    }
+  };
+
+  const toggleGroupExpand = (group: BacklogGroup) => {
+    if (statusFilter === 'needs_attention') return;
+    const key = makeGroupKey(group);
+    if (expandedGroups[key]) {
+      setExpandedGroups(prev => {
+        const copy = { ...prev };
+        delete copy[key];
+        return copy;
+      });
+      return;
+    }
+    void fetchGroupSplits(group, statusFilter, selectedCompanyId, selectedAccountId);
+  };
+
   const productsRef = useRef(products);
   productsRef.current = products;
 
-  const openLinkModal = (group: BacklogGroup) => {
-    setLinkingGroup(group);
+  const openLinkModalForGroup = (group: BacklogGroup) => {
+    setLinkTarget({
+      label: group.sample_description,
+      occurrenceCount: group.occurrence_count,
+      journalIds: group.journal_ids,
+      suggestedProductId: group.suggested_product_id ?? null,
+      aliasScope: 'auto',
+    });
     setLinkSearch('');
     setModalProducts(null);
     setLoadingModalProducts(true);
@@ -243,8 +445,23 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     setLinkError(null);
   };
 
+  const openLinkModalForSubset = (group: BacklogGroup, req: SubsetActionRequest) => {
+    setLinkTarget({
+      label: `${group.sample_description} · ${req.label}`,
+      occurrenceCount: req.journalIds.length,
+      journalIds: req.journalIds,
+      suggestedProductId: req.suggestedProductId ?? group.suggested_product_id ?? null,
+      aliasScope: req.aliasScope,
+    });
+    setLinkSearch('');
+    setModalProducts(null);
+    setLoadingModalProducts(true);
+    setSelectedLinkProductId(req.suggestedProductId ?? group.suggested_product_id ?? null);
+    setLinkError(null);
+  };
+
   useEffect(() => {
-    if (!linkingGroup) {
+    if (!linkTarget) {
       setLoadingModalProducts(false);
       return;
     }
@@ -272,29 +489,30 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
         }
       });
     return () => controller.abort();
-  }, [linkingGroup]);
+  }, [linkTarget]);
 
   useEffect(() => {
-    if (!linkingGroup) return;
+    if (!linkTarget) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setLinkingGroup(null);
+      if (e.key === 'Escape') setLinkTarget(null);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [linkingGroup]);
+  }, [linkTarget]);
 
   const handleConfirmLink = async () => {
-    if (!linkingGroup || !selectedLinkProductId) return;
+    if (!linkTarget || !selectedLinkProductId) return;
     setSubmittingLink(true);
     setBanner(null);
     setLinkError(null);
     try {
       const job = await api.fireflySync.linkBacklog(
         selectedLinkProductId,
-        linkingGroup.journal_ids
+        linkTarget.journalIds,
+        linkTarget.aliasScope
       );
       onJobStarted(job);
-      setLinkingGroup(null);
+      setLinkTarget(null);
       await Promise.all([loadStatusAndBacklog(true), Promise.resolve(onDataChanged())]);
     } catch (err) {
       setLinkError(err instanceof Error ? err.message : 'Failed to link transactions');
@@ -303,7 +521,7 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     }
   };
 
-  const filteredModalProducts = linkingGroup
+  const filteredModalProducts = linkTarget
     ? filterLinkModalProducts(modalProducts ?? products, linkSearch)
     : [];
 
@@ -319,6 +537,22 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
       j.status === 'failed' ||
       !visibleLinkedProductIds.has(j.product_id)
   );
+
+  const availableChains =
+    (statusFilter === 'needs_attention'
+      ? attentionData?.available_chains
+      : backlog?.available_chains) ?? [];
+  const allAvailableStores =
+    (statusFilter === 'needs_attention'
+      ? attentionData?.available_stores
+      : backlog?.available_stores) ?? [];
+  const visibleStores =
+    selectedCompanyId !== null
+      ? allAvailableStores.filter(st => st.company_id === selectedCompanyId)
+      : allAvailableStores;
+
+  const needsAttentionCount =
+    backlog?.needs_attention_count ?? status?.needs_attention_count ?? 0;
 
   return (
     <div className="space-y-4">
@@ -408,91 +642,172 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
         </div>
       )}
 
-      {/* Status Segmentation + Category Filter Pills */}
+      {/* Status Segmentation + Chain/Store Filters + Category Filter Pills */}
       {backlog && (
         <div className="space-y-3">
-          <div className="inline-flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => {
-                setStatusFilter('unassociated');
-                setSelectedCategory(null);
-              }}
-              className={`px-3 py-1.5 rounded-lg transition ${
-                statusFilter === 'unassociated'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              To Associate ({backlog.total_unassociated})
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setStatusFilter('linked');
-                setSelectedCategory(null);
-              }}
-              className={`px-3 py-1.5 rounded-lg transition ${
-                statusFilter === 'linked'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Associated ({backlog.linked_count})
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setStatusFilter('ignored');
-                setSelectedCategory(null);
-              }}
-              className={`px-3 py-1.5 rounded-lg transition ${
-                statusFilter === 'ignored'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Ignored ({backlog.ignored_count})
-            </button>
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="inline-flex flex-wrap rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter('unassociated');
+                  setSelectedCategory(null);
+                }}
+                className={`px-3 py-1.5 rounded-lg transition ${
+                  statusFilter === 'unassociated'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                To Associate ({backlog.total_unassociated})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter('needs_attention');
+                  setSelectedCategory(null);
+                }}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
+                  statusFilter === 'needs_attention'
+                    ? 'bg-white text-amber-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <AlertTriangle
+                  className={`w-3.5 h-3.5 ${
+                    needsAttentionCount > 0 ? 'text-amber-600' : 'text-slate-400'
+                  }`}
+                />
+                Missing &amp; To Review ({needsAttentionCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter('linked');
+                  setSelectedCategory(null);
+                }}
+                className={`px-3 py-1.5 rounded-lg transition ${
+                  statusFilter === 'linked'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Associated ({backlog.linked_count})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter('ignored');
+                  setSelectedCategory(null);
+                }}
+                className={`px-3 py-1.5 rounded-lg transition ${
+                  statusFilter === 'ignored'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Ignored ({backlog.ignored_count})
+              </button>
+            </div>
+
+            {/* Chain & Store Filters */}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <div className="inline-flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+                <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                <select
+                  aria-label="Filter by chain"
+                  value={selectedCompanyId ?? ''}
+                  onChange={e => {
+                    const nextCid = e.target.value ? Number(e.target.value) : null;
+                    setSelectedCompanyId(nextCid);
+                    if (nextCid !== null && selectedAccountId !== null) {
+                      const st = allAvailableStores.find(
+                        s => s.account_id === selectedAccountId
+                      );
+                      if (st && st.company_id !== nextCid) {
+                        setSelectedAccountId(null);
+                      }
+                    }
+                  }}
+                  className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none"
+                >
+                  <option value="">All Chains ({availableChains.length})</option>
+                  {availableChains.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="inline-flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+                <Store className="w-3.5 h-3.5 text-slate-400" />
+                <select
+                  aria-label="Filter by store"
+                  value={selectedAccountId ?? ''}
+                  onChange={e =>
+                    setSelectedAccountId(e.target.value ? Number(e.target.value) : null)
+                  }
+                  className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none max-w-[220px]"
+                >
+                  <option value="">All Stores ({visibleStores.length})</option>
+                  {visibleStores.map(st => (
+                    <option key={st.account_id} value={st.account_id}>
+                      {st.name} ({st.count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {(selectedCompanyId !== null || selectedAccountId !== null) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCompanyId(null);
+                    setSelectedAccountId(null);
+                  }}
+                  className="px-2 py-1.5 rounded-lg text-[11px] font-semibold text-blue-600 hover:bg-blue-50"
+                >
+                  Clear store filters
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedCategory(null)}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
-                selectedCategory === null
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
-            >
-              All Categories (
-              {statusFilter === 'linked'
-                ? backlog.linked_count
-                : statusFilter === 'ignored'
-                ? backlog.ignored_count
-                : backlog.total_unassociated}
-              )
-            </button>
-            {backlog.category_counts.map(cat => {
-              const key = cat.category_name === null ? '__uncategorized__' : cat.category_name;
-              const active = selectedCategory === key;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setSelectedCategory(active ? null : key)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
-                    active
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-indigo-50 text-indigo-800 hover:bg-indigo-100'
-                  }`}
-                >
-                  {cat.category_name || 'Uncategorized'} ({cat.count})
-                </button>
-              );
-            })}
-          </div>
+          {statusFilter !== 'needs_attention' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedCategory(null)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
+                  selectedCategory === null
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                All Categories (
+                {backlog.category_counts.reduce((acc, c) => acc + c.count, 0)})
+              </button>
+              {backlog.category_counts.map(cat => {
+                const key = cat.category_name === null ? '__uncategorized__' : cat.category_name;
+                const active = selectedCategory === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setSelectedCategory(active ? null : key)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
+                      active
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-indigo-50 text-indigo-800 hover:bg-indigo-100'
+                    }`}
+                  >
+                    {cat.category_name || 'Uncategorized'} ({cat.count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -536,7 +851,9 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder={
-            statusFilter === 'linked'
+            statusFilter === 'needs_attention'
+              ? 'Search items or descriptions awaiting quantity/review...'
+              : statusFilter === 'linked'
               ? 'Search associated Firefly descriptions...'
               : statusFilter === 'ignored'
               ? 'Search ignored Firefly descriptions...'
@@ -546,160 +863,250 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
         />
       </div>
 
-      {/* Grouped Backlog List */}
-      <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100">
-        {loading ? (
-          <div className="py-12 text-center text-xs text-slate-400">
-            Loading Firefly backlog...
-          </div>
-        ) : !backlog || backlog.groups.length === 0 ? (
-          <div className="py-12 text-center text-xs text-slate-400">
-            {statusFilter === 'linked'
-              ? 'No associated Firefly entries match this filter.'
-              : statusFilter === 'ignored'
-              ? 'No ignored Firefly entries match this filter.'
-              : 'No unassociated Firefly entries match this filter.'}
-          </div>
-        ) : (
-          backlog.groups.map(group => {
-            const groupJidSet = new Set(group.journal_ids);
-            const matchingJob =
-              jobs.find(j => j.target_journal_ids.some(jid => groupJidSet.has(jid))) ||
-              (group.linked_product_id ? jobsByProductId[group.linked_product_id] : null) ||
-              null;
-            const rowJobActive = matchingJob ? isSyncJobActive(matchingJob) : false;
-            return (
-              <div
-                key={`${group.normalized_description}::${group.category_name ?? ''}::${group.linked_product_id ?? ''}`}
-                className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/70 transition"
-              >
-                <div className="min-w-0 space-y-1 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold text-sm text-slate-900">
-                      {group.sample_description}
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[11px] font-bold">
-                      {group.occurrence_count}×
-                    </span>
-                    <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[11px] font-medium">
-                      {group.category_name || 'Uncategorized'}
-                    </span>
-                    {group.linked_product_name && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-semibold">
-                        → {group.linked_product_name}
-                      </span>
-                    )}
-                    {matchingJob && (statusFilter === 'linked' || rowJobActive) && (
-                      <SyncJobBadge
-                        job={matchingJob}
-                        onDismiss={onDismissJob}
-                        variant="inline"
-                      />
-                    )}
-                    {group.suggested_product_name && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-medium">
-                        <Sparkles className="w-3 h-3 mr-1" />
-                        Match: {group.suggested_product_name}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
-                    <span>
-                      Total: <strong>€{group.total_amount.toFixed(2)}</strong>
-                    </span>
-                    <span>Latest: {group.latest_date}</span>
-                    {group.sample_stores.length > 0 && (
-                      <span>Stores: {group.sample_stores.join(', ')}</span>
-                    )}
-                  </div>
-                  {group.sample_tags && group.sample_tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 pt-0.5">
-                      {group.sample_tags.map(tName => (
-                        <span
-                          key={tName}
-                          className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700"
+      {/* Main List or Attention Queue */}
+      {statusFilter === 'needs_attention' ? (
+        <BacklogAttentionQueue
+          loading={loading}
+          data={attentionData}
+          statusSubFilter={attentionSubFilter}
+          onStatusSubFilterChange={setAttentionSubFilter}
+          onPriceUpdated={async () => {
+            await Promise.all([loadStatusAndBacklog(true), Promise.resolve(onDataChanged())]);
+          }}
+        />
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100">
+          {loading ? (
+            <div className="py-12 text-center text-xs text-slate-400">
+              Loading Firefly backlog...
+            </div>
+          ) : !backlog || backlog.groups.length === 0 ? (
+            <div className="py-12 text-center text-xs text-slate-400">
+              {statusFilter === 'linked'
+                ? 'No associated Firefly entries match this filter.'
+                : statusFilter === 'ignored'
+                ? 'No ignored Firefly entries match this filter.'
+                : 'No unassociated Firefly entries match this filter.'}
+            </div>
+          ) : (
+            backlog.groups.map(group => {
+              const gKey = makeGroupKey(group);
+              const expandedState = expandedGroups[gKey];
+              const isExpanded = Boolean(expandedState);
+              const groupJidSet = new Set(group.journal_ids);
+              const matchingJob =
+                jobs.find(j => j.target_journal_ids.some(jid => groupJidSet.has(jid))) ||
+                (group.linked_product_id ? jobsByProductId[group.linked_product_id] : null) ||
+                null;
+              const rowJobActive = matchingJob ? isSyncJobActive(matchingJob) : false;
+
+              return (
+                <div key={gKey} className="p-4 hover:bg-slate-50/50 transition">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="min-w-0 space-y-1 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleGroupExpand(group)}
+                          className="inline-flex items-center gap-1 font-semibold text-sm text-slate-900 hover:text-blue-700 text-left"
+                          title="Expand by Chain, Store, and Individual Splits"
                         >
-                          #{tName}
+                          {isExpanded ? (
+                            <ChevronDown className="w-4 h-4 text-blue-600 shrink-0" />
+                          ) : (
+                            <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+                          )}
+                          <span>{group.sample_description}</span>
+                        </button>
+                        <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[11px] font-bold">
+                          {group.occurrence_count}×
                         </span>
-                      ))}
+                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[11px] font-medium">
+                          {group.category_name || 'Uncategorized'}
+                        </span>
+                        {(group.store_count ?? 0) > 1 && (
+                          <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[11px] font-medium">
+                            {group.store_count} stores
+                          </span>
+                        )}
+                        {group.linked_product_name && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-semibold">
+                            → {group.linked_product_name}
+                          </span>
+                        )}
+                        {matchingJob && (statusFilter === 'linked' || rowJobActive) && (
+                          <SyncJobBadge
+                            job={matchingJob}
+                            onDismiss={onDismissJob}
+                            variant="inline"
+                          />
+                        )}
+                        {group.suggested_product_name && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-medium">
+                            <Sparkles className="w-3 h-3 mr-1" />
+                            Match: {group.suggested_product_name}
+                            {group.suggested_scope ? ` (${group.suggested_scope})` : ''}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5 pl-5">
+                        <span>
+                          Total: <strong>€{group.total_amount.toFixed(2)}</strong>
+                        </span>
+                        <span>Latest: {group.latest_date}</span>
+                        {group.sample_stores.length > 0 && (
+                          <span>Stores: {group.sample_stores.join(', ')}</span>
+                        )}
+                      </div>
+                      {group.sample_tags && group.sample_tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-0.5 pl-5">
+                          {group.sample_tags.map(tName => (
+                            <span
+                              key={tName}
+                              className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700"
+                            >
+                              #{tName}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => toggleGroupExpand(group)}
+                        className="inline-flex items-center px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold"
+                      >
+                        {isExpanded ? 'Hide splits' : 'Split / Stores'}
+                      </button>
+
+                      {statusFilter === 'unassociated' && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={rowJobActive}
+                            onClick={() => openLinkModalForGroup(group)}
+                            className="inline-flex items-center px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 disabled:opacity-50 text-blue-700 text-xs font-semibold"
+                          >
+                            <Link2 className="w-3.5 h-3.5 mr-1" />
+                            Link to Item
+                          </button>
+                          <button
+                            type="button"
+                            disabled={rowJobActive}
+                            onClick={() =>
+                              setCreateTarget({
+                                initialName: group.sample_description,
+                                categoryName: group.category_name,
+                                sampleTags: group.sample_tags ?? [],
+                                journalIds: group.journal_ids,
+                                aliasScope: 'auto',
+                              })
+                            }
+                            className="inline-flex items-center px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 text-xs font-semibold"
+                          >
+                            <Plus className="w-3.5 h-3.5 mr-1" />
+                            New Item
+                          </button>
+                          <button
+                            type="button"
+                            disabled={rowJobActive}
+                            onClick={() => handleIgnoreSplits(group.journal_ids, true)}
+                            className="inline-flex items-center px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-600 text-xs font-medium"
+                            title="Ignore non-product entry"
+                          >
+                            <EyeOff className="w-3.5 h-3.5 mr-1" />
+                            Ignore
+                          </button>
+                        </>
+                      )}
+                      {statusFilter === 'linked' && (
+                        <button
+                          type="button"
+                          disabled={rowJobActive}
+                          onClick={() =>
+                            handleUnlinkSplits(group.journal_ids, group.sample_description)
+                          }
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 disabled:opacity-50 text-slate-700 hover:text-rose-700 text-xs font-semibold"
+                          title={
+                            rowJobActive
+                              ? 'Wait for active Firefly sync to finish before unlinking'
+                              : 'Unlink locally and return to To Associate'
+                          }
+                        >
+                          <Unlink className="w-3.5 h-3.5 mr-1" />
+                          Unlink
+                        </button>
+                      )}
+                      {statusFilter === 'ignored' && (
+                        <button
+                          type="button"
+                          onClick={() => handleIgnoreSplits(group.journal_ids, false)}
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold"
+                          title="Restore to To Associate queue"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                          Restore
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="pl-2 sm:pl-5">
+                      {expandedState.loading && !expandedState.data && (
+                        <div className="mt-3 pt-3 border-t border-slate-100 text-xs text-slate-400">
+                          Loading chains, stores, and individual splits...
+                        </div>
+                      )}
+                      {expandedState.error && (
+                        <div className="mt-3 p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700">
+                          {expandedState.error}
+                        </div>
+                      )}
+                      {expandedState.data && (
+                        <BacklogSplitDrilldown
+                          data={expandedState.data}
+                          statusFilter={statusFilter}
+                          rowJobActive={rowJobActive}
+                          onQuickLink={handleQuickLink}
+                          onOpenLinkModal={req => openLinkModalForSubset(group, req)}
+                          onOpenNewItemModal={req =>
+                            setCreateTarget({
+                              initialName: group.sample_description,
+                              categoryName: group.category_name,
+                              sampleTags: group.sample_tags ?? [],
+                              journalIds: req.journalIds,
+                              aliasScope: req.aliasScope,
+                            })
+                          }
+                          onIgnore={handleIgnoreSplits}
+                          onUnlink={handleUnlinkSplits}
+                          onPriceUpdated={async () => {
+                            await Promise.all([
+                              loadStatusAndBacklog(true),
+                              Promise.resolve(onDataChanged()),
+                            ]);
+                          }}
+                        />
+                      )}
                     </div>
                   )}
                 </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  {statusFilter === 'unassociated' && (
-                    <>
-                      <button
-                        type="button"
-                        disabled={rowJobActive}
-                        onClick={() => openLinkModal(group)}
-                        className="inline-flex items-center px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 disabled:opacity-50 text-blue-700 text-xs font-semibold"
-                      >
-                        <Link2 className="w-3.5 h-3.5 mr-1" />
-                        Link to Item
-                      </button>
-                      <button
-                        type="button"
-                        disabled={rowJobActive}
-                        onClick={() => setCreatingFromGroup(group)}
-                        className="inline-flex items-center px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 text-xs font-semibold"
-                      >
-                        <Plus className="w-3.5 h-3.5 mr-1" />
-                        New Item
-                      </button>
-                      <button
-                        type="button"
-                        disabled={rowJobActive}
-                        onClick={() => handleIgnoreGroup(group, true)}
-                        className="inline-flex items-center px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-600 text-xs font-medium"
-                        title="Ignore non-product entry"
-                      >
-                        <EyeOff className="w-3.5 h-3.5 mr-1" />
-                        Ignore
-                      </button>
-                    </>
-                  )}
-                  {statusFilter === 'linked' && (
-                    <button
-                      type="button"
-                      disabled={rowJobActive}
-                      onClick={() => handleUnlinkGroup(group)}
-                      className="inline-flex items-center px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 disabled:opacity-50 text-slate-700 hover:text-rose-700 text-xs font-semibold"
-                      title={
-                        rowJobActive
-                          ? 'Wait for active Firefly sync to finish before unlinking'
-                          : 'Unlink locally and return to To Associate'
-                      }
-                    >
-                      <Unlink className="w-3.5 h-3.5 mr-1" />
-                      Unlink
-                    </button>
-                  )}
-                  {statusFilter === 'ignored' && (
-                    <button
-                      type="button"
-                      onClick={() => handleIgnoreGroup(group, false)}
-                      className="inline-flex items-center px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold"
-                      title="Restore to To Associate queue"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 mr-1" />
-                      Restore
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+              );
+            })
+          )}
+        </div>
+      )}
 
       {/* Link to Existing Item Modal */}
-      {linkingGroup && (
+      {linkTarget && (
         <div
           role="dialog"
           aria-modal="true"
           onClick={e => {
-            if (e.target === e.currentTarget) setLinkingGroup(null);
+            if (e.target === e.currentTarget) setLinkTarget(null);
           }}
           className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
         >
@@ -709,9 +1116,10 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
                 Link Firefly Entry to Canonical Item
               </h3>
               <p className="text-xs text-slate-500 mt-1">
-                Linking <strong>"{linkingGroup.sample_description}"</strong> (
-                {linkingGroup.occurrence_count} occurrence(s)) will rewrite those Firefly
-                splits with the chosen item&apos;s name, category, and expanded tags.
+                Linking <strong>&quot;{linkTarget.label}&quot;</strong> (
+                {linkTarget.occurrenceCount} split{linkTarget.occurrenceCount === 1 ? '' : 's'})
+                will rewrite those Firefly splits with the chosen item&apos;s name, category, and
+                expanded tags.
               </p>
             </div>
 
@@ -750,9 +1158,7 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
                       }`}
                     >
                       <div className="min-w-0 pr-2">
-                        <div className="font-semibold truncate">
-                          {prod.name}
-                        </div>
+                        <div className="font-semibold truncate">{prod.name}</div>
                         <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-1">
                           <span className="text-slate-600 font-medium">
                             {prod.brand?.name || 'Generic'}
@@ -787,7 +1193,7 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
             <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
               <button
                 type="button"
-                onClick={() => setLinkingGroup(null)}
+                onClick={() => setLinkTarget(null)}
                 className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
               >
                 Cancel
@@ -805,21 +1211,22 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
         </div>
       )}
 
-      {/* Create New Item & Auto-Link Backlog Group */}
+      {/* Create New Item & Auto-Link Backlog Target */}
       <ItemEditorModal
-        isOpen={creatingFromGroup !== null}
-        initialName={creatingFromGroup?.sample_description || ''}
-        initialCategoryName={creatingFromGroup?.category_name ?? null}
-        initialTagNames={creatingFromGroup?.sample_tags ?? []}
-        onClose={() => setCreatingFromGroup(null)}
+        isOpen={createTarget !== null}
+        initialName={createTarget?.initialName || ''}
+        initialCategoryName={createTarget?.categoryName ?? null}
+        initialTagNames={createTarget?.sampleTags ?? []}
+        onClose={() => setCreateTarget(null)}
         onSaved={async created => {
-          const targetGroup = creatingFromGroup;
-          if (!targetGroup) return;
+          const target = createTarget;
+          if (!target) return;
           setBanner(null);
           try {
             const job = await api.fireflySync.linkBacklog(
               created.id,
-              targetGroup.journal_ids
+              target.journalIds,
+              target.aliasScope
             );
             onJobStarted(job);
             await Promise.all([loadStatusAndBacklog(true), Promise.resolve(onDataChanged())]);
