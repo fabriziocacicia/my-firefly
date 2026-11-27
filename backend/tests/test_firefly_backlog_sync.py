@@ -1390,6 +1390,149 @@ class FireflyBacklogSyncTests(unittest.TestCase):
         self.assertEqual(len(filtered["items"]), 1)
         self.assertEqual(filtered["items"][0]["transaction_journal_id"], 9201)
 
+    def test_backlog_splits_drilldown_returns_chains_unchained_stores_and_price_records(self):
+        from app.models.company import AccountMetadata, AccountRole, Company
+
+        with Session(self.engine) as session:
+            lidl = Company(name="Lidl")
+            session.add(lidl)
+            session.commit()
+            session.refresh(lidl)
+
+            session.add_all(
+                [
+                    AccountMetadata(firefly_account_id=301, role=AccountRole.CHAIN, company_id=lidl.id),
+                    AccountMetadata(firefly_account_id=302, role=AccountRole.CHAIN, company_id=lidl.id),
+                    AccountMetadata(firefly_account_id=303, role=AccountRole.LOCAL_BUSINESS, company_id=None),
+                ]
+            )
+            p_lidl = Product(name="Banane Bio Lidl", sale_mode="loose_weight", default_unit="kg", firefly_category_name="Groceries")
+            p_lidl_branch = Product(name="Banane Bio Cilestri", sale_mode="loose_weight", default_unit="kg", firefly_category_name="Groceries")
+            session.add_all([p_lidl, p_lidl_branch])
+            session.commit()
+            session.refresh(p_lidl)
+            session.refresh(p_lidl_branch)
+
+            session.add_all(
+                [
+                    ItemFireflyAlias(
+                        product_id=p_lidl.id,
+                        raw_description="Banane Bio",
+                        normalized_description="banane bio",
+                        company_id=lidl.id,
+                        scope_key=f"chain:{lidl.id}",
+                    ),
+                    ItemFireflyAlias(
+                        product_id=p_lidl_branch.id,
+                        raw_description="Banane Bio",
+                        normalized_description="banane bio",
+                        company_id=lidl.id,
+                        firefly_account_id=302,
+                        scope_key="store:302",
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=9301,
+                        firefly_transaction_id=930,
+                        tx_date=date(2026, 11, 20),
+                        amount_cents=220,
+                        description="Banane Bio",
+                        normalized_description="banane bio",
+                        firefly_expense_account_id=301,
+                        firefly_expense_account_name="Lidl Hotel dei Pini",
+                        firefly_category_name="Groceries",
+                        tags_json='["Bio"]',
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=9302,
+                        firefly_transaction_id=931,
+                        tx_date=date(2026, 11, 21),
+                        amount_cents=250,
+                        description="Banane Bio",
+                        normalized_description="banane bio",
+                        firefly_expense_account_id=302,
+                        firefly_expense_account_name="Lidl via Cilestri",
+                        firefly_category_name="Groceries",
+                        tags_json='["Bio"]',
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=9303,
+                        firefly_transaction_id=932,
+                        tx_date=date(2026, 11, 22),
+                        amount_cents=300,
+                        description="Banane Bio",
+                        normalized_description="banane bio",
+                        firefly_expense_account_id=303,
+                        firefly_expense_account_name="Fruttivendolo Mario",
+                        firefly_category_name="Groceries",
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=9304,
+                        firefly_transaction_id=933,
+                        tx_date=date(2026, 11, 23),
+                        amount_cents=280,
+                        description="Banane Bio Lidl",
+                        normalized_description="banane bio lidl",
+                        firefly_expense_account_id=301,
+                        firefly_expense_account_name="Lidl Hotel dei Pini",
+                        firefly_category_name="Groceries",
+                        linked_product_id=p_lidl.id,
+                    ),
+                    PriceRecord(
+                        product_id=p_lidl.id,
+                        firefly_account_id=301,
+                        recorded_date=date(2026, 11, 23),
+                        regular_price=2.80,
+                        paid_price=2.80,
+                        quantity=0.9,
+                        unit="kg",
+                        normalized_unit_price=3.111,
+                        firefly_transaction_id=933,
+                        transaction_journal_id=9304,
+                        source_type="firefly_sync",
+                        verification_status="verified",
+                    ),
+                ]
+            )
+            session.commit()
+            lidl_id, p_lidl_id, p_branch_id = lidl.id, p_lidl.id, p_lidl_branch.id
+
+        res = self.client.get(
+            "/api/v1/firefly-sync/backlog/splits?normalized_description=banane%20bio&category_name=Groceries&status=unassociated"
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["occurrence_count"], 3)
+        self.assertEqual(len(body["chains"]), 1)
+        self.assertEqual(len(body["unchained_stores"]), 1)
+
+        chain = body["chains"][0]
+        self.assertEqual(chain["company_id"], lidl_id)
+        self.assertEqual(chain["suggested_product_id"], p_lidl_id)
+        self.assertEqual(chain["suggested_scope"], "chain")
+        self.assertEqual(set(chain["journal_ids"]), {9301, 9302})
+
+        stores_by_id = {s["firefly_account_id"]: s for s in chain["stores"]}
+        self.assertEqual(stores_by_id[301]["suggested_product_id"], p_lidl_id)
+        self.assertEqual(stores_by_id[301]["suggested_scope"], "chain")
+        self.assertEqual(stores_by_id[302]["suggested_product_id"], p_branch_id)
+        self.assertEqual(stores_by_id[302]["suggested_scope"], "store")
+
+        unchained = body["unchained_stores"][0]
+        self.assertEqual(unchained["firefly_account_id"], 303)
+        self.assertEqual(unchained["store_name"], "Fruttivendolo Mario")
+        self.assertEqual(unchained["journal_ids"], [9303])
+
+        # Linked drill-down includes attached PriceRecord summary
+        linked_res = self.client.get(
+            f"/api/v1/firefly-sync/backlog/splits?normalized_description=banane%20bio%20lidl&category_name=Groceries&status=linked&linked_product_id={p_lidl_id}"
+        )
+        self.assertEqual(linked_res.status_code, 200)
+        linked_split = linked_res.json()["chains"][0]["stores"][0]["splits"][0]
+        self.assertEqual(linked_split["transaction_journal_id"], 9304)
+        self.assertIsNotNone(linked_split["price_record"])
+        self.assertEqual(linked_split["price_record"]["quantity"], 0.9)
+        self.assertEqual(linked_split["price_record"]["verification_status"], "verified")
+
 
 if __name__ == "__main__":
     unittest.main()

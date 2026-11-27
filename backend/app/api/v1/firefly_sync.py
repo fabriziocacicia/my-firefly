@@ -151,6 +151,67 @@ class AttentionQueueResponse(BaseModel):
     items: List[AttentionSplitItem]
 
 
+class SplitPriceSummary(BaseModel):
+    id: int
+    quantity: Optional[float] = None
+    unit: str
+    regular_price: float
+    paid_price: float
+    is_discount: bool
+    normalized_unit_price: Optional[float] = None
+    normalized_regular_price: Optional[float] = None
+    verification_status: str
+    notes: Optional[str] = None
+
+
+class BacklogSplitDetail(BaseModel):
+    transaction_journal_id: int
+    firefly_transaction_id: int
+    tx_date: date
+    amount: float
+    description: str
+    tags: List[str] = []
+    linked_product_id: Optional[int] = None
+    linked_product_name: Optional[str] = None
+    is_ignored: bool
+    price_record: Optional[SplitPriceSummary] = None
+
+
+class BacklogStoreBucket(BaseModel):
+    firefly_account_id: Optional[int] = None
+    store_name: str
+    company_id: Optional[int] = None
+    occurrence_count: int
+    total_amount: float
+    journal_ids: List[int] = []
+    suggested_product_id: Optional[int] = None
+    suggested_product_name: Optional[str] = None
+    suggested_scope: Optional[str] = None
+    splits: List[BacklogSplitDetail] = []
+
+
+class BacklogChainBucket(BaseModel):
+    company_id: int
+    company_name: str
+    occurrence_count: int
+    total_amount: float
+    journal_ids: List[int] = []
+    suggested_product_id: Optional[int] = None
+    suggested_product_name: Optional[str] = None
+    suggested_scope: Optional[str] = None
+    stores: List[BacklogStoreBucket] = []
+
+
+class BacklogSplitsResponse(BaseModel):
+    normalized_description: str
+    category_name: Optional[str] = None
+    status: Literal["unassociated", "linked", "ignored"]
+    occurrence_count: int
+    total_amount: float
+    chains: List[BacklogChainBucket] = []
+    unchained_stores: List[BacklogStoreBucket] = []
+
+
 class BacklogLinkRequest(BaseModel):
     product_id: int
     transaction_journal_ids: List[int] = Field(min_length=1)
@@ -965,6 +1026,237 @@ async def get_backlog_attention_queue(
         available_chains=available_chains,
         available_stores=available_stores,
         items=items,
+    )
+
+
+def _parse_split_tags(tags_json: Optional[str]) -> List[str]:
+    try:
+        parsed = json.loads(tags_json or "[]")
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(t).strip() for t in parsed if str(t).strip()]
+
+
+def _build_store_bucket(
+    *,
+    account_id: Optional[int],
+    store_name: str,
+    company_id: Optional[int],
+    rows: List[FireflySyncedSplit],
+    norm_desc: str,
+    status: str,
+    scoped_hints: dict[tuple[str, str], tuple[int, str]],
+    fallback_hints: dict[str, tuple[int, str]],
+    product_name_by_id: dict[int, str],
+    price_by_jid: dict[int, PriceRecord],
+) -> BacklogStoreBucket:
+    rows_sorted = sorted(rows, key=lambda r: (r.tx_date, r.id or 0), reverse=True)
+    sug_pid, sug_pname, sug_scope = (
+        _resolve_hint(
+            norm_desc,
+            account_id=account_id,
+            company_id=company_id,
+            scoped_hints=scoped_hints,
+            fallback_hints=fallback_hints,
+        )
+        if status == "unassociated"
+        else (None, None, None)
+    )
+    split_details: List[BacklogSplitDetail] = []
+    for r in rows_sorted:
+        pr = price_by_jid.get(r.transaction_journal_id)
+        split_details.append(
+            BacklogSplitDetail(
+                transaction_journal_id=r.transaction_journal_id,
+                firefly_transaction_id=r.firefly_transaction_id,
+                tx_date=r.tx_date,
+                amount=round(r.amount_cents / 100.0, 2),
+                description=r.description,
+                tags=_parse_split_tags(r.tags_json),
+                linked_product_id=r.linked_product_id,
+                linked_product_name=(
+                    product_name_by_id.get(r.linked_product_id)
+                    if r.linked_product_id is not None
+                    else None
+                ),
+                is_ignored=r.is_ignored,
+                price_record=(
+                    SplitPriceSummary(
+                        id=pr.id,
+                        quantity=pr.quantity,
+                        unit=pr.unit,
+                        regular_price=pr.regular_price,
+                        paid_price=pr.paid_price,
+                        is_discount=pr.is_discount,
+                        normalized_unit_price=pr.normalized_unit_price,
+                        normalized_regular_price=pr.normalized_regular_price,
+                        verification_status=pr.verification_status,
+                        notes=pr.notes,
+                    )
+                    if pr is not None and pr.id is not None
+                    else None
+                ),
+            )
+        )
+
+    return BacklogStoreBucket(
+        firefly_account_id=account_id,
+        store_name=store_name,
+        company_id=company_id,
+        occurrence_count=len(rows_sorted),
+        total_amount=round(sum(r.amount_cents for r in rows_sorted) / 100.0, 2),
+        journal_ids=[r.transaction_journal_id for r in rows_sorted],
+        suggested_product_id=sug_pid,
+        suggested_product_name=sug_pname,
+        suggested_scope=sug_scope,
+        splits=split_details,
+    )
+
+
+@router.get("/backlog/splits", response_model=BacklogSplitsResponse)
+def get_backlog_group_splits(
+    normalized_description: str = Query(...),
+    category_name: Optional[str] = Query(None),
+    status: Literal["unassociated", "linked", "ignored"] = Query("unassociated"),
+    linked_product_id: Optional[int] = Query(None),
+    company_id: Optional[int] = Query(None),
+    account_id: Optional[int] = Query(None),
+    session: Session = Depends(get_session),
+):
+    norm_desc = normalized_description.strip().lower()
+    stmt = select(FireflySyncedSplit).where(
+        FireflySyncedSplit.normalized_description == norm_desc
+    )
+    if status == "ignored":
+        stmt = stmt.where(FireflySyncedSplit.is_ignored.is_(True))
+    elif status == "linked":
+        stmt = stmt.where(
+            FireflySyncedSplit.is_ignored.is_(False),
+            FireflySyncedSplit.linked_product_id.is_not(None),
+        )
+        if linked_product_id is not None:
+            stmt = stmt.where(FireflySyncedSplit.linked_product_id == linked_product_id)
+    else:
+        stmt = stmt.where(
+            FireflySyncedSplit.is_ignored.is_(False),
+            FireflySyncedSplit.linked_product_id.is_(None),
+        )
+
+    if category_name in (None, "", "__uncategorized__"):
+        stmt = stmt.where(FireflySyncedSplit.firefly_category_name.is_(None))
+        effective_category = None
+    else:
+        stmt = stmt.where(FireflySyncedSplit.firefly_category_name == category_name)
+        effective_category = category_name
+
+    rows = session.exec(stmt).all()
+    account_to_chain = _load_account_chain_map(session)
+    if company_id is not None:
+        rows = [
+            r
+            for r in rows
+            if r.firefly_expense_account_id is not None
+            and account_to_chain.get(r.firefly_expense_account_id, (None, None))[0] == company_id
+        ]
+    if account_id is not None:
+        rows = [r for r in rows if r.firefly_expense_account_id == account_id]
+
+    scoped_hints, fallback_hints, product_name_by_id = _build_alias_lookup(session)
+
+    jids = [r.transaction_journal_id for r in rows]
+    price_by_jid: dict[int, PriceRecord] = {}
+    if jids:
+        for pr in session.exec(
+            select(PriceRecord).where(PriceRecord.transaction_journal_id.in_(jids))
+        ).all():
+            if pr.transaction_journal_id is not None:
+                price_by_jid[pr.transaction_journal_id] = pr
+
+    # Bucket rows by (company_id, firefly_account_id, store_name)
+    by_chain_store: dict[Optional[int], dict[tuple[Optional[int], str], list[FireflySyncedSplit]]] = {}
+    for r in rows:
+        aid = r.firefly_expense_account_id
+        cid = account_to_chain[aid][0] if aid is not None and aid in account_to_chain else None
+        sname = (
+            r.firefly_expense_account_name
+            or (f"Account #{aid}" if aid is not None else "Unknown Store")
+        )
+        by_chain_store.setdefault(cid, {}).setdefault((aid, sname), []).append(r)
+
+    chains: List[BacklogChainBucket] = []
+    unchained_stores: List[BacklogStoreBucket] = []
+
+    for cid, store_map in by_chain_store.items():
+        store_buckets = [
+            _build_store_bucket(
+                account_id=aid,
+                store_name=sname,
+                company_id=cid,
+                rows=st_rows,
+                norm_desc=norm_desc,
+                status=status,
+                scoped_hints=scoped_hints,
+                fallback_hints=fallback_hints,
+                product_name_by_id=product_name_by_id,
+                price_by_jid=price_by_jid,
+            )
+            for (aid, sname), st_rows in store_map.items()
+        ]
+        store_buckets.sort(key=lambda sb: (-sb.occurrence_count, sb.store_name.lower()))
+
+        if cid is None:
+            unchained_stores.extend(store_buckets)
+        else:
+            cname = next(
+                (
+                    account_to_chain[sb.firefly_account_id][1]
+                    for sb in store_buckets
+                    if sb.firefly_account_id is not None
+                    and sb.firefly_account_id in account_to_chain
+                ),
+                f"Chain #{cid}",
+            )
+            chain_jids = [jid for sb in store_buckets for jid in sb.journal_ids]
+            chain_total = round(sum(sb.total_amount for sb in store_buckets), 2)
+            chain_occ = sum(sb.occurrence_count for sb in store_buckets)
+            sug_pid, sug_pname, sug_scope = (
+                _resolve_hint(
+                    norm_desc,
+                    account_id=None,
+                    company_id=cid,
+                    scoped_hints=scoped_hints,
+                    fallback_hints=fallback_hints,
+                )
+                if status == "unassociated"
+                else (None, None, None)
+            )
+            chains.append(
+                BacklogChainBucket(
+                    company_id=cid,
+                    company_name=cname,
+                    occurrence_count=chain_occ,
+                    total_amount=chain_total,
+                    journal_ids=chain_jids,
+                    suggested_product_id=sug_pid,
+                    suggested_product_name=sug_pname,
+                    suggested_scope=sug_scope,
+                    stores=store_buckets,
+                )
+            )
+
+    chains.sort(key=lambda ch: (-ch.occurrence_count, ch.company_name.lower()))
+    unchained_stores.sort(key=lambda sb: (-sb.occurrence_count, sb.store_name.lower()))
+
+    return BacklogSplitsResponse(
+        normalized_description=norm_desc,
+        category_name=effective_category,
+        status=status,
+        occurrence_count=len(rows),
+        total_amount=round(sum(r.amount_cents for r in rows) / 100.0, 2),
+        chains=chains,
+        unchained_stores=unchained_stores,
     )
 
 
