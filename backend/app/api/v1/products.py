@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
@@ -32,14 +33,19 @@ from app.services.taxonomy import (
 router = APIRouter(prefix="/products", tags=["Products & Brands"])
 
 
-def _compute_affected_firefly_counts(
+def compute_affected_firefly_stats(
     session: Session, product_ids: list[int]
-) -> dict[int, int]:
-    """Counts distinct linked Firefly transaction IDs per product across cache & pushed receipts."""
+) -> dict[int, tuple[set[int], int]]:
+    """
+    Returns `{product_id: (distinct_firefly_tx_ids, total_split_count)}` across
+    non-ignored FireflySyncedSplit rows and pushed Receipt transactions.
+    """
     if not product_ids:
         return {}
 
     tx_sets: dict[int, set[int]] = {pid: set() for pid in product_ids}
+    synced_tx_sets: dict[int, set[int]] = {pid: set() for pid in product_ids}
+    split_counts: dict[int, int] = {pid: 0 for pid in product_ids}
 
     synced_rows = session.exec(
         select(
@@ -51,8 +57,11 @@ def _compute_affected_firefly_counts(
         )
     ).all()
     for pid, tx_id in synced_rows:
-        if pid is not None and tx_id is not None:
-            tx_sets[pid].add(tx_id)
+        if pid is not None and pid in tx_sets:
+            split_counts[pid] += 1
+            if tx_id is not None:
+                tx_sets[pid].add(tx_id)
+                synced_tx_sets[pid].add(tx_id)
 
     receipt_rows = session.exec(
         select(
@@ -63,14 +72,27 @@ def _compute_affected_firefly_counts(
         .join(Receipt, Receipt.id == ReceiptItem.receipt_id)
         .where(ReceiptItem.product_id.in_(product_ids))
     ).all()
+    extra_tx_sets: dict[int, set[int]] = {pid: set() for pid in product_ids}
     for pid, tx_id, v_tx_id in receipt_rows:
         if pid in tx_sets:
-            if tx_id is not None:
-                tx_sets[pid].add(tx_id)
-            if v_tx_id is not None:
-                tx_sets[pid].add(v_tx_id)
+            for candidate_tx in (tx_id, v_tx_id):
+                if candidate_tx is not None:
+                    tx_sets[pid].add(candidate_tx)
+                    if candidate_tx not in synced_tx_sets[pid]:
+                        extra_tx_sets[pid].add(candidate_tx)
 
-    return {pid: len(tids) for pid, tids in tx_sets.items()}
+    return {
+        pid: (tx_sets[pid], split_counts[pid] + len(extra_tx_sets[pid]))
+        for pid in product_ids
+    }
+
+
+def _compute_affected_firefly_counts(
+    session: Session, product_ids: list[int]
+) -> dict[int, int]:
+    """Counts distinct linked Firefly transaction IDs per product across cache & pushed receipts."""
+    stats = compute_affected_firefly_stats(session, product_ids)
+    return {pid: len(tx_ids) for pid, (tx_ids, _) in stats.items()}
 
 
 def serialize_products(session: Session, products: list[Product]) -> list[ProductRead]:
@@ -269,16 +291,19 @@ def update_product(
     return serialize_products(session, [loaded])[0]
 
 
-@router.post("/{product_id}/propagate-firefly", status_code=202, response_model=FireflySyncJobResponse)
-async def propagate_product_to_firefly(
-    product_id: int,
-    session: Session = Depends(get_session),
-):
-    """
-    Enqueues a background job to rewrite all linked Firefly III splits (and any
-    unsynced pushed receipt transactions) for `product_id`.
-    """
-    product = _load_product_or_404(session, product_id)
+class BatchPropagateRequest(BaseModel):
+    product_ids: list[int]
+
+
+class BatchPropagateResponse(BaseModel):
+    jobs: list[FireflySyncJobResponse]
+    skipped_active_product_ids: list[int]
+
+
+def _collect_and_enqueue_propagation_job(
+    session: Session, product: Product
+) -> FireflySyncJob:
+    """Collects linked splits & receipt transactions for `product` and enqueues a rewrite job."""
     linked_splits = session.exec(
         select(FireflySyncedSplit).where(
             FireflySyncedSplit.linked_product_id == product.id,
@@ -308,7 +333,7 @@ async def propagate_product_to_firefly(
         *(a.normalized_description for a in product.aliases),
     }
 
-    job = enqueue_firefly_rewrite_job(
+    return enqueue_firefly_rewrite_job(
         session,
         product,
         linked_splits,
@@ -316,6 +341,70 @@ async def propagate_product_to_firefly(
         extra_tx_ids=extra_tx_ids,
         match_descriptions_lower=match_descriptions,
     )
+
+
+@router.post("/propagate-firefly-batch", status_code=202, response_model=BatchPropagateResponse)
+async def propagate_products_batch_to_firefly(
+    payload: BatchPropagateRequest,
+    session: Session = Depends(get_session),
+):
+    """
+    Enqueues Firefly III propagation jobs for multiple products, skipping items
+    with zero linked transactions or already running jobs.
+    """
+    unique_ids = list(dict.fromkeys(payload.product_ids))
+    if not unique_ids:
+        return BatchPropagateResponse(jobs=[], skipped_active_product_ids=[])
+
+    active_rows = session.exec(
+        select(FireflySyncJob.product_id).where(
+            FireflySyncJob.product_id.in_(unique_ids),
+            FireflySyncJob.status.in_(["queued", "running"]),
+        )
+    ).all()
+    active_pids = set(active_rows)
+    stats = compute_affected_firefly_stats(session, unique_ids)
+
+    jobs: list[FireflySyncJobResponse] = []
+    skipped_active: list[int] = []
+    for pid in unique_ids:
+        if pid in active_pids:
+            skipped_active.append(pid)
+            continue
+        tx_ids, _ = stats.get(pid, (set(), 0))
+        if not tx_ids:
+            continue
+        product = session.exec(
+            select(Product)
+            .where(Product.id == pid)
+            .options(
+                selectinload(Product.brand),
+                selectinload(Product.tags),
+                selectinload(Product.aliases),
+            )
+        ).first()
+        if not product:
+            continue
+        job = _collect_and_enqueue_propagation_job(session, product)
+        jobs.append(serialize_sync_job(job))
+
+    return BatchPropagateResponse(
+        jobs=jobs,
+        skipped_active_product_ids=skipped_active,
+    )
+
+
+@router.post("/{product_id}/propagate-firefly", status_code=202, response_model=FireflySyncJobResponse)
+async def propagate_product_to_firefly(
+    product_id: int,
+    session: Session = Depends(get_session),
+):
+    """
+    Enqueues a background job to rewrite all linked Firefly III splits (and any
+    unsynced pushed receipt transactions) for `product_id`.
+    """
+    product = _load_product_or_404(session, product_id)
+    job = _collect_and_enqueue_propagation_job(session, product)
     return serialize_sync_job(job)
 
 

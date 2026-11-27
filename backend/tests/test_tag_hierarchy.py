@@ -1,4 +1,6 @@
+import time
 import unittest
+from datetime import date
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -8,6 +10,7 @@ from sqlmodel import SQLModel, Session
 
 from app.core.database import configure_sqlite_pragmas, get_session
 from app.main import app
+from app.models.firefly_cache import FireflySyncJob, FireflySyncedSplit
 from app.models.product import Product
 from app.models.tag import ProductTagLink, Tag, TagImplication
 from app.services.taxonomy import (
@@ -334,6 +337,219 @@ class TagHierarchyApiTests(unittest.TestCase):
         p1_data = self.client.get(f"/api/v1/products/{p1_id}").json()
         self.assertEqual([t["id"] for t in p1_data["tags"]], [mele_id])
         self.assertEqual(len(p1_data["effective_tags"]), 3)
+
+
+class ImplicationImpactAndBatchSyncTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        configure_sqlite_pragmas(self.engine, foreign_keys=True)
+        SQLModel.metadata.create_all(self.engine)
+
+        def override_get_session():
+            with Session(self.engine) as session:
+                yield session
+
+        app.dependency_overrides[get_session] = override_get_session
+        self.addCleanup(self.engine.dispose)
+        self.addCleanup(app.dependency_overrides.clear)
+        self.enterContext(patch("app.main.engine", self.engine))
+        self.enterContext(patch("app.main.run_db_migrations"))
+        self.client = self.enterContext(TestClient(app))
+
+    def _wait_for_job(self, job_id: int, timeout: float = 3.0) -> dict:
+        deadline = time.monotonic() + timeout
+        last_body = {}
+        while time.monotonic() < deadline:
+            resp = self.client.get(f"/api/v1/firefly-sync/jobs/{job_id}")
+            self.assertEqual(resp.status_code, 200)
+            last_body = resp.json()
+            if last_body["status"] in {"completed", "completed_with_errors", "failed"}:
+                return last_body
+            time.sleep(0.02)
+        self.fail(f"Job {job_id} did not finish within {timeout}s; last state: {last_body}")
+
+    def test_implication_impact_preview_for_add_remove_and_cycle(self):
+        with Session(self.engine) as session:
+            mele = Tag(name="Mele", firefly_tag_id=1)
+            frutta = Tag(name="Frutta", firefly_tag_id=2)
+            frutta_bio = Tag(name="FruttaBio", firefly_tag_id=3)
+            p_mele = Product(name="Mele Fuji", default_unit="kg", sale_mode="loose_weight")
+            p_both = Product(name="Mele Renette", default_unit="kg", sale_mode="loose_weight")
+            p_diamond = Product(name="Mele Bio", default_unit="kg", sale_mode="loose_weight")
+            session.add_all([mele, frutta, frutta_bio, p_mele, p_both, p_diamond])
+            session.commit()
+            for obj in (mele, frutta, frutta_bio, p_mele, p_both, p_diamond):
+                session.refresh(obj)
+            session.add_all(
+                [
+                    TagImplication(child_tag_id=frutta_bio.id, parent_tag_id=frutta.id),
+                    ProductTagLink(product_id=p_mele.id, tag_id=mele.id),
+                    ProductTagLink(product_id=p_both.id, tag_id=mele.id),
+                    ProductTagLink(product_id=p_both.id, tag_id=frutta.id),
+                    ProductTagLink(product_id=p_diamond.id, tag_id=mele.id),
+                    ProductTagLink(product_id=p_diamond.id, tag_id=frutta_bio.id),
+                    FireflySyncedSplit(
+                        transaction_journal_id=1001,
+                        firefly_transaction_id=100,
+                        tx_type="withdrawal",
+                        tx_date=date(2026, 11, 20),
+                        amount_cents=350,
+                        description="Mele Fuji",
+                        normalized_description="mele fuji",
+                        linked_product_id=p_mele.id,
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=1002,
+                        firefly_transaction_id=101,
+                        tx_type="withdrawal",
+                        tx_date=date(2026, 11, 21),
+                        amount_cents=450,
+                        description="Mele Fuji",
+                        normalized_description="mele fuji",
+                        linked_product_id=p_mele.id,
+                    ),
+                ]
+            )
+            session.commit()
+            mele_id, frutta_id = mele.id, frutta.id
+            p_mele_id = p_mele.id
+
+        # Unknown tag -> 404
+        r_missing = self.client.get(
+            "/api/v1/tags/implications/impact",
+            params={"action": "add", "child_tag_id": 9999, "parent_tag_id": frutta_id},
+        )
+        self.assertEqual(r_missing.status_code, 404)
+
+        # Self-cycle -> 422
+        r_cycle = self.client.get(
+            "/api/v1/tags/implications/impact",
+            params={"action": "add", "child_tag_id": mele_id, "parent_tag_id": mele_id},
+        )
+        self.assertEqual(r_cycle.status_code, 422)
+
+        # Preview adding Mele -> Frutta: only p_mele changes effective_tags (p_both & p_diamond already include Frutta)
+        r_add = self.client.get(
+            "/api/v1/tags/implications/impact",
+            params={"action": "add", "child_tag_id": mele_id, "parent_tag_id": frutta_id},
+        )
+        self.assertEqual(r_add.status_code, 200)
+        add_body = r_add.json()
+        self.assertEqual(add_body["total_affected_items"], 1)
+        self.assertEqual(add_body["total_affected_transactions"], 2)
+        self.assertEqual(add_body["total_affected_splits"], 2)
+        self.assertEqual(add_body["affected_items"][0]["product_id"], p_mele_id)
+        self.assertEqual(add_body["affected_items"][0]["before_tags"], ["Mele"])
+        self.assertEqual(add_body["affected_items"][0]["after_tags"], ["Mele", "Frutta"])
+
+        # Apply Mele -> Frutta (which also prunes p_both's redundant direct Frutta)
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/tags/implications",
+                json={"child_tag_id": mele_id, "parent_tag_id": frutta_id},
+            ).status_code,
+            200,
+        )
+
+        # Preview removing Mele -> Frutta: both p_mele and p_both lose Frutta; p_diamond keeps Frutta via FruttaBio
+        r_rem = self.client.get(
+            "/api/v1/tags/implications/impact",
+            params={"action": "remove", "child_tag_id": mele_id, "parent_tag_id": frutta_id},
+        )
+        self.assertEqual(r_rem.status_code, 200)
+        rem_body = r_rem.json()
+        self.assertEqual(rem_body["total_affected_items"], 2)
+        rem_names = [item["product_name"] for item in rem_body["affected_items"]]
+        self.assertEqual(rem_names, ["Mele Fuji", "Mele Renette"])
+        self.assertEqual(rem_body["affected_items"][0]["after_tags"], ["Mele"])
+
+    def test_propagate_firefly_batch_enqueues_jobs_and_skips_zero_or_active(self):
+        with Session(self.engine) as session:
+            mele = Tag(name="Mele", firefly_tag_id=1)
+            frutta = Tag(name="Frutta", firefly_tag_id=2)
+            p1 = Product(name="Mele Fuji", default_unit="kg", sale_mode="loose_weight")
+            p_empty = Product(name="Mele Senza Split", default_unit="kg", sale_mode="loose_weight")
+            p_busy = Product(name="Mele Busy", default_unit="kg", sale_mode="loose_weight")
+            session.add_all([mele, frutta, p1, p_empty, p_busy])
+            session.commit()
+            for obj in (mele, frutta, p1, p_empty, p_busy):
+                session.refresh(obj)
+            session.add_all(
+                [
+                    TagImplication(child_tag_id=mele.id, parent_tag_id=frutta.id),
+                    ProductTagLink(product_id=p1.id, tag_id=mele.id),
+                    ProductTagLink(product_id=p_empty.id, tag_id=mele.id),
+                    ProductTagLink(product_id=p_busy.id, tag_id=mele.id),
+                    FireflySyncedSplit(
+                        transaction_journal_id=2001,
+                        firefly_transaction_id=200,
+                        tx_type="withdrawal",
+                        tx_date=date(2026, 11, 20),
+                        amount_cents=300,
+                        description="Mele Fuji",
+                        normalized_description="mele fuji",
+                        linked_product_id=p1.id,
+                    ),
+                    FireflySyncedSplit(
+                        transaction_journal_id=2002,
+                        firefly_transaction_id=201,
+                        tx_type="withdrawal",
+                        tx_date=date(2026, 11, 20),
+                        amount_cents=300,
+                        description="Mele Busy",
+                        normalized_description="mele busy",
+                        linked_product_id=p_busy.id,
+                    ),
+                    FireflySyncJob(
+                        job_type="product_propagate",
+                        product_id=p_busy.id,
+                        product_name=p_busy.name,
+                        status="running",
+                        total_transactions=1,
+                        total_splits=1,
+                    ),
+                ]
+            )
+            session.commit()
+            p1_id, p_empty_id, p_busy_id = p1.id, p_empty.id, p_busy.id
+
+        captured_puts = []
+
+        async def mock_get_tx(tx_id):
+            return {
+                "id": str(tx_id),
+                "attributes": {"transactions": [{"transaction_journal_id": "2001"}]},
+            }
+
+        async def mock_put_tx(tx_id, payload):
+            captured_puts.append((tx_id, payload))
+            return {"data": {"id": str(tx_id)}}
+
+        with (
+            patch("app.services.firefly_sync_jobs.firefly_client.get_transaction_by_id", side_effect=mock_get_tx),
+            patch("app.services.firefly_sync_jobs.firefly_client.update_transaction", side_effect=mock_put_tx),
+        ):
+            resp = self.client.post(
+                "/api/v1/products/propagate-firefly-batch",
+                json={"product_ids": [p1_id, p_empty_id, p_busy_id]},
+            )
+            self.assertEqual(resp.status_code, 202)
+            body = resp.json()
+            self.assertEqual(len(body["jobs"]), 1)
+            self.assertEqual(body["jobs"][0]["product_id"], p1_id)
+            self.assertEqual(body["skipped_active_product_ids"], [p_busy_id])
+
+            job_done = self._wait_for_job(body["jobs"][0]["id"])
+
+        self.assertEqual(job_done["status"], "completed")
+        self.assertEqual(
+            captured_puts[0][1]["transactions"][0]["tags"],
+            ["Mele", "Frutta"],
+        )
 
 
 if __name__ == "__main__":
