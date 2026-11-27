@@ -1,12 +1,14 @@
-FROM node:20-alpine AS builder
+FROM oven/bun:1.4-alpine AS builder
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm install
+COPY package.json bun.lock ./
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bun install --frozen-lockfile
 
-COPY . .
-RUN npm run build
+COPY index.html postcss.config.js tailwind.config.js tsconfig.json vite.config.ts ./
+COPY src ./src
+RUN bun --bun run build
 
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
