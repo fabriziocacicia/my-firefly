@@ -95,8 +95,8 @@ Per [`canonical_items_hierarchical_tags_and_firefly_sync.md`](./canonical_items_
 2. **Implication impact modal in [`TagHierarchyTab.tsx`](file:///Users/fabriziocacicia/Projects/Personal/my-firefly/frontend/src/components/catalog/TagHierarchyTab.tsx):**
    - On **Add rule** (`Mele → Frutta`) or **Delete rule** (`Trash2` button):
      - Call `api.tags.previewImplicationImpact(action, childId, parentId)`.
-     - If `total_affected_items === 0` and `total_affected_splits === 0`, apply immediately without interrupting the user (for `add`; or lightweight apply for `delete`).
-     - If any items or Firefly splits are impacted, open an accessible confirmation modal (`role="dialog"`, `aria-modal="true"`, `Escape` to close) showing:
+     - If `total_affected_splits === 0`, apply immediately without opening a blocking modal (reporting any updated local catalog items in the success banner).
+     - If any Firefly splits are impacted (`total_affected_splits > 0`), open an accessible confirmation modal (`role="dialog"`, `aria-modal="true"`, `Escape` to close) showing:
        - Summary of the rule change (`Add Mele → Frutta` or `Remove Mele → Frutta`), total impacted items, and total Firefly splits/transactions.
        - Simple list of impacted items (`product_name`, `before_tags → after_tags`, and `affected_firefly_splits` / `affected_firefly_transactions` count).
        - Actions:

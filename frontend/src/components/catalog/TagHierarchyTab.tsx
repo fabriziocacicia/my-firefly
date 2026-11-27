@@ -174,7 +174,9 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
           text:
             impact.total_affected_splits > 0
               ? `${actionLabel} locally. Linked Firefly items can still be synced from the Catalog tab.`
-              : `${actionLabel}.`,
+              : impact.total_affected_items > 0
+                ? `${actionLabel} (updated ${impact.total_affected_items} local item(s); no linked Firefly splits).`
+                : `${actionLabel}.`,
         });
       }
       setModalError(null);
@@ -203,7 +205,7 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
     setModalError(null);
     setRuleApplied(false);
     const impact = await api.tags.previewImplicationImpact(action, childId, parentId);
-    if (impact.total_affected_items === 0) {
+    if (impact.total_affected_splits === 0) {
       await applyImplicationChange(impact, false, false);
     } else {
       setPendingImpact(impact);
