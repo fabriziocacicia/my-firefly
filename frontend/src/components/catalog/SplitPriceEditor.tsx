@@ -11,6 +11,23 @@ import {
 
 const VALID_UNITS: MeasureUnit[] = ['g', 'kg', 'ml', 'l', 'pcs'];
 
+function toMeasureUnit(unit: string): MeasureUnit {
+  return VALID_UNITS.includes(unit as MeasureUnit) ? (unit as MeasureUnit) : 'pcs';
+}
+
+function deriveUnitPriceInput(
+  paidPrice: number,
+  quantity: number | null,
+  unit: MeasureUnit,
+  pkgSize: number,
+  normalizedUnitPrice?: number | null
+): string {
+  if (normalizedUnitPrice != null) return String(normalizedUnitPrice);
+  if (quantity == null || quantity <= 0) return '';
+  const computed = computeNormalizedUnitPrice(paidPrice, quantity, unit, pkgSize);
+  return computed != null ? String(computed) : '';
+}
+
 interface SplitPriceEditorProps {
   priceRecordId: number;
   paidPrice: number;
@@ -39,9 +56,7 @@ export const SplitPriceEditor: React.FC<SplitPriceEditorProps> = ({
   onSaved,
 }) => {
   const pkgSize = packageSize && packageSize > 0 ? packageSize : 1;
-  const initialUnit: MeasureUnit = VALID_UNITS.includes(unit as MeasureUnit)
-    ? (unit as MeasureUnit)
-    : 'pcs';
+  const initialUnit = toMeasureUnit(unit);
 
   const [editing, setEditing] = useState(defaultExpanded || verificationStatus === 'missing');
   const [qtyInput, setQtyInput] = useState<string>(() =>
@@ -50,16 +65,9 @@ export const SplitPriceEditor: React.FC<SplitPriceEditorProps> = ({
   const [unitInput, setUnitInput] = useState<MeasureUnit>(initialUnit);
   const effectivePkgSize = unitInput !== initialUnit && pkgSize > 1 ? 1 : pkgSize;
 
-  const [unitPriceInput, setUnitPriceInput] = useState<string>(() => {
-    if (normalizedUnitPrice != null) {
-      return String(normalizedUnitPrice);
-    }
-    if (quantity != null && quantity > 0) {
-      const computed = computeNormalizedUnitPrice(paidPrice, quantity, initialUnit, pkgSize);
-      return computed != null ? String(computed) : '';
-    }
-    return '';
-  });
+  const [unitPriceInput, setUnitPriceInput] = useState<string>(() =>
+    deriveUnitPriceInput(paidPrice, quantity, initialUnit, pkgSize, normalizedUnitPrice)
+  );
   const [discountChecked, setDiscountChecked] = useState<boolean>(isDiscount);
   const [regularInput, setRegularInput] = useState<string>(
     isDiscount && regularPrice > 0 ? String(regularPrice) : String(paidPrice)
@@ -68,19 +76,12 @@ export const SplitPriceEditor: React.FC<SplitPriceEditorProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const nextUnit: MeasureUnit = VALID_UNITS.includes(unit as MeasureUnit)
-      ? (unit as MeasureUnit)
-      : 'pcs';
+    const nextUnit = toMeasureUnit(unit);
     setUnitInput(nextUnit);
     setQtyInput(formatQuantityInput(quantity, nextUnit));
-    if (normalizedUnitPrice != null) {
-      setUnitPriceInput(String(normalizedUnitPrice));
-    } else if (quantity != null && quantity > 0) {
-      const computed = computeNormalizedUnitPrice(paidPrice, quantity, nextUnit, pkgSize);
-      setUnitPriceInput(computed != null ? String(computed) : '');
-    } else {
-      setUnitPriceInput('');
-    }
+    setUnitPriceInput(
+      deriveUnitPriceInput(paidPrice, quantity, nextUnit, pkgSize, normalizedUnitPrice)
+    );
     setDiscountChecked(isDiscount);
     setRegularInput(isDiscount && regularPrice > 0 ? String(regularPrice) : String(paidPrice));
     setError(null);

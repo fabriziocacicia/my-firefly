@@ -322,6 +322,32 @@ def _upsert_scoped_alias(
         )
 
 
+def _resolve_alias_targets(
+    alias_scope: Literal["auto", "global", "chain", "store"],
+    *,
+    distinct_aids: set[int],
+    distinct_cids: set[int],
+    unchained_aids: set[int],
+    account_to_chain: dict[int, tuple[int, str]],
+) -> List[tuple[Optional[int], Optional[int]]]:
+    if alias_scope == "global":
+        return [(None, None)]
+    if alias_scope == "store":
+        if not distinct_aids:
+            return [(None, None)]
+        return [(account_to_chain.get(aid, (None, None))[0], aid) for aid in distinct_aids]
+    if alias_scope == "chain":
+        targets: List[tuple[Optional[int], Optional[int]]] = [(cid, None) for cid in distinct_cids]
+        targets.extend((None, aid) for aid in unchained_aids)
+        return targets or [(None, None)]
+    # "auto": prefer single chain, then single unchained store, else global
+    if len(distinct_cids) == 1 and not unchained_aids:
+        return [(next(iter(distinct_cids)), None)]
+    if len(distinct_aids) == 1 and not distinct_cids:
+        return [(None, next(iter(distinct_aids)))]
+    return [(None, None)]
+
+
 def record_scoped_aliases_for_link(
     session: Session,
     *,
@@ -351,92 +377,22 @@ def record_scoped_aliases_for_link(
         }
         unchained_aids = {aid for aid in distinct_aids if aid not in account_to_chain}
 
-        if alias_scope == "store":
-            if distinct_aids:
-                for aid in distinct_aids:
-                    cid = account_to_chain.get(aid, (None, None))[0]
-                    _upsert_scoped_alias(
-                        session,
-                        product_id=product_id,
-                        raw_desc=raw_desc,
-                        norm_desc=norm_desc,
-                        company_id=cid,
-                        firefly_account_id=aid,
-                    )
-            else:
-                _upsert_scoped_alias(
-                    session,
-                    product_id=product_id,
-                    raw_desc=raw_desc,
-                    norm_desc=norm_desc,
-                    company_id=None,
-                    firefly_account_id=None,
-                )
-        elif alias_scope == "chain":
-            for cid in distinct_cids:
-                _upsert_scoped_alias(
-                    session,
-                    product_id=product_id,
-                    raw_desc=raw_desc,
-                    norm_desc=norm_desc,
-                    company_id=cid,
-                    firefly_account_id=None,
-                )
-            for aid in unchained_aids:
-                _upsert_scoped_alias(
-                    session,
-                    product_id=product_id,
-                    raw_desc=raw_desc,
-                    norm_desc=norm_desc,
-                    company_id=None,
-                    firefly_account_id=aid,
-                )
-            if not distinct_cids and not unchained_aids:
-                _upsert_scoped_alias(
-                    session,
-                    product_id=product_id,
-                    raw_desc=raw_desc,
-                    norm_desc=norm_desc,
-                    company_id=None,
-                    firefly_account_id=None,
-                )
-        elif alias_scope == "global":
+        targets = _resolve_alias_targets(
+            alias_scope,
+            distinct_aids=distinct_aids,
+            distinct_cids=distinct_cids,
+            unchained_aids=unchained_aids,
+            account_to_chain=account_to_chain,
+        )
+        for cid, aid in targets:
             _upsert_scoped_alias(
                 session,
                 product_id=product_id,
                 raw_desc=raw_desc,
                 norm_desc=norm_desc,
-                company_id=None,
-                firefly_account_id=None,
+                company_id=cid,
+                firefly_account_id=aid,
             )
-        else:  # "auto"
-            if len(distinct_cids) == 1 and not unchained_aids:
-                _upsert_scoped_alias(
-                    session,
-                    product_id=product_id,
-                    raw_desc=raw_desc,
-                    norm_desc=norm_desc,
-                    company_id=next(iter(distinct_cids)),
-                    firefly_account_id=None,
-                )
-            elif len(distinct_aids) == 1 and not distinct_cids:
-                _upsert_scoped_alias(
-                    session,
-                    product_id=product_id,
-                    raw_desc=raw_desc,
-                    norm_desc=norm_desc,
-                    company_id=None,
-                    firefly_account_id=next(iter(distinct_aids)),
-                )
-            else:
-                _upsert_scoped_alias(
-                    session,
-                    product_id=product_id,
-                    raw_desc=raw_desc,
-                    norm_desc=norm_desc,
-                    company_id=None,
-                    firefly_account_id=None,
-                )
 
 
 def query_backlog(
