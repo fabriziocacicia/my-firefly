@@ -25,6 +25,32 @@ interface TagHierarchyTabProps {
   onJobsStarted?: (jobs: FireflySyncJob[]) => void;
 }
 
+function formatImpactSuccessText(
+  actionLabel: string,
+  impact: ImplicationImpactResponse,
+  syncFirefly: boolean,
+  startedCount: number,
+  skippedCount: number
+): string {
+  if (syncFirefly && startedCount > 0) {
+    const skippedSuffix =
+      skippedCount > 0
+        ? ` (${skippedCount} item(s) already had an active sync job)`
+        : '';
+    return `${actionLabel}. Firefly sync started for ${startedCount} item(s)${skippedSuffix}.`;
+  }
+  if (syncFirefly && skippedCount > 0) {
+    return `${actionLabel}. Affected items already had active Firefly sync jobs.`;
+  }
+  if (impact.total_affected_splits > 0) {
+    return `${actionLabel} locally. Linked Firefly items can still be synced from the Catalog tab.`;
+  }
+  if (impact.total_affected_items > 0) {
+    return `${actionLabel} (updated ${impact.total_affected_items} local item(s); no linked Firefly splits).`;
+  }
+  return `${actionLabel}.`;
+}
+
 export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
   tags,
   implications,
@@ -52,11 +78,17 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
 
   const tagsById = useMemo(() => new Map(tags.map(t => [t.id, t])), [tags]);
 
+  const closeImpactModal = () => {
+    setPendingImpact(null);
+    setRuleApplied(false);
+    setModalError(null);
+  };
+
   useEffect(() => {
     if (!pendingImpact) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !applyingImpact) {
-        setPendingImpact(null);
+        closeImpactModal();
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -147,39 +179,22 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
         }
       }
 
-      setPendingImpact(null);
-      setRuleApplied(false);
+      closeImpactModal();
 
       const actionLabel =
         impact.action === 'add'
           ? `Rule "${impact.child_tag_name} -> ${impact.parent_tag_name}" saved`
           : `Rule "${impact.child_tag_name} -> ${impact.parent_tag_name}" removed`;
-      if (syncFirefly && startedCount > 0) {
-        const skippedSuffix =
-          skippedCount > 0
-            ? ` (${skippedCount} item(s) already had an active sync job)`
-            : '';
-        setBanner({
-          type: 'success',
-          text: `${actionLabel}. Firefly sync started for ${startedCount} item(s)${skippedSuffix}.`,
-        });
-      } else if (syncFirefly && skippedCount > 0) {
-        setBanner({
-          type: 'success',
-          text: `${actionLabel}. Affected items already had active Firefly sync jobs.`,
-        });
-      } else {
-        setBanner({
-          type: 'success',
-          text:
-            impact.total_affected_splits > 0
-              ? `${actionLabel} locally. Linked Firefly items can still be synced from the Catalog tab.`
-              : impact.total_affected_items > 0
-                ? `${actionLabel} (updated ${impact.total_affected_items} local item(s); no linked Firefly splits).`
-                : `${actionLabel}.`,
-        });
-      }
-      setModalError(null);
+      setBanner({
+        type: 'success',
+        text: formatImpactSuccessText(
+          actionLabel,
+          impact,
+          syncFirefly,
+          startedCount,
+          skippedCount
+        ),
+      });
     } catch (err) {
       const rawMessage =
         err instanceof Error ? err.message : 'Failed to apply implication change';
@@ -464,7 +479,7 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
           aria-labelledby={modalTitleId}
           onClick={e => {
             if (e.target === e.currentTarget && !applyingImpact) {
-              setPendingImpact(null);
+              closeImpactModal();
             }
           }}
           className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
@@ -486,17 +501,16 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
                     <strong>{pendingImpact.child_tag_name}</strong>{' '}
                     <ArrowRight className="w-3 h-3 inline mx-0.5 text-slate-400" />{' '}
                     <strong>{pendingImpact.parent_tag_name}</strong> affects{' '}
-                    <strong>{pendingImpact.total_affected_items}</strong> catalog item(s)
-                    {pendingImpact.total_affected_splits > 0
-                      ? ` and ${pendingImpact.total_affected_splits} Firefly split(s) across ${pendingImpact.total_affected_transactions} transaction(s).`
-                      : ' (no linked Firefly splits).'}
+                    <strong>{pendingImpact.total_affected_items}</strong> catalog item(s) and{' '}
+                    <strong>{pendingImpact.total_affected_splits}</strong> Firefly split(s) across{' '}
+                    {pendingImpact.total_affected_transactions} transaction(s).
                   </p>
                 </div>
               </div>
               <button
                 type="button"
                 disabled={applyingImpact}
-                onClick={() => setPendingImpact(null)}
+                onClick={closeImpactModal}
                 className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 disabled:opacity-40"
                 aria-label="Close impact confirmation modal"
               >
@@ -547,53 +561,36 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
               <button
                 type="button"
                 disabled={applyingImpact}
-                onClick={() => {
-                  setPendingImpact(null);
-                  setRuleApplied(false);
-                }}
+                onClick={closeImpactModal}
                 className="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-40"
               >
                 {ruleApplied ? 'Close' : 'Cancel'}
               </button>
-
-              {pendingImpact.total_affected_splits > 0 ? (
-                <>
-                  {!ruleApplied && (
-                    <button
-                      type="button"
-                      disabled={applyingImpact}
-                      onClick={() => applyImplicationChange(pendingImpact, false, true)}
-                      className="px-3.5 py-2 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                    >
-                      Save Rule Only
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    disabled={applyingImpact}
-                    onClick={() => applyImplicationChange(pendingImpact, true, true)}
-                    className="inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white"
-                  >
-                    <RefreshCw
-                      className={`w-3.5 h-3.5 mr-1.5 ${applyingImpact ? 'animate-spin' : ''}`}
-                    />
-                    {applyingImpact
-                      ? 'Syncing...'
-                      : ruleApplied
-                        ? `Retry Sync ${pendingImpact.total_affected_splits} Split(s)`
-                        : `Confirm & Sync ${pendingImpact.total_affected_splits} Split(s)`}
-                  </button>
-                </>
-              ) : (
+              {!ruleApplied && (
                 <button
                   type="button"
                   disabled={applyingImpact}
                   onClick={() => applyImplicationChange(pendingImpact, false, true)}
-                  className="px-4 py-2 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white"
+                  className="px-3.5 py-2 rounded-lg text-xs font-semibold border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                 >
-                  {applyingImpact ? 'Applying...' : 'Confirm'}
+                  Save Rule Only
                 </button>
               )}
+              <button
+                type="button"
+                disabled={applyingImpact}
+                onClick={() => applyImplicationChange(pendingImpact, true, true)}
+                className="inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 mr-1.5 ${applyingImpact ? 'animate-spin' : ''}`}
+                />
+                {applyingImpact
+                  ? 'Syncing...'
+                  : ruleApplied
+                    ? `Retry Sync ${pendingImpact.total_affected_splits} Split(s)`
+                    : `Confirm & Sync ${pendingImpact.total_affected_splits} Split(s)`}
+              </button>
             </div>
           </div>
         </div>
