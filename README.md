@@ -35,14 +35,15 @@ A companion web application for **Firefly III** to track SKU-level product price
 
 ```
 my-firefly/
-├── backend/                  # Python 3.11 + FastAPI + SQLModel
+├── backend/                  # Python 3.13 + FastAPI + SQLModel
 │   ├── app/
 │   │   ├── api/v1/           # REST endpoints (companies, products, prices, firefly, firefly_sync, analytics, workflows, receipts, accounts, asset_accounts, categories)
 │   │   ├── core/             # Configuration & SQLite connection
 │   │   ├── models/           # SQLModel domain models (Company, AccountMetadata, AssetAccountMetadata, Product, Price, Tag, TagImplication, FireflySyncedSplit, FireflySyncJob, Receipt)
 │   │   ├── services/         # Firefly III client, async Firefly sync job worker, taxonomy DAG, voucher math & price normalization
 │   │   └── main.py           # FastAPI entrypoint
-│   ├── requirements.txt
+│   ├── pyproject.toml
+│   ├── uv.lock
 │   └── Dockerfile
 ├── frontend/                 # TypeScript + React + Vite + Tailwind CSS
 │   ├── src/
@@ -102,13 +103,11 @@ All significant architecture decisions, domain models, and RFCs are maintained i
 
 ### Option 2: Running Locally (Development Mode)
 
-#### 1. Backend (Python):
+#### 1. Backend (Python 3.13 + `uv`):
 ```bash
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+uv sync
+uv run uvicorn app.main:app --reload --port 8000
 ```
 
 #### 2. Frontend (Node/TypeScript):
