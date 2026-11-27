@@ -94,16 +94,21 @@ export function computePriceFromInput(
   };
 }
 
-export function expandTagIdsLocal(
-  directTagIds: number[],
-  implications: TagImplication[]
-): Set<number> {
+function buildImplicationMapLocal(implications: TagImplication[]): Map<number, number[]> {
   const map = new Map<number, number[]>();
   for (const imp of implications) {
     const list = map.get(imp.child_tag_id) || [];
     list.push(imp.parent_tag_id);
     map.set(imp.child_tag_id, list);
   }
+  return map;
+}
+
+export function expandTagIdsLocal(
+  directTagIds: number[],
+  implications: TagImplication[]
+): Set<number> {
+  const map = buildImplicationMapLocal(implications);
   const expanded = new Set<number>();
   const stack = [...directTagIds];
   while (stack.length > 0) {
@@ -114,6 +119,71 @@ export function expandTagIdsLocal(
     for (const p of parents) stack.push(p);
   }
   return expanded;
+}
+
+export function pruneRedundantAncestorTagIds(
+  tagIds: number[],
+  implications: TagImplication[]
+): number[] {
+  const ordered = Array.from(new Set(tagIds));
+  if (ordered.length <= 1 || implications.length === 0) {
+    return ordered;
+  }
+  const map = buildImplicationMapLocal(implications);
+  const redundantAncestors = new Set<number>();
+
+  for (const tid of ordered) {
+    const stack = [...(map.get(tid) || [])];
+    const visited = new Set<number>();
+    while (stack.length > 0) {
+      const curr = stack.pop()!;
+      if (visited.has(curr) || curr === tid) continue;
+      visited.add(curr);
+      redundantAncestors.add(curr);
+      const parents = map.get(curr) || [];
+      for (const p of parents) stack.push(p);
+    }
+  }
+
+  return ordered.filter(id => !redundantAncestors.has(id));
+}
+
+export function getImpliedParentSources(
+  directTagIds: number[],
+  allTags: Tag[],
+  implications: TagImplication[]
+): Map<number, Tag[]> {
+  const map = buildImplicationMapLocal(implications);
+  const byId = new Map(allTags.map(t => [t.id, t]));
+  const directSet = new Set(directTagIds);
+  const sourcesByParent = new Map<number, Map<number, Tag>>();
+
+  for (const childId of directTagIds) {
+    const childTag = byId.get(childId);
+    if (!childTag) continue;
+    const stack = [...(map.get(childId) || [])];
+    const visited = new Set<number>();
+    while (stack.length > 0) {
+      const ancId = stack.pop()!;
+      if (visited.has(ancId) || ancId === childId) continue;
+      visited.add(ancId);
+      if (!directSet.has(ancId)) {
+        const entry = sourcesByParent.get(ancId) || new Map<number, Tag>();
+        entry.set(childId, childTag);
+        sourcesByParent.set(ancId, entry);
+      }
+      for (const p of map.get(ancId) || []) stack.push(p);
+    }
+  }
+
+  const result = new Map<number, Tag[]>();
+  for (const [parentId, sourceMap] of sourcesByParent.entries()) {
+    const sorted = Array.from(sourceMap.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+    result.set(parentId, sorted);
+  }
+  return result;
 }
 
 export function getEffectiveTagsForIds(

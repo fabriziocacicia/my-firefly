@@ -1,10 +1,14 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Search, Tag as TagIcon, X } from 'lucide-react';
+import { Lock, Plus, Search, X } from 'lucide-react';
 import { api } from '../../api/client';
 import { usePortalDropdown } from '../../hooks/usePortalDropdown';
 import { Tag, TagImplication } from '../../types';
-import { getEffectiveTagsForIds } from '../workbench/productUtils';
+import {
+  getEffectiveTagsForIds,
+  getImpliedParentSources,
+  pruneRedundantAncestorTagIds,
+} from '../workbench/productUtils';
 
 interface TagMultiComboboxProps {
   tags: Tag[];
@@ -31,17 +35,10 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
   const [highlightIndex, setHighlightIndex] = useState(0);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lockHint, setLockHint] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
-
-  const { containerRef, dropdownRef, dropdownRect, updatePosition } = usePortalDropdown({
-    isOpen,
-    onClose: () => setIsOpen(false),
-    minWidth: 240,
-    preferredMaxHeight: 240,
-    deps: [selectedTagIds.length],
-  });
 
   const selectedSet = useMemo(() => new Set(selectedTagIds), [selectedTagIds]);
   const tagsById = useMemo(() => new Map(tags.map(t => [t.id, t])), [tags]);
@@ -56,15 +53,37 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
     [selectedTagIds, tags, implications]
   );
 
+  const effectiveSet = useMemo(
+    () =>
+      new Set([
+        ...selectedTagIds,
+        ...effectivePreview.implied.map(t => t.id),
+      ]),
+    [selectedTagIds, effectivePreview.implied]
+  );
+
+  const impliedSources = useMemo(
+    () => getImpliedParentSources(selectedTagIds, tags, implications),
+    [selectedTagIds, tags, implications]
+  );
+
+  const { containerRef, dropdownRef, dropdownRect, updatePosition } = usePortalDropdown({
+    isOpen,
+    onClose: () => setIsOpen(false),
+    minWidth: 240,
+    preferredMaxHeight: 240,
+    deps: [selectedTagIds.length, effectivePreview.implied.length],
+  });
+
   const renderedOptions = useMemo(() => {
     const q = query.trim().toLowerCase();
     return tags
       .filter(t => {
-        if (selectedSet.has(t.id)) return false;
+        if (effectiveSet.has(t.id)) return false;
         return q ? t.name.toLowerCase().includes(q) : true;
       })
       .slice(0, 30);
-  }, [tags, selectedSet, query]);
+  }, [tags, effectiveSet, query]);
 
   const trimmedQuery = query.trim();
   const exactExisting = useMemo(
@@ -85,17 +104,24 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
     optionRefs.current[highlightIndex]?.scrollIntoView({ block: 'nearest' });
   }, [highlightIndex, isOpen]);
 
+  const formatRequiredBy = (tag: Tag) => {
+    const sources = impliedSources.get(tag.id) || [];
+    return sources.map(s => `#${s.name}`).join(', ');
+  };
+
   const handleSelectTag = (tag: Tag) => {
-    if (!selectedSet.has(tag.id)) {
-      onChange([...selectedTagIds, tag.id]);
+    if (!effectiveSet.has(tag.id)) {
+      onChange(pruneRedundantAncestorTagIds([...selectedTagIds, tag.id], implications));
     }
     setQuery('');
     setError(null);
+    setLockHint(null);
     inputRef.current?.focus();
   };
 
   const handleRemoveTag = (tagId: number) => {
     onChange(selectedTagIds.filter(id => id !== tagId));
+    setLockHint(null);
     inputRef.current?.focus();
   };
 
@@ -103,11 +129,12 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
     if (!canCreate || creating) return;
     setCreating(true);
     setError(null);
+    setLockHint(null);
     try {
       const created = await api.tags.create({ name: trimmedQuery });
       onTagCreated(created);
-      if (!selectedSet.has(created.id)) {
-        onChange([...selectedTagIds, created.id]);
+      if (!effectiveSet.has(created.id)) {
+        onChange(pruneRedundantAncestorTagIds([...selectedTagIds, created.id], implications));
       }
       setQuery('');
       inputRef.current?.focus();
@@ -129,6 +156,7 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
     if (e.key === 'Backspace' && !query && selectedTagIds.length > 0) {
       e.preventDefault();
       onChange(selectedTagIds.slice(0, -1));
+      setLockHint(null);
       return;
     }
 
@@ -158,8 +186,12 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
         handleSelectTag(renderedOptions[highlightIndex]);
       } else if (canCreate) {
         handleCreateMissingTag();
-      } else if (exactExisting && !selectedSet.has(exactExisting.id)) {
+      } else if (exactExisting && !effectiveSet.has(exactExisting.id)) {
         handleSelectTag(exactExisting);
+      } else if (exactExisting && impliedSources.has(exactExisting.id)) {
+        setLockHint(
+          `#${exactExisting.name} is already required by ${formatRequiredBy(exactExisting)}.`
+        );
       }
     }
   };
@@ -189,7 +221,11 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
               <div className="px-3 py-2 text-xs text-slate-400">
                 {tags.length === 0
                   ? 'Type a name to create your first Firefly tag.'
-                  : 'No remaining tags match your search.'}
+                  : exactExisting && impliedSources.has(exactExisting.id)
+                    ? `#${exactExisting.name} is already included via ${formatRequiredBy(exactExisting)}.`
+                    : exactExisting && selectedSet.has(exactExisting.id)
+                      ? `#${exactExisting.name} is already selected.`
+                      : 'No remaining tags match your search.'}
               </div>
             ) : (
               renderedOptions.map((tag, idx) => {
@@ -285,6 +321,29 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
           </span>
         ))}
 
+        {effectivePreview.implied.map(tag => {
+          const requiredBy = formatRequiredBy(tag);
+          const hintText = `Required by ${requiredBy} — remove ${requiredBy} first`;
+          return (
+            <button
+              key={`implied-${tag.id}`}
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                setLockHint(`#${tag.name}: ${hintText}.`);
+                inputRef.current?.focus();
+              }}
+              title={hintText}
+              aria-disabled="true"
+              aria-label={`#${tag.name} (${hintText})`}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200 cursor-not-allowed"
+            >
+              <Lock className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+              <span>#{tag.name}</span>
+            </button>
+          );
+        })}
+
         <div className="relative flex-1 min-w-[140px] flex items-center">
           <Search className="w-3.5 h-3.5 text-slate-400 mr-1.5 shrink-0" />
           <input
@@ -303,29 +362,25 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
             }}
             onChange={e => {
               setQuery(e.target.value);
+              setLockHint(null);
               if (!isOpen) setIsOpen(true);
             }}
             onKeyDown={handleKeyDown}
-            placeholder={selectedTags.length === 0 ? placeholder : 'Add more tags...'}
+            placeholder={
+              selectedTags.length === 0 && effectivePreview.implied.length === 0
+                ? placeholder
+                : 'Add more tags...'
+            }
             autoComplete="off"
             className="w-full py-0.5 text-xs text-slate-800 bg-transparent border-none outline-none focus:ring-0 placeholder:text-slate-400"
           />
         </div>
       </div>
 
-      {effectivePreview.implied.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
-          <TagIcon className="w-3 h-3 text-emerald-600" />
-          <span>Auto-implied on Firefly:</span>
-          {effectivePreview.implied.map(t => (
-            <span
-              key={t.id}
-              className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium"
-            >
-              +{t.name}
-            </span>
-          ))}
-        </div>
+      {lockHint && (
+        <p aria-live="polite" className="text-[11px] text-amber-700 font-medium">
+          {lockHint}
+        </p>
       )}
 
       {error && <p className="text-xs text-rose-600 font-medium">{error}</p>}

@@ -14,6 +14,7 @@ import {
 import { TagMultiCombobox } from '../common/TagMultiCombobox';
 import {
   formatFireflyDescriptionPreview,
+  pruneRedundantAncestorTagIds,
   toMeasureUnit,
 } from '../workbench/productUtils';
 
@@ -103,7 +104,13 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
       if (cancelled) return;
       if (brandsRes.status === 'fulfilled') setBrands(brandsRes.value);
       if (catsRes.status === 'fulfilled') setCategories(catsRes.value);
-      if (impsRes.status === 'fulfilled') setImplications(impsRes.value);
+      const loadedImplications = impsRes.status === 'fulfilled' ? impsRes.value : [];
+      if (impsRes.status === 'fulfilled') {
+        setImplications(loadedImplications);
+        if (editingProduct) {
+          setSelectedTagIds(prev => pruneRedundantAncestorTagIds(prev, loadedImplications));
+        }
+      }
       if (tagsRes.status === 'fulfilled') {
         let loadedTags = tagsRes.value;
         if (!editingProduct && initialTagNames.length > 0) {
@@ -134,7 +141,7 @@ export const ItemEditorModal: React.FC<ItemEditorModalProps> = ({
                 preselectedIds.push(matchedId);
               }
             }
-            setSelectedTagIds(preselectedIds);
+            setSelectedTagIds(pruneRedundantAncestorTagIds(preselectedIds, loadedImplications));
           }
         }
         if (!cancelled) setTags(loadedTags);

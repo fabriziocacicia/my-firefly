@@ -48,6 +48,30 @@ export interface TagImplication {
   parent_tag_id: number;
 }
 
+export type ImplicationImpactAction = 'add' | 'remove';
+
+export interface ImplicationImpactItem {
+  product_id: number;
+  product_name: string;
+  before_tags: string[];
+  after_tags: string[];
+  affected_firefly_transactions: number;
+  affected_firefly_splits: number;
+  has_active_sync_job: boolean;
+}
+
+export interface ImplicationImpactResponse {
+  action: ImplicationImpactAction;
+  child_tag_id: number;
+  parent_tag_id: number;
+  child_tag_name: string;
+  parent_tag_name: string;
+  affected_items: ImplicationImpactItem[];
+  total_affected_items: number;
+  total_affected_transactions: number;
+  total_affected_splits: number;
+}
+
 export interface TagSyncResponse {
   synced_count: number;
   created_count: number;
@@ -430,6 +454,11 @@ export interface FireflySyncJob {
   created_at: string;
   started_at?: string | null;
   finished_at?: string | null;
+}
+
+export interface BatchPropagateResponse {
+  jobs: FireflySyncJob[];
+  skipped_active_product_ids: number[];
 }
 
 export interface ItemAnalyticsSummary {
