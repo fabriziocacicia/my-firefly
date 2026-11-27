@@ -101,8 +101,8 @@ Per [`canonical_items_hierarchical_tags_and_firefly_sync.md`](./canonical_items_
        - Simple list of impacted items (`product_name`, `before_tags → after_tags`, and `affected_firefly_splits` / `affected_firefly_transactions` count).
        - Actions:
          - **Cancel** (makes no changes).
-         - **Save rule only** (when Firefly splits > 0: applies rule locally without rewriting Firefly yet).
-         - **Confirm & Sync to Firefly** (primary action when Firefly splits > 0, or **Confirm** when 0 Firefly splits): commits `createImplication` / `deleteImplication`, triggers `api.products.propagateFireflyBatch(affectedProductIds)` if any Firefly splits exist, registers the returned jobs via `onJobsStarted` (`registerJob` in [`CatalogPage.tsx`](file:///Users/fabriziocacicia/Projects/Personal/my-firefly/frontend/src/pages/CatalogPage.tsx)), and refreshes catalog/tags.
+         - **Save rule only** (applies rule locally without rewriting Firefly yet).
+         - **Confirm & Sync to Firefly** (primary action: commits `createImplication` / `deleteImplication`, triggers `api.products.propagateFireflyBatch(affectedProductIds)`, registers the returned jobs via `onJobsStarted` / `registerJob` in [`CatalogPage.tsx`](file:///Users/fabriziocacicia/Projects/Personal/my-firefly/frontend/src/pages/CatalogPage.tsx), and refreshes catalog/tags).
 
 ---
 

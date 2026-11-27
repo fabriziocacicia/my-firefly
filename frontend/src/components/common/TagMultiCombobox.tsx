@@ -334,6 +334,7 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
                 inputRef.current?.focus();
               }}
               title={hintText}
+              aria-disabled="true"
               aria-label={`#${tag.name} (${hintText})`}
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200 cursor-not-allowed"
             >
@@ -377,7 +378,9 @@ export const TagMultiCombobox: React.FC<TagMultiComboboxProps> = ({
       </div>
 
       {lockHint && (
-        <p className="text-[11px] text-amber-700 font-medium">{lockHint}</p>
+        <p aria-live="polite" className="text-[11px] text-amber-700 font-medium">
+          {lockHint}
+        </p>
       )}
 
       {error && <p className="text-xs text-rose-600 font-medium">{error}</p>}

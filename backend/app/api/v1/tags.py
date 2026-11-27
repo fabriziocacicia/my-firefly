@@ -227,7 +227,9 @@ def _split_missing_expected_tags(raw_tags_json: str, expected_lower: set[str]) -
         parsed = []
     if not isinstance(parsed, list):
         return True
-    present_lower = {str(t).strip().lower() for t in parsed if str(t).strip()}
+    present_lower = {
+        str(t).strip().lower() for t in parsed if t is not None and str(t).strip()
+    }
     return not expected_lower.issubset(present_lower)
 
 

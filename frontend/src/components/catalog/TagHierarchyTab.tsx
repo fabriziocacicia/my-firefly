@@ -351,7 +351,12 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
             </div>
             <button
               type="submit"
-              disabled={savingEdge || childTagId == null || parentTagId == null}
+              disabled={
+                savingEdge ||
+                deletingEdgeKey !== null ||
+                childTagId == null ||
+                parentTagId == null
+              }
               className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg text-xs font-semibold"
             >
               {savingEdge ? 'Saving...' : 'Add Implication'}
@@ -411,14 +416,13 @@ export const TagHierarchyTab: React.FC<TagHierarchyTabProps> = ({
                       </div>
                       <button
                         type="button"
-                        disabled={
-                          deletingEdgeKey === `${imp.child_tag_id}-${imp.parent_tag_id}`
-                        }
+                        disabled={savingEdge || deletingEdgeKey !== null}
                         onClick={() =>
                           handleDeleteImplication(imp.child_tag_id, imp.parent_tag_id)
                         }
                         className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 disabled:opacity-40"
                         title="Remove rule"
+                        aria-label="Remove rule"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
