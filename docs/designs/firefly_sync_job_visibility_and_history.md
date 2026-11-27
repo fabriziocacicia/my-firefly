@@ -1,6 +1,6 @@
 # Spec Delta: Sync Job Banner Auto-Expiry, Bulk Dismiss & Sync History Drawer
 
-* **Status:** Approved
+* **Status:** Implemented
 * **Date:** 2026-11-27
 * **Issue:** [#33 — fix: synced items notifications remain visible forever](https://github.com/fabriziocacicia/my-firefly/issues/33)
 * **Base Spec:** [`firefly_sync_async_jobs.md`](./firefly_sync_async_jobs.md)
