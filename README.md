@@ -76,6 +76,7 @@ All significant architecture decisions, domain models, and RFCs are maintained i
 - [Asset Account Types & Categorized Balance Totals](docs/designs/asset_types_and_total_balances.md)
 - [Canonical Items, Hierarchical Firefly Tags & Historical Sync](docs/designs/canonical_items_hierarchical_tags_and_firefly_sync.md)
 - [Asynchronous Firefly Sync Jobs & Progress Tracking](docs/designs/firefly_sync_async_jobs.md)
+- [Sync Job Banner Auto-Expiry, Bulk Dismiss & Sync History Drawer](docs/designs/firefly_sync_job_visibility_and_history.md)
 - [ADR-001: Multi-Type Business Modeling and Dynamic Category Tagging](docs/decisions/ADR-001-multi-type-business-modeling-and-dynamic-categories.md)
 
 ---

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   BarChart3,
   DollarSign,
   Flame,
@@ -21,9 +22,11 @@ import { StoreCombobox } from '../components/common/StoreCombobox';
 import { CatalogAnalyticsTab } from '../components/catalog/CatalogAnalyticsTab';
 import { FireflyBacklogTab } from '../components/catalog/FireflyBacklogTab';
 import { ItemEditorModal } from '../components/catalog/ItemEditorModal';
+import { SyncHistoryDrawer } from '../components/catalog/SyncHistoryDrawer';
 import { SyncJobBadge } from '../components/catalog/SyncJobBadge';
 import { TagHierarchyTab } from '../components/catalog/TagHierarchyTab';
 import { formatProductBadge } from '../components/workbench/productUtils';
+import { hasDismissibleFinishedJobs } from '../hooks/syncJobVisibility';
 import { isSyncJobActive, useFireflySyncJobs } from '../hooks/useFireflySyncJobs';
 import {
   DealAnalysis,
@@ -139,13 +142,19 @@ export const CatalogPage: React.FC = () => {
     jobs,
     activeJobs,
     jobsByProductId,
+    unacknowledgedErrorCount,
+    isDismissingAll,
     registerJob,
     dismissJob,
+    dismissAllJobs,
   } = useFireflySyncJobs({
     onJobsChanged: async () => {
       await loadAll(true);
     },
   });
+
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const historyTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     loadAll();
@@ -309,69 +318,103 @@ export const CatalogPage: React.FC = () => {
       </div>
 
       {/* Navigation Tabs */}
-      <div className="flex items-center space-x-2 border-b border-slate-200 pb-3 overflow-x-auto">
-        <button
-          type="button"
-          onClick={() => setActiveTab('items')}
-          className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
-            activeTab === 'items'
-              ? 'bg-slate-900 text-white'
-              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-          }`}
-        >
-          <Package className="w-3.5 h-3.5 mr-1.5" />
-          Catalog Items ({products.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('backlog')}
-          className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
-            activeTab === 'backlog'
-              ? 'bg-slate-900 text-white'
-              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-          }`}
-        >
-          <ListChecks className="w-3.5 h-3.5 mr-1.5" />
-          Firefly Backlog
-          <span
-            className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-              activeTab === 'backlog'
-                ? 'bg-blue-500 text-white'
-                : 'bg-blue-100 text-blue-800'
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
+        <div className="flex items-center space-x-2 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setActiveTab('items')}
+            className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+              activeTab === 'items'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
-            {unassociatedCount}
-          </span>
+            <Package className="w-3.5 h-3.5 mr-1.5" />
+            Catalog Items ({products.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('backlog')}
+            className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+              activeTab === 'backlog'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            <ListChecks className="w-3.5 h-3.5 mr-1.5" />
+            Firefly Backlog
+            <span
+              className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                activeTab === 'backlog'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-blue-100 text-blue-800'
+              }`}
+            >
+              {unassociatedCount}
+            </span>
+            {activeJobs.length > 0 && (
+              <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                <RefreshCw className="w-2.5 h-2.5 mr-1 animate-spin" />
+                {activeJobs.length}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('tags')}
+            className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+              activeTab === 'tags'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 mr-1.5" />
+            Tag Hierarchy ({tags.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('analytics')}
+            className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+              activeTab === 'analytics'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            <BarChart3 className="w-3.5 h-3.5 mr-1.5" />
+            Tag Analytics
+          </button>
+        </div>
+
+        <button
+          ref={historyTriggerRef}
+          type="button"
+          onClick={() => setHistoryOpen(true)}
+          className={`inline-flex items-center px-3 py-2 rounded-lg text-xs font-semibold border transition whitespace-nowrap shrink-0 ${
+            activeJobs.length > 0
+              ? 'bg-blue-50 border-blue-200 text-blue-800 hover:bg-blue-100'
+              : unacknowledgedErrorCount > 0
+              ? 'bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100'
+              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          {activeJobs.length > 0 ? (
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5 text-blue-600 animate-spin shrink-0" />
+          ) : unacknowledgedErrorCount > 0 ? (
+            <AlertTriangle className="w-3.5 h-3.5 mr-1.5 text-amber-600 shrink-0" />
+          ) : (
+            <History className="w-3.5 h-3.5 mr-1.5 text-slate-500 shrink-0" />
+          )}
+          <span>Sync History</span>
           {activeJobs.length > 0 && (
-            <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
-              <RefreshCw className="w-2.5 h-2.5 mr-1 animate-spin" />
-              {activeJobs.length}
+            <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-600 text-white">
+              {activeJobs.length} active
             </span>
           )}
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('tags')}
-          className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
-            activeTab === 'tags'
-              ? 'bg-slate-900 text-white'
-              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-          }`}
-        >
-          <Layers className="w-3.5 h-3.5 mr-1.5" />
-          Tag Hierarchy ({tags.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('analytics')}
-          className={`inline-flex items-center px-4 py-2 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
-            activeTab === 'analytics'
-              ? 'bg-slate-900 text-white'
-              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-          }`}
-        >
-          <BarChart3 className="w-3.5 h-3.5 mr-1.5" />
-          Tag Analytics
+          {activeJobs.length === 0 && unacknowledgedErrorCount > 0 && (
+            <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-600 text-white">
+              {unacknowledgedErrorCount} {unacknowledgedErrorCount === 1 ? 'error' : 'errors'}
+            </span>
+          )}
         </button>
       </div>
 
@@ -617,6 +660,8 @@ export const CatalogPage: React.FC = () => {
           jobsByProductId={jobsByProductId}
           onJobStarted={registerJob}
           onDismissJob={dismissJob}
+          onDismissAllJobs={dismissAllJobs}
+          isDismissingAll={isDismissingAll}
           onDataChanged={() => loadAll(true)}
           onUnassociatedCountChange={setUnassociatedCount}
         />
@@ -644,6 +689,17 @@ export const CatalogPage: React.FC = () => {
         onClose={() => setEditorOpen(false)}
         onSaved={() => loadAll(true)}
         onPropagationJobStarted={registerJob}
+      />
+
+      {/* Sync History Drawer */}
+      <SyncHistoryDrawer
+        isOpen={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        liveJobs={jobs}
+        hasDismissibleBanners={hasDismissibleFinishedJobs(jobs)}
+        isDismissingAll={isDismissingAll}
+        onDismissAll={dismissAllJobs}
+        triggerRef={historyTriggerRef}
       />
 
       {/* Log Price Modal */}

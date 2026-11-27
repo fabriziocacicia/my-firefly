@@ -22,6 +22,7 @@ from app.services.firefly_sync_jobs import (
     FireflySyncJobResponse,
     SSE_HEARTBEAT_SECONDS,
     broadcast_jobs_snapshot,
+    dismiss_all_finished_sync_jobs,
     enqueue_firefly_rewrite_job,
     ensure_aware_utc,
     ensure_no_active_sync_job,
@@ -603,6 +604,16 @@ async def stream_sync_jobs(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+class DismissAllSyncJobsResponse(BaseModel):
+    dismissed_count: int
+
+
+@router.post("/jobs/dismiss-all", response_model=DismissAllSyncJobsResponse)
+def dismiss_all_sync_jobs(session: Session = Depends(get_session)):
+    dismissed_count = dismiss_all_finished_sync_jobs(session)
+    return DismissAllSyncJobsResponse(dismissed_count=dismissed_count)
 
 
 @router.get("/jobs/{job_id}", response_model=FireflySyncJobResponse)

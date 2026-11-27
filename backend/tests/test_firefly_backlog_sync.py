@@ -2,7 +2,7 @@ import json
 import threading
 import time
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -775,6 +775,161 @@ class FireflyBacklogSyncTests(unittest.TestCase):
             json={"transaction_journal_ids": [961], "ignored": True},
         )
         self.assertEqual(self.client.get(f"/api/v1/products/{self.product_id}").json()["affected_firefly_count"], 0)
+
+    def test_list_jobs_auto_expires_old_completed_banners_but_preserves_history_and_errors(self):
+        now = datetime.now(timezone.utc)
+        with Session(self.engine) as session:
+            recent_completed = FireflySyncJob(
+                job_type="backlog_link",
+                product_id=self.product_id,
+                product_name="Recent Completed",
+                status="completed",
+                created_at=now - timedelta(seconds=90),
+                finished_at=now - timedelta(seconds=60),
+            )
+            expired_completed = FireflySyncJob(
+                job_type="backlog_link",
+                product_id=self.product_id,
+                product_name="Expired Completed",
+                status="completed",
+                created_at=now - timedelta(seconds=400),
+                finished_at=now - timedelta(seconds=360),
+            )
+            expired_no_finished_at = FireflySyncJob(
+                job_type="product_propagate",
+                product_id=self.product_id,
+                product_name="Expired Fallback",
+                status="completed",
+                created_at=now - timedelta(seconds=360),
+                finished_at=None,
+            )
+            old_failed = FireflySyncJob(
+                job_type="backlog_link",
+                product_id=self.product_id,
+                product_name="Old Failed",
+                status="failed",
+                error_message="Connection refused",
+                created_at=now - timedelta(hours=2),
+                finished_at=now - timedelta(hours=2),
+            )
+            old_partial = FireflySyncJob(
+                job_type="product_propagate",
+                product_id=self.product_id,
+                product_name="Old Partial",
+                status="completed_with_errors",
+                failed_count=1,
+                created_at=now - timedelta(hours=2),
+                finished_at=now - timedelta(hours=2),
+            )
+            active_running = FireflySyncJob(
+                job_type="backlog_link",
+                product_id=self.product_id,
+                product_name="Active Running",
+                status="running",
+                created_at=now - timedelta(hours=1),
+            )
+            session.add_all([
+                recent_completed,
+                expired_completed,
+                expired_no_finished_at,
+                old_failed,
+                old_partial,
+                active_running,
+            ])
+            session.commit()
+            expected_visible_ids = {
+                recent_completed.id,
+                old_failed.id,
+                old_partial.id,
+                active_running.id,
+            }
+            all_ids = {
+                recent_completed.id,
+                expired_completed.id,
+                expired_no_finished_at.id,
+                old_failed.id,
+                old_partial.id,
+                active_running.id,
+            }
+
+        visible_resp = self.client.get("/api/v1/firefly-sync/jobs")
+        self.assertEqual(visible_resp.status_code, 200)
+        visible_ids = {j["id"] for j in visible_resp.json()}
+        self.assertEqual(visible_ids, expected_visible_ids)
+
+        history_resp = self.client.get("/api/v1/firefly-sync/jobs?include_dismissed=true&limit=50")
+        self.assertEqual(history_resp.status_code, 200)
+        history_ids = {j["id"] for j in history_resp.json()}
+        self.assertEqual(history_ids, all_ids)
+
+    def test_dismiss_all_jobs_clears_finished_only_and_keeps_active_jobs(self):
+        now = datetime.now(timezone.utc)
+        already_dismissed_at = now - timedelta(minutes=1)
+        with Session(self.engine) as session:
+            running_job = FireflySyncJob(
+                job_type="backlog_link",
+                product_id=self.product_id,
+                product_name="Running Job",
+                status="running",
+                created_at=now - timedelta(seconds=10),
+            )
+            queued_job = FireflySyncJob(
+                job_type="product_propagate",
+                product_id=self.product_id,
+                product_name="Queued Job",
+                status="queued",
+                created_at=now - timedelta(seconds=5),
+            )
+            recent_done = FireflySyncJob(
+                job_type="backlog_link",
+                product_id=self.product_id,
+                product_name="Recent Done",
+                status="completed",
+                created_at=now - timedelta(seconds=40),
+                finished_at=now - timedelta(seconds=30),
+            )
+            failed_job = FireflySyncJob(
+                job_type="backlog_link",
+                product_id=self.product_id,
+                product_name="Failed Job",
+                status="failed",
+                error_message="Boom",
+                created_at=now - timedelta(minutes=10),
+                finished_at=now - timedelta(minutes=10),
+            )
+            already_dismissed = FireflySyncJob(
+                job_type="backlog_link",
+                product_id=self.product_id,
+                product_name="Already Dismissed",
+                status="completed",
+                created_at=now - timedelta(seconds=50),
+                finished_at=now - timedelta(seconds=45),
+                dismissed_at=already_dismissed_at,
+            )
+            session.add_all([running_job, queued_job, recent_done, failed_job, already_dismissed])
+            session.commit()
+            active_ids = {running_job.id, queued_job.id}
+            already_dismissed_id = already_dismissed.id
+
+        resp = self.client.post("/api/v1/firefly-sync/jobs/dismiss-all")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["dismissed_count"], 2)
+
+        visible_after = self.client.get("/api/v1/firefly-sync/jobs")
+        self.assertEqual(visible_after.status_code, 200)
+        self.assertEqual({j["id"] for j in visible_after.json()}, active_ids)
+
+        history_after = self.client.get("/api/v1/firefly-sync/jobs?include_dismissed=true&limit=50")
+        self.assertEqual(history_after.status_code, 200)
+        self.assertEqual(len(history_after.json()), 5)
+
+        with Session(self.engine) as session:
+            preserved = session.get(FireflySyncJob, already_dismissed_id)
+            self.assertIsNotNone(preserved)
+            self.assertEqual(
+                preserved.dismissed_at.replace(tzinfo=timezone.utc),
+                already_dismissed_at,
+            )
 
 
 if __name__ == "__main__":

@@ -1,21 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { FireflySyncJob } from '../types';
+import {
+  countUnacknowledgedErrors,
+  getNextBannerExpiryDelayMs,
+  isJobBannerVisible,
+  isSyncJobActive,
+} from './syncJobVisibility';
 
-export const isSyncJobActive = (job: FireflySyncJob): boolean =>
-  job.status === 'queued' || job.status === 'running';
+export { isSyncJobActive };
 
 function mergeJobs(
   prev: FireflySyncJob[],
   incoming: FireflySyncJob[],
-  dismissedIds: Set<number>
+  dismissedIds: Set<number>,
+  nowMs: number = Date.now()
 ): FireflySyncJob[] {
   const byId = new Map<number, FireflySyncJob>();
   for (const job of prev) {
-    if (!job.dismissed_at && !dismissedIds.has(job.id)) byId.set(job.id, job);
+    if (!dismissedIds.has(job.id) && isJobBannerVisible(job, nowMs)) {
+      byId.set(job.id, job);
+    }
   }
   for (const job of incoming) {
-    if (job.dismissed_at || dismissedIds.has(job.id)) {
+    if (dismissedIds.has(job.id) || !isJobBannerVisible(job, nowMs)) {
       byId.delete(job.id);
     } else {
       byId.set(job.id, job);
@@ -30,6 +38,7 @@ interface UseFireflySyncJobsOptions {
 
 export function useFireflySyncJobs(options?: UseFireflySyncJobsOptions) {
   const [jobs, setJobs] = useState<FireflySyncJob[]>([]);
+  const [isDismissingAll, setIsDismissingAll] = useState(false);
   const onJobsChangedRef = useRef(options?.onJobsChanged);
   onJobsChangedRef.current = options?.onJobsChanged;
 
@@ -39,8 +48,13 @@ export function useFireflySyncJobs(options?: UseFireflySyncJobsOptions) {
   const lastSilentRefreshRef = useRef<number>(0);
 
   const applyJobList = useCallback((nextList: FireflySyncJob[], emitRefresh: boolean, mergeWithRegistered: boolean = false) => {
-    const filtered = nextList.filter(j => !dismissedIdsRef.current.has(j.id) && !j.dismissed_at);
-    setJobs(prev => (mergeWithRegistered ? mergeJobs(prev, filtered, dismissedIdsRef.current) : filtered));
+    const nowMs = Date.now();
+    const filtered = nextList.filter(
+      j => !dismissedIdsRef.current.has(j.id) && isJobBannerVisible(j, nowMs)
+    );
+    setJobs(prev =>
+      mergeWithRegistered ? mergeJobs(prev, filtered, dismissedIdsRef.current, nowMs) : filtered
+    );
 
     const nextActiveIds = new Set(filtered.filter(isSyncJobActive).map(j => j.id));
     let anyJustFinished = false;
@@ -79,6 +93,21 @@ export function useFireflySyncJobs(options?: UseFireflySyncJobsOptions) {
     refreshJobs();
   }, [refreshJobs]);
 
+  // Automatically clear completed inline banners once their 5-minute TTL elapses.
+  useEffect(() => {
+    const delayMs = getNextBannerExpiryDelayMs(jobs);
+    if (delayMs === null) {
+      return;
+    }
+    const timerId = window.setTimeout(() => {
+      const nowMs = Date.now();
+      setJobs(prev => prev.filter(job => isJobBannerVisible(job, nowMs)));
+    }, delayMs);
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [jobs]);
+
   const registerJob = useCallback((job: FireflySyncJob) => {
     registeredAtRef.current = Date.now();
     dismissedIdsRef.current.delete(job.id);
@@ -105,6 +134,26 @@ export function useFireflySyncJobs(options?: UseFireflySyncJobsOptions) {
     },
     [refreshJobs]
   );
+
+  const dismissAllJobs = useCallback(async () => {
+    const finishedIds = jobs.filter(j => !isSyncJobActive(j)).map(j => j.id);
+    for (const id of finishedIds) {
+      dismissedIdsRef.current.add(id);
+    }
+    setJobs(prev => prev.filter(isSyncJobActive));
+    setIsDismissingAll(true);
+    try {
+      await api.fireflySync.dismissAllJobs();
+    } catch (err) {
+      console.error('Failed to dismiss all sync jobs', err);
+      for (const id of finishedIds) {
+        dismissedIdsRef.current.delete(id);
+      }
+      await refreshJobs();
+    } finally {
+      setIsDismissingAll(false);
+    }
+  }, [jobs, refreshJobs]);
 
   const hasActiveJobs = useMemo(() => jobs.some(isSyncJobActive), [jobs]);
 
@@ -149,14 +198,21 @@ export function useFireflySyncJobs(options?: UseFireflySyncJobsOptions) {
   }, [jobs]);
 
   const activeJobs = useMemo(() => jobs.filter(isSyncJobActive), [jobs]);
+  const unacknowledgedErrorCount = useMemo(
+    () => countUnacknowledgedErrors(jobs),
+    [jobs]
+  );
 
   return {
     jobs,
     activeJobs,
     jobsByProductId,
     hasActiveJobs,
+    unacknowledgedErrorCount,
+    isDismissingAll,
     refreshJobs,
     registerJob,
     dismissJob,
+    dismissAllJobs,
   };
 }

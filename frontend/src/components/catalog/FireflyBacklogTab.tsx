@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  CheckCheck,
   CheckCircle2,
   EyeOff,
   Link2,
@@ -12,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '../../api/client';
+import { hasDismissibleFinishedJobs } from '../../hooks/syncJobVisibility';
 import { isSyncJobActive } from '../../hooks/useFireflySyncJobs';
 import {
   BacklogGroup,
@@ -32,6 +34,8 @@ interface FireflyBacklogTabProps {
   jobsByProductId: Record<number, FireflySyncJob>;
   onJobStarted: (job: FireflySyncJob) => void;
   onDismissJob: (jobId: number) => void;
+  onDismissAllJobs?: () => void | Promise<void>;
+  isDismissingAll?: boolean;
   onDataChanged: () => void | Promise<void>;
   onUnassociatedCountChange?: (count: number) => void;
 }
@@ -42,6 +46,8 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
   jobsByProductId,
   onJobStarted,
   onDismissJob,
+  onDismissAllJobs,
+  isDismissingAll = false,
   onDataChanged,
   onUnassociatedCountChange,
 }) => {
@@ -493,10 +499,21 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
       {/* Active & Unshown Firefly Sync Jobs */}
       {topPanelJobs.length > 0 && (
         <div className="bg-white rounded-xl border border-slate-200 p-3.5 space-y-2">
-          <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+          <div className="flex items-center justify-between gap-2 text-xs font-bold text-slate-700">
             <span>
               Firefly Background Sync ({topPanelJobs.filter(isSyncJobActive).length} active)
             </span>
+            {onDismissAllJobs && hasDismissibleFinishedJobs(topPanelJobs) && (
+              <button
+                type="button"
+                disabled={isDismissingAll}
+                onClick={() => onDismissAllJobs()}
+                className="inline-flex items-center px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 disabled:opacity-50 text-[11px] font-semibold text-slate-700"
+              >
+                <CheckCheck className="w-3 h-3 mr-1 text-slate-500 shrink-0" />
+                {isDismissingAll ? 'Clearing...' : 'Dismiss all'}
+              </button>
+            )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {topPanelJobs.map(job => (

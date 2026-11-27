@@ -240,13 +240,17 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ product_id, transaction_journal_ids }),
       }),
-    listJobs: (includeDismissed: boolean = false) =>
+    listJobs: (includeDismissed: boolean = false, limit: number = 20) =>
       request<FireflySyncJob[]>(
-        `/firefly-sync/jobs?include_dismissed=${includeDismissed ? 'true' : 'false'}`
+        `/firefly-sync/jobs?include_dismissed=${includeDismissed ? 'true' : 'false'}&limit=${limit}`
       ),
     getJob: (jobId: number) => request<FireflySyncJob>(`/firefly-sync/jobs/${jobId}`),
     dismissJob: (jobId: number) =>
       request<FireflySyncJob>(`/firefly-sync/jobs/${jobId}/dismiss`, {
+        method: 'POST',
+      }),
+    dismissAllJobs: () =>
+      request<{ dismissed_count: number }>('/firefly-sync/jobs/dismiss-all', {
         method: 'POST',
       }),
     jobsStreamUrl: `${BASE_URL}/firefly-sync/jobs/stream`,
