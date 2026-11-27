@@ -17,16 +17,17 @@ class PriceRecordBase(SQLModel):
     discount_note: Optional[str] = Field(default=None)
 
     # Quantity & Normalized price
-    quantity: float = Field(default=1.0)
+    quantity: Optional[float] = Field(default=None, gt=0)
     unit: str = Field(default="pcs")  # g, kg, ml, l, pcs
     package_size: Optional[float] = Field(default=None)
     normalized_unit_price: Optional[float] = Field(default=None, description="Calculated €/kg or €/L or €/pc")
     normalized_regular_price: Optional[float] = Field(default=None, description="Normalized regular shelf price (€/kg, €/L, €/pc)")
 
-    # External reference
+    # External reference & verification
     firefly_transaction_id: Optional[int] = Field(default=None, index=True)
     transaction_journal_id: Optional[int] = Field(default=None, index=True, unique=True)
     source_type: str = Field(default="receipt")  # "receipt" | "manual" | "firefly_sync"
+    verification_status: str = Field(default="verified", index=True)  # "missing" | "needs_review" | "verified"
     notes: Optional[str] = Field(default=None)
 
 
@@ -38,7 +39,7 @@ class PriceRecord(PriceRecordBase, table=True):
 
 
 class PriceRecordCreate(PriceRecordBase):
-    pass
+    quantity: float = Field(default=1.0, gt=0)
 
 
 class PriceRecordRead(PriceRecordBase):

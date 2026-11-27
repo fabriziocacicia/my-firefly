@@ -179,6 +179,8 @@ async def record_price(
         normalized_unit_price=norm_price,
         normalized_regular_price=norm_reg_price,
         firefly_transaction_id=price_in.firefly_transaction_id,
+        source_type="manual",
+        verification_status="verified",
         notes=price_in.notes,
     )
 

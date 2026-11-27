@@ -931,6 +931,55 @@ class FireflyBacklogSyncTests(unittest.TestCase):
                 already_dismissed_at,
             )
 
+    def test_price_record_nullable_quantity_and_scoped_alias_uniqueness(self):
+        from sqlalchemy.exc import IntegrityError
+
+        with Session(self.engine) as session:
+            pr = PriceRecord(
+                product_id=self.product_id,
+                firefly_account_id=20,
+                recorded_date=date(2026, 11, 25),
+                regular_price=2.50,
+                paid_price=2.50,
+                quantity=None,
+                unit="kg",
+                source_type="firefly_sync",
+                verification_status="missing",
+            )
+            session.add(pr)
+
+            a1 = ItemFireflyAlias(
+                product_id=self.product_id,
+                raw_description="Banane Bio",
+                normalized_description="banane bio",
+                firefly_account_id=20,
+                scope_key="store:20",
+            )
+            a2 = ItemFireflyAlias(
+                product_id=self.product_id,
+                raw_description="Banane Bio",
+                normalized_description="banane bio",
+                firefly_account_id=21,
+                scope_key="store:21",
+            )
+            session.add_all([a1, a2])
+            session.commit()
+            session.refresh(pr)
+            self.assertIsNone(pr.quantity)
+            self.assertEqual(pr.verification_status, "missing")
+
+            dup = ItemFireflyAlias(
+                product_id=self.product_id,
+                raw_description="Banane Bio",
+                normalized_description="banane bio",
+                firefly_account_id=20,
+                scope_key="store:20",
+            )
+            session.add(dup)
+            with self.assertRaises(IntegrityError):
+                session.commit()
+            session.rollback()
+
 
 if __name__ == "__main__":
     unittest.main()

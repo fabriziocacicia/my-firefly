@@ -1,19 +1,42 @@
 from datetime import datetime, timezone
 from typing import Optional, List, Literal
+import sqlalchemy as sa
 from pydantic import field_validator, model_validator
 from sqlmodel import SQLModel, Field, Relationship
 from app.models.tag import Tag, TagRead, ProductTagLink
 from app.models.brand import Brand, BrandRead
 
 
+def build_alias_scope_key(
+    company_id: Optional[int] = None,
+    firefly_account_id: Optional[int] = None,
+) -> str:
+    """Returns canonical scope key with precedence: store > chain > global."""
+    if firefly_account_id is not None:
+        return f"store:{firefly_account_id}"
+    if company_id is not None:
+        return f"chain:{company_id}"
+    return "global"
+
+
 class ItemFireflyAliasBase(SQLModel):
     product_id: int = Field(foreign_key="product.id", index=True)
     raw_description: str
-    normalized_description: str = Field(index=True, unique=True)
+    normalized_description: str = Field(index=True)
+    company_id: Optional[int] = Field(default=None, foreign_key="company.id", index=True)
+    firefly_account_id: Optional[int] = Field(default=None, index=True)
+    scope_key: str = Field(default="global", index=True)
 
 
 class ItemFireflyAlias(ItemFireflyAliasBase, table=True):
     __tablename__ = "item_firefly_alias"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "normalized_description",
+            "scope_key",
+            name="uq_item_firefly_alias_desc_scope",
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
