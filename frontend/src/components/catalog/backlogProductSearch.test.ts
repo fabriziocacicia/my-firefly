@@ -45,12 +45,24 @@ const sampleCatalog: Product[] = [
     tags: [{ id: 2, name: 'Riso', group: 'food', color: '#111111' }],
     firefly_description: 'Riso Basmati Integrale Bio Scotti 5kg',
   }),
+  makeProduct({
+    id: 4,
+    name: 'Mele Fuji Bio',
+    brand_id: undefined,
+    brand: undefined,
+    sale_mode: 'loose_weight',
+    unit_size: 1,
+    default_unit: 'kg',
+    package_size: 1,
+    firefly_category_name: 'Groceries',
+    firefly_description: 'Mele Fuji Bio',
+  }),
 ];
 
 describe('filterLinkModalProducts', () => {
   it('returns all products when query is empty or whitespace', () => {
-    expect(filterLinkModalProducts(sampleCatalog, '')).toHaveLength(3);
-    expect(filterLinkModalProducts(sampleCatalog, '   ')).toHaveLength(3);
+    expect(filterLinkModalProducts(sampleCatalog, '')).toHaveLength(4);
+    expect(filterLinkModalProducts(sampleCatalog, '   ')).toHaveLength(4);
   });
 
   it('matches by product name case-insensitively', () => {
@@ -63,9 +75,14 @@ describe('filterLinkModalProducts', () => {
     expect(res.map(p => p.id)).toEqual([1]);
   });
 
-  it('matches multi-word queries spanning product name and brand name', () => {
-    const res = filterLinkModalProducts(sampleCatalog, 'fusilli conad');
+  it('matches multi-word queries spanning product name and brand name regardless of extra whitespace', () => {
+    const res = filterLinkModalProducts(sampleCatalog, 'fusilli   conad');
     expect(res.map(p => p.id)).toEqual([2]);
+  });
+
+  it('handles unbranded products safely without throwing', () => {
+    expect(filterLinkModalProducts(sampleCatalog, 'mele fuji').map(p => p.id)).toEqual([4]);
+    expect(filterLinkModalProducts(sampleCatalog, 'mele barilla')).toEqual([]);
   });
 
   it('does not match against category, tags, or firefly description', () => {
