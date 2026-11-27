@@ -21,6 +21,8 @@ import {
   FireflySyncStatus,
   Product,
 } from '../../types';
+import { formatProductBadge } from '../workbench/productUtils';
+import { filterLinkModalProducts } from './backlogProductSearch';
 import { ItemEditorModal } from './ItemEditorModal';
 import { SyncJobBadge } from './SyncJobBadge';
 
@@ -59,6 +61,8 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
   // Link-to-existing modal state
   const [linkingGroup, setLinkingGroup] = useState<BacklogGroup | null>(null);
   const [linkSearch, setLinkSearch] = useState('');
+  const [modalProducts, setModalProducts] = useState<Product[] | null>(null);
+  const [loadingModalProducts, setLoadingModalProducts] = useState(false);
   const [selectedLinkProductId, setSelectedLinkProductId] = useState<number | null>(null);
   const [submittingLink, setSubmittingLink] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -221,12 +225,48 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     }
   };
 
+  const productsRef = useRef(products);
+  productsRef.current = products;
+
   const openLinkModal = (group: BacklogGroup) => {
     setLinkingGroup(group);
     setLinkSearch('');
+    setModalProducts(null);
+    setLoadingModalProducts(true);
     setSelectedLinkProductId(group.suggested_product_id ?? null);
     setLinkError(null);
   };
+
+  useEffect(() => {
+    if (!linkingGroup) {
+      setLoadingModalProducts(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLoadingModalProducts(true);
+    api.products
+      .list(undefined, { signal: controller.signal })
+      .then(allProducts => {
+        if (!controller.signal.aborted) {
+          setModalProducts(allProducts);
+        }
+      })
+      .catch(err => {
+        if (controller.signal.aborted) return;
+        setModalProducts(productsRef.current);
+        setLinkError(
+          err instanceof Error
+            ? `Failed to refresh full catalog: ${err.message}`
+            : 'Failed to refresh full catalog'
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoadingModalProducts(false);
+        }
+      });
+    return () => controller.abort();
+  }, [linkingGroup]);
 
   useEffect(() => {
     if (!linkingGroup) return;
@@ -257,11 +297,9 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
     }
   };
 
-  const filteredModalProducts = products.filter(p =>
-    linkSearch.trim()
-      ? p.name.toLowerCase().includes(linkSearch.trim().toLowerCase())
-      : true
-  );
+  const filteredModalProducts = linkingGroup
+    ? filterLinkModalProducts(modalProducts ?? products, linkSearch)
+    : [];
 
   const visibleLinkedProductIds = new Set(
     (statusFilter === 'linked' ? backlog?.groups || [] : [])
@@ -665,12 +703,17 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
               autoFocus
               value={linkSearch}
               onChange={e => setLinkSearch(e.target.value)}
-              placeholder="Search existing items..."
+              placeholder="Search items by name or brand..."
+              aria-label="Search items by name or brand"
               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
             />
 
             <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
-              {filteredModalProducts.length === 0 ? (
+              {loadingModalProducts && modalProducts === null ? (
+                <div className="p-4 text-center text-xs text-slate-400">
+                  Loading catalog items...
+                </div>
+              ) : filteredModalProducts.length === 0 ? (
                 <div className="p-4 text-center text-xs text-slate-400">
                   No matching items in catalog.
                 </div>
@@ -689,10 +732,18 @@ export const FireflyBacklogTab: React.FC<FireflyBacklogTabProps> = ({
                         selected ? 'bg-blue-50 text-blue-900' : 'hover:bg-slate-50'
                       }`}
                     >
-                      <div>
-                        <div className="font-semibold">{prod.name}</div>
-                        <div className="text-[11px] text-slate-400">
-                          {prod.firefly_category_name || 'No category'}
+                      <div className="min-w-0 pr-2">
+                        <div className="font-semibold truncate">
+                          {prod.name}
+                        </div>
+                        <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-1">
+                          <span className="text-slate-600 font-medium">
+                            {prod.brand?.name || 'Generic'}
+                          </span>
+                          <span>·</span>
+                          <span>{formatProductBadge(prod)}</span>
+                          <span>·</span>
+                          <span>{prod.firefly_category_name || 'No category'}</span>
                         </div>
                       </div>
                       {activeJobForProd ? (
