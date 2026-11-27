@@ -164,24 +164,23 @@ Resolution & writing rules:
 
 1. **`GET /api/v1/firefly-sync/backlog`:**
    - Add optional query filters: `company_id: Optional[int]`, `account_id: Optional[int]`.
-   - Support `status: Literal["unassociated", "linked", "ignored", "needs_attention"]`:
-     - `needs_attention` returns `PriceRecord` backlog groups/items where `verification_status IN ('missing', 'needs_review')` (filterable by category, search, chain, store).
+   - Supports `status: Literal["unassociated", "linked", "ignored"]` (`Missing & To Review` loads via `/backlog/attention`).
    - `BacklogResponse` also returns:
-     - `needs_attention_count: int` (count of `missing` + `needs_review` splits)
+     - `linked_count: int`, `ignored_count: int`, `needs_attention_count: int` (count of `missing` + `needs_review` splits)
      - `available_chains: List[{ id: int, name: str, count: int }]`
      - `available_stores: List[{ account_id: int, name: str, company_id: Optional[int], count: int }]`
-   - `BacklogGroup` remains compact (`normalized_description`, `sample_description`, `category_name`, `occurrence_count`, `total_amount`, `latest_date`, `sample_stores`, `sample_tags`, `journal_ids`, `suggested_product_id`, `suggested_product_name`, `linked_product_id`, `linked_product_name`, plus `chain_count` / `store_count` / `attention_count`).
+   - `BacklogGroup` remains compact (`normalized_description`, `sample_description`, `category_name`, `occurrence_count`, `total_amount`, `latest_date`, `sample_stores`, `sample_tags`, `journal_ids`, `suggested_product_id`, `suggested_product_name`, `suggested_scope`, `linked_product_id`, `linked_product_name`, `chain_count`, `store_count`).
 
 2. **`GET /api/v1/firefly-sync/backlog/splits`:**
    - Lazy drill-down endpoint for a single `BacklogGroup`:
      - Query params: `normalized_description`, `category_name` (or `__uncategorized__`), `status`, `linked_product_id`, `company_id`, `account_id`.
    - Returns hierarchical structure:
-     - `chains`: list of chain buckets (`company_id`, `company_name`, `occurrence_count`, `total_amount`, `suggested_product_id`, `suggested_product_name`, `suggested_scope`, `stores`: list of store buckets). Accounts with `company_id = None` appear in an `unchained_stores` list (or chain bucket with `company_id = null`, `company_name = null` rendered directly at store level in the UI).
-     - Each store bucket (`firefly_account_id`, `store_name`, `occurrence_count`, `total_amount`, `suggested_product_id`, `suggested_product_name`, `suggested_scope`, `splits`: list of `BacklogSplitDetail`).
+     - `chains`: list of chain buckets (`company_id`, `company_name`, `occurrence_count`, `total_amount`, `journal_ids`, `suggested_product_id`, `suggested_product_name`, `suggested_scope`, `stores`: list of store buckets). Accounts with `company_id = None` appear in `unchained_stores`.
+     - Each store bucket (`firefly_account_id`, `store_name`, `company_id`, `occurrence_count`, `total_amount`, `journal_ids`, `suggested_product_id`, `suggested_product_name`, `suggested_scope`, `splits`: list of `BacklogSplitDetail`).
      - Each `BacklogSplitDetail` includes:
        - `transaction_journal_id`, `firefly_transaction_id`, `tx_date`, `amount`, `description`, `tags`
        - `linked_product_id`, `linked_product_name`, `is_ignored`
-       - `price_record`: `{ id, quantity, unit, regular_price, paid_price, is_discount, normalized_unit_price, normalized_regular_price, verification_status } | null`
+       - `price_record`: `{ id, quantity, unit, package_size, regular_price, paid_price, is_discount, normalized_unit_price, normalized_regular_price, verification_status, notes } | null`
 
 3. **`GET /api/v1/firefly-sync/backlog/attention`:**
    - Returns flat list of `needs_attention` split+price items (`missing` first, then `needs_review`), filterable by `company_id`, `account_id`, `category`, `search`, so the user can triage all missing-quantity / review-needed rows directly without expanding groups one by one.
